@@ -15,7 +15,9 @@ export type SessionPayload = {
 };
 
 export function signSession(payload: SessionPayload) {
-  return jwt.sign(payload, SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || "7d" });
+ return jwt.sign(payload, SECRET, {
+  expiresIn: (process.env.JWT_EXPIRES_IN || "7d") as jwt.SignOptions["expiresIn"],
+});
 }
 
 export function verifySession(token: string): SessionPayload | null {
