@@ -44,7 +44,32 @@ export const jobsRouter = router({
         take: 200,
       });
     }),
+    }),
 
+  clockable: protectedProcedure.query(async ({ ctx }) => {
+    return ctx.prisma.job.findMany({
+      where: {
+        deletedAt: null,
+        status: { in: ["active", "approved"] },
+      },
+      orderBy: [{ status: "asc" }, { name: "asc" }],
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        address: true,
+        city: true,
+        state: true,
+        zipCode: true,
+        scopeOfWork: true,
+        notes: true,
+        customer: { select: { name: true } },
+      },
+      take: 200,
+    });
+  }),
+
+  byId: protectedProcedure.input(z.object({ id: z.number() })).query(...)
   byId: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
     const job = await ctx.prisma.job.findUnique({
       where: { id: input.id },
