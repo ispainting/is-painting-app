@@ -7,7 +7,19 @@ export const timeRouter = router({
   myActive: protectedProcedure.query(async ({ ctx }) => {
     return ctx.prisma.timeEntry.findFirst({
       where: { userId: ctx.session!.userId, clockOut: null },
-      include: { job: true },
+   include: {
+  job: {
+    select: {
+      id: true,
+      name: true,
+      address: true,
+      city: true,
+      state: true,
+      zipCode: true,
+      customer: { select: { name: true } },
+    },
+  },
+},
     });
   }),
 
@@ -33,8 +45,26 @@ export const timeRouter = router({
       const open = await ctx.prisma.timeEntry.findFirst({
         where: { userId: ctx.session!.userId, clockOut: null },
       });
-      if (open) throw new TRPCError({ code: "BAD_REQUEST", message: "Already clocked in" });
-      return ctx.prisma.timeEntry.create({
+if (open) throw new TRPCError({ code: "BAD_REQUEST", message: "Already clocked in" });
+
+// Anti-typo guard: refuse to clock into a soft-deleted or non-active job
+if (input.jobId) {
+  const job = await ctx.prisma.job.findUnique({
+    where: { id: input.jobId },
+    select: { id: true, status: true, deletedAt: true },
+  });
+  if (!job || job.deletedAt) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Job not found" });
+  }
+  if (!["active", "approved"].includes(job.status)) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "This job is not currently active",
+    });
+  }
+}
+
+return ctx.prisma.timeEntry.create({
         data: {
           userId: ctx.session!.userId,
           jobId: input.jobId,
@@ -88,7 +118,20 @@ export const timeRouter = router({
         take: 500,
       });
     }),
-
+  today: adminProcedure
+    .input(z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }).optional())
+    .query(({ ctx, input }) => {
+      const base = input?.date ? new Date(input.date + "T00:00:00") : new Date();
+      const start = new Date(base);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(start);
+      end.setDate(end.getDate() + 1);
+      return ctx.prisma.timeEntry.findMany({
+        where: { clockIn: { gte: start, lt: end } },
+        include: { user: true, job: { include: { customer: true } } },
+        orderBy: { clockIn: "desc" },
+      });
+    }),
   approve: adminProcedure.input(z.object({ id: z.number() })).mutation(({ ctx, input }) =>
     ctx.prisma.timeEntry.update({
       where: { id: input.id },
