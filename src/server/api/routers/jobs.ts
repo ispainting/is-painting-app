@@ -44,7 +44,6 @@ export const jobsRouter = router({
         take: 200,
       });
     }),
-    }),
 
   clockable: protectedProcedure.query(async ({ ctx }) => {
     return ctx.prisma.job.findMany({
