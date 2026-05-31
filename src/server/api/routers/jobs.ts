@@ -69,7 +69,6 @@ export const jobsRouter = router({
     });
   }),
 
-  byId: protectedProcedure.input(z.object({ id: z.number() })).query(...)
   byId: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
     const job = await ctx.prisma.job.findUnique({
       where: { id: input.id },
