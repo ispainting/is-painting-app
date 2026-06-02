@@ -139,6 +139,7 @@ model User {
   role       UserRole @default(employee)
   phone      String?  @db.VarChar(20)
   hourlyRate Decimal? @db.Decimal(10, 2)
+employeeRole String? @db.VarChar(50)
   isActive   Boolean  @default(true)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -173,14 +174,16 @@ model Customer {
   deletedAt DateTime?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
+externalId String? @db.VarChar(100)
 
   jobs              Job[]
   opportunities     Opportunity[]
   invoices          Invoice[]
   reviewSubmissions ReviewSubmission[]
 
-  @@index([deletedAt])
-  @@index([name])
+ @@index([deletedAt])
+@@index([name])
+@@unique([externalId])
 }
 
 // ─── JOBS ────────────────────────────────────────────
@@ -226,6 +229,7 @@ model Job {
   deletedAt  DateTime?
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
+externalId String? @db.VarChar(100)
 
   customer    Customer                @relation(fields: [customerId], references: [id])
   opportunity Opportunity?            @relation(fields: [opportunityId], references: [id])
@@ -241,6 +245,7 @@ model Job {
   @@index([status])
   @@index([deletedAt])
   @@index([status, deletedAt])
+@@unique([externalId])
 }
 
 model JobMaterial {
@@ -357,6 +362,7 @@ model TimeEntry {
   hoursWorked       Decimal?  @db.Decimal(8, 2)
   breakMinutes      Int       @default(0)
   notes             String?
+notAtJobsiteReason String?
   clockInLatitude   Decimal?  @db.Decimal(10, 7)
   clockInLongitude  Decimal?  @db.Decimal(10, 7)
   clockOutLatitude  Decimal?  @db.Decimal(10, 7)
