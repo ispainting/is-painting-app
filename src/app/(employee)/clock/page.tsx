@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { api } from "@/trpc/react";
 import { formatDateTime } from "@/lib/utils";
 import { toast } from "sonner";
+import { InstallPrompt } from "@/components/employee/InstallPrompt";
 
 function getCoords(): Promise<GeolocationPosition | null> {
   return new Promise((resolve) => {
@@ -52,8 +53,9 @@ export default function ClockPage() {
 
   const isIn = !!active.data;
 
-  return (
-    <>
+ return (
+  <>
+    <InstallPrompt />
       <div className="flex items-center justify-between mb-4">
         <div>
           <div className="text-sm text-slate-500">Hi {me.data?.name?.split(" ")[0]}</div>
