@@ -96,12 +96,24 @@ export default function ClockPage() {
             disabled={inMut.isPending}
             onClick={async () => {
               const pos = await getCoords();
-              inMut.mutate({
-                jobId: jobId || undefined,
-                lat: pos?.coords.latitude,
-                lng: pos?.coords.longitude,
-                accuracy: pos?.coords.accuracy,
-              });
+            if (!jobId) {
+  toast.error("Pick a job first");
+  return;
+}
+
+const pos = await getCoords();
+
+if (!pos) {
+  toast.error("Location permission is required to clock in.");
+  return;
+}
+
+inMut.mutate({
+  jobId,
+  lat: pos.coords.latitude,
+  lng: pos.coords.longitude,
+  accuracy: pos.coords.accuracy,
+});
             }}
           >
             {inMut.isPending ? "Clocking in…" : "Clock IN"}
