@@ -35,11 +35,10 @@ export const timeRouter = router({
     }),
 
   clockIn: protectedProcedure
-    .input(z.object({
-      jobId: z.number().optional(),
-      lat: z.number().optional(),
-      lng: z.number().optional(),
-      accuracy: z.number().optional(),
+  jobId: z.number().int().positive(),
+lat: z.number().min(-90).max(90),
+lng: z.number().min(-180).max(180),
+accuracy: z.number().min(0).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       const open = await ctx.prisma.timeEntry.findFirst({
