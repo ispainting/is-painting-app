@@ -95,7 +95,6 @@ export default function ClockPage() {
             className="btn btn-primary w-full"
             disabled={inMut.isPending}
             onClick={async () => {
-              const pos = await getCoords();
             if (!jobId) {
   toast.error("Pick a job first");
   return;
