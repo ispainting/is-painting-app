@@ -354,28 +354,63 @@ model Opportunity {
 // ─── TIME ENTRIES ────────────────────────────────────
 
 model TimeEntry {
-  id                Int       @id @default(autoincrement())
-  userId            Int
-  jobId             Int?
-  clockIn           DateTime
-  clockOut          DateTime?
-  hoursWorked       Decimal?  @db.Decimal(8, 2)
-  breakMinutes      Int       @default(0)
-  notes             String?
-notAtJobsiteReason String?
-  clockInLatitude   Decimal?  @db.Decimal(10, 7)
-  clockInLongitude  Decimal?  @db.Decimal(10, 7)
-  clockOutLatitude  Decimal?  @db.Decimal(10, 7)
-  clockOutLongitude Decimal?  @db.Decimal(10, 7)
-  clockInAccuracy   Decimal?  @db.Decimal(8, 2)
-  clockOutAccuracy  Decimal?  @db.Decimal(8, 2)
-  isManual          Boolean   @default(false)
-  approvedById      Int?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  id                   Int       @id @default(autoincrement())
+  userId               Int
+  jobId                Int?
+  clockIn              DateTime
+  clockOut             DateTime?
 
-  user User @relation(fields: [userId], references: [id])
-  job  Job? @relation(fields: [jobId], references: [id])
+  /// DEPRECATED as of Commit 2 (payroll engine).
+  /// Historical rows retain their existing values. New entries written by
+  /// the payroll engine populate grossHours and paidHours instead.
+  /// Do not write to this field from new code.
+  hoursWorked          Decimal?  @db.Decimal(8, 2)
+
+  /// DEPRECATED as of Commit 2 (payroll engine).
+  /// Historical rows retain their existing values. New entries written by
+  /// the payroll engine track breaks via breakStartedAt / breakEndedAt and
+  /// store derived values in breakDurationMinutes / breakDeductionMinutes.
+  breakMinutes         Int       @default(0)
+  notes                String?
+  notAtJobsiteReason   String?
+  clockInLatitude      Decimal?  @db.Decimal(10, 7)
+  clockInLongitude     Decimal?  @db.Decimal(10, 7)
+  clockOutLatitude     Decimal?  @db.Decimal(10, 7)
+  clockOutLongitude    Decimal?  @db.Decimal(10, 7)
+  clockInAccuracy      Decimal?  @db.Decimal(8, 2)
+  clockOutAccuracy     Decimal?  @db.Decimal(8, 2)
+  isManual             Boolean   @default(false)
+  approvedById         Int?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  // ─── Payroll engine fields (Commit 2) ────────────────────────────────
+
+  // Hours
+  grossHours            Decimal?  @db.Decimal(8, 2)
+  paidHours             Decimal?  @db.Decimal(8, 2)
+
+  // Raw break timestamps
+  breakStartedAt        DateTime?
+  breakEndedAt          DateTime?
+
+  // Rounded payroll timestamps
+  roundedClockIn        DateTime?
+  roundedClockOut       DateTime?
+  roundedBreakStartedAt DateTime?
+  roundedBreakEndedAt   DateTime?
+
+  // Break calculations
+  breakDurationMinutes  Int?
+  breakDeductionMinutes Int       @default(0)
+  lateBreakMinutes      Int       @default(0)
+
+  // Payroll metadata
+  calcVersion           Int       @default(1)
+  attendanceFlags       Json?
+
+  user                  User      @relation(fields: [userId], references: [id])
+  job                   Job?      @relation(fields: [jobId], references: [id])
 
   @@index([userId])
   @@index([jobId])
