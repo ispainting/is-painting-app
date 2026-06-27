@@ -1,6 +1,57 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
+import { computeEntry } from "../../../lib/payroll";
 import { router, protectedProcedure, adminProcedure } from "../trpc";
+
+function buildPayrollPayload(input: {
+  clockIn: Date;
+  clockOut: Date | null;
+  clockInLatitude: number | null;
+  clockInLongitude: number | null;
+  clockOutLatitude: number | null;
+  clockOutLongitude: number | null;
+  breakMinutes?: number;
+  isManual?: boolean;
+}) {
+  const breakMinutes = input.breakMinutes ?? 0;
+  const hasBreak = Boolean(input.clockOut && breakMinutes > 0);
+  const breakStartedAt = hasBreak
+    ? new Date(
+        input.clockIn.getTime() +
+          (input.clockOut!.getTime() - input.clockIn.getTime()) / 2 -
+          breakMinutes * 60_000 / 2
+      )
+    : null;
+  const breakEndedAt = hasBreak
+    ? new Date((breakStartedAt as Date).getTime() + breakMinutes * 60_000)
+    : null;
+
+  const computed = computeEntry({
+    clockIn: input.clockIn,
+    clockOut: input.clockOut,
+    breakStartedAt,
+    breakEndedAt,
+    clockInLatitude: input.clockInLatitude,
+    clockInLongitude: input.clockInLongitude,
+    clockOutLatitude: input.clockOutLatitude,
+    clockOutLongitude: input.clockOutLongitude,
+    isManual: input.isManual ?? false,
+  });
+
+  return {
+    grossHours: computed.grossHours,
+    paidHours: computed.paidHours,
+    roundedClockIn: computed.roundedClockIn,
+    roundedClockOut: computed.roundedClockOut,
+    roundedBreakStartedAt: computed.roundedBreakStartedAt,
+    roundedBreakEndedAt: computed.roundedBreakEndedAt,
+    breakDurationMinutes: computed.breakDurationMinutes,
+    breakDeductionMinutes: computed.breakDeductionMinutes,
+    lateBreakMinutes: computed.lateBreakMinutes,
+    attendanceFlags: computed.flags,
+    calcVersion: computed.calcVersion,
+  };
+}
 
 export const timeRouter = router({
   // For mobile employee clock screen
@@ -66,14 +117,25 @@ if (input.jobId) {
   }
 }
 
+const clockIn = new Date();
+const payroll = buildPayrollPayload({
+  clockIn,
+  clockOut: null,
+  clockInLatitude: input.lat,
+  clockInLongitude: input.lng,
+  clockOutLatitude: null,
+  clockOutLongitude: null,
+});
+
 return ctx.prisma.timeEntry.create({
         data: {
           userId: ctx.session!.userId,
           jobId: input.jobId,
-          clockIn: new Date(),
+          clockIn,
           clockInLatitude: input.lat,
           clockInLongitude: input.lng,
           clockInAccuracy: input.accuracy,
+          ...payroll,
         },
       });
     }),
@@ -94,16 +156,26 @@ return ctx.prisma.timeEntry.create({
       const now = new Date();
       const ms = now.getTime() - open.clockIn.getTime();
       const hours = Math.max(0, ms / 3600000 - input.breakMinutes / 60);
+      const payroll = buildPayrollPayload({
+        clockIn: open.clockIn,
+        clockOut: now,
+        clockInLatitude: open.clockInLatitude?.toNumber() ?? null,
+        clockInLongitude: open.clockInLongitude?.toNumber() ?? null,
+        clockOutLatitude: input.lat ?? open.clockOutLatitude?.toNumber() ?? null,
+        clockOutLongitude: input.lng ?? open.clockOutLongitude?.toNumber() ?? null,
+        breakMinutes: input.breakMinutes,
+      });
       return ctx.prisma.timeEntry.update({
         where: { id: open.id },
         data: {
           clockOut: now,
           hoursWorked: Math.round(hours * 100) / 100,
-          clockOutLatitude: input.lat,
-          clockOutLongitude: input.lng,
+          clockOutLatitude: input.lat ?? open.clockOutLatitude ?? null,
+          clockOutLongitude: input.lng ?? open.clockOutLongitude ?? null,
           clockOutAccuracy: input.accuracy,
           notes: input.notes,
           breakMinutes: input.breakMinutes,
+          ...payroll,
         },
       });
     }),
