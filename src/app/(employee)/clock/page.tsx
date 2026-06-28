@@ -30,6 +30,23 @@ export default function ClockPage() {
   const [breakMinutes, setBreakMinutes] = useState(0);
   const [notes, setNotes] = useState("");
 
+  const startBreakMut = api.time.startBreak.useMutation({
+    onSuccess: () => {
+      toast.success("Break started");
+      utils.time.myActive.invalidate();
+      utils.time.myEntries.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const endBreakMut = api.time.endBreak.useMutation({
+    onSuccess: () => {
+      toast.success("Break ended");
+      utils.time.myActive.invalidate();
+      utils.time.myEntries.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
   const inMut = api.time.clockIn.useMutation({
     onSuccess: () => {
       toast.success("Clocked in");
@@ -52,6 +69,7 @@ export default function ClockPage() {
   });
 
   const isIn = !!active.data;
+  const isOnBreak = Boolean(active.data?.breakStartedAt && !active.data?.breakEndedAt);
 
  return (
   <>
@@ -120,6 +138,28 @@ inMut.mutate({
         </div>
       ) : (
         <div className="card p-5 mb-4">
+          <div className="text-sm font-medium mb-2">Status</div>
+          <div className="text-sm text-slate-600 mb-3">
+            {isOnBreak ? "On Break" : "Working"}
+          </div>
+          {isOnBreak ? (
+            <button
+              className="btn btn-primary w-full mb-3"
+              disabled={endBreakMut.isPending}
+              onClick={() => endBreakMut.mutate()}
+            >
+              {endBreakMut.isPending ? "Ending break…" : "End Break"}
+            </button>
+          ) : (
+            <button
+              className="btn btn-primary w-full mb-3"
+              disabled={startBreakMut.isPending}
+              onClick={() => startBreakMut.mutate()}
+            >
+              {startBreakMut.isPending ? "Starting break…" : "Start Break"}
+            </button>
+          )}
+          <div className="text-xs text-slate-400 mb-3">Clock In → Working → Start Break → On Break → End Break → Working → Clock Out</div>
           <label className="label">Break minutes</label>
           <input
             type="number"

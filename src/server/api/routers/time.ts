@@ -10,27 +10,15 @@ function buildPayrollPayload(input: {
   clockInLongitude: number | null;
   clockOutLatitude: number | null;
   clockOutLongitude: number | null;
-  breakMinutes?: number;
+  breakStartedAt?: Date | null;
+  breakEndedAt?: Date | null;
   isManual?: boolean;
 }) {
-  const breakMinutes = input.breakMinutes ?? 0;
-  const hasBreak = Boolean(input.clockOut && breakMinutes > 0);
-  const breakStartedAt = hasBreak
-    ? new Date(
-        input.clockIn.getTime() +
-          (input.clockOut!.getTime() - input.clockIn.getTime()) / 2 -
-          breakMinutes * 60_000 / 2
-      )
-    : null;
-  const breakEndedAt = hasBreak
-    ? new Date((breakStartedAt as Date).getTime() + breakMinutes * 60_000)
-    : null;
-
   const computed = computeEntry({
     clockIn: input.clockIn,
     clockOut: input.clockOut,
-    breakStartedAt,
-    breakEndedAt,
+    breakStartedAt: input.breakStartedAt ?? null,
+    breakEndedAt: input.breakEndedAt ?? null,
     clockInLatitude: input.clockInLatitude,
     clockInLongitude: input.clockInLongitude,
     clockOutLatitude: input.clockOutLatitude,
@@ -163,7 +151,8 @@ return ctx.prisma.timeEntry.create({
         clockInLongitude: open.clockInLongitude?.toNumber() ?? null,
         clockOutLatitude: input.lat ?? open.clockOutLatitude?.toNumber() ?? null,
         clockOutLongitude: input.lng ?? open.clockOutLongitude?.toNumber() ?? null,
-        breakMinutes: input.breakMinutes,
+        breakStartedAt: open.breakStartedAt ?? null,
+        breakEndedAt: open.breakEndedAt ?? null,
       });
       return ctx.prisma.timeEntry.update({
         where: { id: open.id },
@@ -179,6 +168,67 @@ return ctx.prisma.timeEntry.create({
         },
       });
     }),
+
+  startBreak: protectedProcedure.mutation(async ({ ctx }) => {
+    const open = await ctx.prisma.timeEntry.findFirst({
+      where: { userId: ctx.session!.userId, clockOut: null },
+    });
+    if (!open) throw new TRPCError({ code: "BAD_REQUEST", message: "Not clocked in" });
+    if (open.breakStartedAt && !open.breakEndedAt) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Already on break" });
+    }
+
+    const now = new Date();
+    const payroll = buildPayrollPayload({
+      clockIn: open.clockIn,
+      clockOut: null,
+      clockInLatitude: open.clockInLatitude?.toNumber() ?? null,
+      clockInLongitude: open.clockInLongitude?.toNumber() ?? null,
+      clockOutLatitude: open.clockOutLatitude?.toNumber() ?? null,
+      clockOutLongitude: open.clockOutLongitude?.toNumber() ?? null,
+      breakStartedAt: now,
+      breakEndedAt: null,
+    });
+
+    return ctx.prisma.timeEntry.update({
+      where: { id: open.id },
+      data: {
+        breakStartedAt: now,
+        breakEndedAt: null,
+        ...payroll,
+      },
+    });
+  }),
+
+  endBreak: protectedProcedure.mutation(async ({ ctx }) => {
+    const open = await ctx.prisma.timeEntry.findFirst({
+      where: { userId: ctx.session!.userId, clockOut: null },
+    });
+    if (!open) throw new TRPCError({ code: "BAD_REQUEST", message: "Not clocked in" });
+    if (!open.breakStartedAt || open.breakEndedAt) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Not currently on break" });
+    }
+
+    const now = new Date();
+    const payroll = buildPayrollPayload({
+      clockIn: open.clockIn,
+      clockOut: null,
+      clockInLatitude: open.clockInLatitude?.toNumber() ?? null,
+      clockInLongitude: open.clockInLongitude?.toNumber() ?? null,
+      clockOutLatitude: open.clockOutLatitude?.toNumber() ?? null,
+      clockOutLongitude: open.clockOutLongitude?.toNumber() ?? null,
+      breakStartedAt: open.breakStartedAt,
+      breakEndedAt: now,
+    });
+
+    return ctx.prisma.timeEntry.update({
+      where: { id: open.id },
+      data: {
+        breakEndedAt: now,
+        ...payroll,
+      },
+    });
+  }),
 
   // Admin
   listAll: adminProcedure
