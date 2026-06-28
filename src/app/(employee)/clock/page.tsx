@@ -1,11 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/trpc/react";
 import { formatDateTime } from "@/lib/utils";
+import { formatClockDuration } from "@/lib/clock";
 import { toast } from "sonner";
 import { InstallPrompt } from "@/components/employee/InstallPrompt";
+import { BadgeCheck, BriefcaseBusiness, Clock3, Coffee, LogIn, LogOut, PlayCircle, TimerReset } from "lucide-react";
 
 function getCoords(): Promise<GeolocationPosition | null> {
   return new Promise((resolve) => {
@@ -16,6 +18,13 @@ function getCoords(): Promise<GeolocationPosition | null> {
       { enableHighAccuracy: true, timeout: 5000 }
     );
   });
+}
+
+function formatOptionalHours(value: unknown) {
+  if (value === null || value === undefined || value === "") return "Pending";
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (Number.isNaN(numeric)) return "Pending";
+  return `${numeric.toFixed(2)}h`;
 }
 
 export default function ClockPage() {
@@ -29,20 +38,26 @@ export default function ClockPage() {
   const [jobId, setJobId] = useState<number | "">("");
   const [breakMinutes, setBreakMinutes] = useState(0);
   const [notes, setNotes] = useState("");
+  const [now, setNow] = useState(new Date());
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
 
   const startBreakMut = api.time.startBreak.useMutation({
     onSuccess: () => {
       toast.success("Break started");
-      utils.time.myActive.invalidate();
-      utils.time.myEntries.invalidate();
+      void utils.time.myActive.invalidate();
+      void utils.time.myEntries.invalidate();
     },
     onError: (e) => toast.error(e.message),
   });
   const endBreakMut = api.time.endBreak.useMutation({
     onSuccess: () => {
       toast.success("Break ended");
-      utils.time.myActive.invalidate();
-      utils.time.myEntries.invalidate();
+      void utils.time.myActive.invalidate();
+      void utils.time.myEntries.invalidate();
     },
     onError: (e) => toast.error(e.message),
   });
@@ -50,15 +65,15 @@ export default function ClockPage() {
   const inMut = api.time.clockIn.useMutation({
     onSuccess: () => {
       toast.success("Clocked in");
-      utils.time.myActive.invalidate();
+      void utils.time.myActive.invalidate();
     },
     onError: (e) => toast.error(e.message),
   });
   const outMut = api.time.clockOut.useMutation({
     onSuccess: () => {
       toast.success("Clocked out");
-      utils.time.myActive.invalidate();
-      utils.time.myEntries.invalidate();
+      void utils.time.myActive.invalidate();
+      void utils.time.myEntries.invalidate();
       setBreakMinutes(0);
       setNotes("");
     },
@@ -71,149 +86,241 @@ export default function ClockPage() {
   const isIn = !!active.data;
   const isOnBreak = Boolean(active.data?.breakStartedAt && !active.data?.breakEndedAt);
 
- return (
-  <>
-    <InstallPrompt />
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <div className="text-sm text-slate-500">Hi {me.data?.name?.split(" ")[0]}</div>
-          <div className="text-xl font-semibold">Time clock</div>
-        </div>
-        <button onClick={() => logout.mutate()} className="text-sm text-slate-600">
-          Sign out
-        </button>
-      </div>
+  const liveSeconds = useMemo(() => {
+    if (!active.data) return 0;
+    const start = new Date(active.data.clockIn);
+    if (isOnBreak && active.data.breakStartedAt) {
+      return Math.max(0, Math.floor((now.getTime() - new Date(active.data.breakStartedAt).getTime()) / 1000));
+    }
+    return Math.max(0, Math.floor((now.getTime() - start.getTime()) / 1000));
+  }, [active.data, isOnBreak, now]);
 
-      <div className={`card p-5 mb-4 text-center ${isIn ? "bg-green-50" : ""}`}>
-        <div className="text-sm text-slate-500 mb-1">
-          {isIn ? "Clocked in since" : "Currently clocked out"}
-        </div>
-        <div className="text-2xl font-bold mb-3">
-          {isIn ? formatDateTime(active.data!.clockIn) : "—"}
-        </div>
-        {isIn && active.data?.job && (
-          <div className="text-sm">at <strong>{active.data.job.name}</strong></div>
-        )}
-      </div>
+  const latestEntry = myEntries.data?.[0];
+  const summaryEntry = active.data ?? latestEntry ?? null;
+  const currentStatus = isIn ? (isOnBreak ? "on-break" : "working") : "clocked-out";
 
-      {!isIn ? (
-        <div className="card p-5 mb-4">
-          <label className="label">Job (optional)</label>
-          <select
-            className="input mb-3"
-            value={jobId}
-            onChange={(e) => setJobId(e.target.value ? Number(e.target.value) : "")}
-          >
-            <option value="">— Not at a jobsite —</option>
-            {jobs.data?.map((j) => (
-              <option key={j.id} value={j.id}>{j.name}</option>
-            ))}
-          </select>
-          <button
-            className="btn btn-primary w-full"
-            disabled={inMut.isPending}
-            onClick={async () => {
-            if (!jobId) {
-  toast.error("Pick a job first");
-  return;
-}
+  const statusConfig = {
+    "clocked-out": {
+      label: "Clocked Out",
+      icon: Clock3,
+      tone: "border-slate-200 bg-slate-50 text-slate-700",
+    },
+    working: {
+      label: "Working",
+      icon: PlayCircle,
+      tone: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    },
+    "on-break": {
+      label: "On Break",
+      icon: Coffee,
+      tone: "border-amber-200 bg-amber-50 text-amber-700",
+    },
+  } as const;
 
-const pos = await getCoords();
+  const status = statusConfig[currentStatus];
 
-if (!pos) {
-  toast.error("Location permission is required to clock in.");
-  return;
-}
-
-inMut.mutate({
-  jobId,
-  lat: pos.coords.latitude,
-  lng: pos.coords.longitude,
-  accuracy: pos.coords.accuracy,
-});
-            }}
-          >
-            {inMut.isPending ? "Clocking in…" : "Clock IN"}
-          </button>
-        </div>
-      ) : (
-        <div className="card p-5 mb-4">
-          <div className="text-sm font-medium mb-2">Status</div>
-          <div className="text-sm text-slate-600 mb-3">
-            {isOnBreak ? "On Break" : "Working"}
+  return (
+    <>
+      <InstallPrompt />
+      <div className="mx-auto flex max-w-2xl flex-col gap-4 px-3 py-4 sm:px-4 sm:py-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm text-slate-500">Hi {me.data?.name?.split(" ")[0] ?? "there"}</div>
+            <div className="text-2xl font-semibold text-slate-900">Time clock</div>
           </div>
-          {isOnBreak ? (
-            <button
-              className="btn btn-primary w-full mb-3"
-              disabled={endBreakMut.isPending}
-              onClick={() => endBreakMut.mutate()}
-            >
-              {endBreakMut.isPending ? "Ending break…" : "End Break"}
-            </button>
-          ) : (
-            <button
-              className="btn btn-primary w-full mb-3"
-              disabled={startBreakMut.isPending}
-              onClick={() => startBreakMut.mutate()}
-            >
-              {startBreakMut.isPending ? "Starting break…" : "Start Break"}
-            </button>
-          )}
-          <div className="text-xs text-slate-400 mb-3">Clock In → Working → Start Break → On Break → End Break → Working → Clock Out</div>
-          <label className="label">Break minutes</label>
-          <input
-            type="number"
-            min={0}
-            className="input mb-3"
-            value={breakMinutes}
-            onChange={(e) => setBreakMinutes(Number(e.target.value) || 0)}
-          />
-          <label className="label">Notes</label>
-          <textarea
-            className="input mb-3"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-          />
-          <button
-            className="btn btn-danger w-full"
-            disabled={outMut.isPending}
-            onClick={async () => {
-              const pos = await getCoords();
-              outMut.mutate({
-                lat: pos?.coords.latitude,
-                lng: pos?.coords.longitude,
-                accuracy: pos?.coords.accuracy,
-                breakMinutes,
-                notes,
-              });
-            }}
-          >
-            {outMut.isPending ? "Clocking out…" : "Clock OUT"}
+          <button onClick={() => logout.mutate()} className="text-sm font-medium text-slate-600">
+            Sign out
           </button>
         </div>
-      )}
 
-      <div className="card p-5">
-        <div className="text-sm font-medium mb-2">Recent (14 days)</div>
-        {myEntries.data?.length === 0 ? (
-          <div className="text-sm text-slate-500">No time logged yet.</div>
+        <div className={`rounded-2xl border p-5 shadow-sm ${status.tone}`}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="rounded-full border border-white/70 bg-white/70 p-2.5 shadow-sm">
+                <status.icon className="h-6 w-6" />
+              </div>
+              <div>
+                <div className="text-sm font-semibold uppercase tracking-[0.2em]">Current status</div>
+                <div className="text-2xl font-semibold">{status.label}</div>
+              </div>
+            </div>
+            <div className="rounded-full bg-white/70 px-3 py-1 text-sm font-medium">
+              {isIn ? "Live" : "Ready"}
+            </div>
+          </div>
+
+          {isIn ? (
+            <>
+              <div className="mt-5 text-center">
+                <div className="text-sm font-medium uppercase tracking-[0.2em] text-slate-600">
+                  {isOnBreak ? "Break timer" : "Elapsed time"}
+                </div>
+                <div className="mt-2 text-5xl font-semibold tabular-nums text-slate-900 sm:text-6xl">
+                  {formatClockDuration(liveSeconds)}
+                </div>
+              </div>
+
+              <div className="mt-5 grid gap-3 rounded-2xl border border-white/70 bg-white/70 p-4 sm:grid-cols-2">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                    {isOnBreak ? "Break started" : "Clocked in"}
+                  </div>
+                  <div className="mt-1 font-medium text-slate-900">
+                    {formatDateTime(isOnBreak ? active.data?.breakStartedAt : active.data?.clockIn)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Current job</div>
+                  <div className="mt-1 font-medium text-slate-900">
+                    {active.data?.job?.name ?? "No job selected"}
+                  </div>
+                </div>
+              </div>
+
+              {active.data?.job?.customer?.name ? (
+                <div className="mt-3 flex items-center gap-2 rounded-xl border border-white/70 bg-white/70 px-3 py-2 text-sm text-slate-700">
+                  <BriefcaseBusiness className="h-4 w-4" />
+                  <span>{active.data.job.customer.name}</span>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <div className="mt-5 rounded-2xl border border-white/70 bg-white/70 p-4 text-sm text-slate-700">
+              No active shift. Clock in when you are ready to start tracking.
+            </div>
+          )}
+        </div>
+
+        {!isIn ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <label className="mb-2 block text-sm font-semibold text-slate-700">Job (optional)</label>
+            <select
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none ring-0"
+              value={jobId}
+              onChange={(e) => setJobId(e.target.value ? Number(e.target.value) : "")}
+            >
+              <option value="">— Not at a jobsite —</option>
+              {jobs.data?.map((j) => (
+                <option key={j.id} value={j.id}>
+                  {j.name}
+                </option>
+              ))}
+            </select>
+            <button
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-base font-semibold text-white shadow-sm"
+              disabled={inMut.isPending}
+              onClick={async () => {
+                if (!jobId) {
+                  toast.error("Pick a job first");
+                  return;
+                }
+
+                const pos = await getCoords();
+                if (!pos) {
+                  toast.error("Location permission is required to clock in.");
+                  return;
+                }
+
+                inMut.mutate({
+                  jobId,
+                  lat: pos.coords.latitude,
+                  lng: pos.coords.longitude,
+                  accuracy: pos.coords.accuracy,
+                });
+              }}
+            >
+              <LogIn className="h-5 w-5" />
+              {inMut.isPending ? "Clocking in…" : "Clock In"}
+            </button>
+          </div>
         ) : (
-          <ul className="text-sm divide-y">
-            {myEntries.data?.map((t) => (
-              <li key={t.id} className="py-2">
-                <div className="flex justify-between">
-                  <span>{t.job?.name ?? "—"}</span>
-                  <span className="text-slate-500">
-                    {t.hoursWorked ? `${Number(t.hoursWorked).toFixed(2)}h` : "open"}
-                  </span>
-                </div>
-                <div className="text-xs text-slate-400">
-                  {formatDateTime(t.clockIn)} → {t.clockOut ? formatDateTime(t.clockOut) : "—"}
-                </div>
-              </li>
-            ))}
-          </ul>
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-700">
+              <TimerReset className="h-4 w-4" />
+              Actions
+            </div>
+            {isOnBreak ? (
+              <button
+                className="flex w-full items-center justify-center gap-2 rounded-2xl bg-amber-600 px-4 py-3 text-base font-semibold text-white shadow-sm"
+                disabled={endBreakMut.isPending}
+                onClick={() => endBreakMut.mutate()}
+              >
+                <Coffee className="h-5 w-5" />
+                {endBreakMut.isPending ? "Ending break…" : "End Break"}
+              </button>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <button
+                  className="flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base font-semibold text-slate-700"
+                  disabled={startBreakMut.isPending}
+                  onClick={() => startBreakMut.mutate()}
+                >
+                  <Coffee className="h-5 w-5" />
+                  {startBreakMut.isPending ? "Starting break…" : "Start Break"}
+                </button>
+                <button
+                  className="flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-base font-semibold text-white shadow-sm"
+                  disabled={outMut.isPending}
+                  onClick={async () => {
+                    const pos = await getCoords();
+                    outMut.mutate({
+                      lat: pos?.coords.latitude,
+                      lng: pos?.coords.longitude,
+                      accuracy: pos?.coords.accuracy,
+                      breakMinutes,
+                      notes,
+                    });
+                  }}
+                >
+                  <LogOut className="h-5 w-5" />
+                  {outMut.isPending ? "Clocking out…" : "Clock Out"}
+                </button>
+              </div>
+            )}
+
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <label className="mb-2 block text-sm font-semibold text-slate-700">Break minutes</label>
+              <input
+                type="number"
+                min={0}
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm"
+                value={breakMinutes}
+                onChange={(e) => setBreakMinutes(Number(e.target.value) || 0)}
+              />
+              <label className="mb-2 mt-3 block text-sm font-semibold text-slate-700">Notes</label>
+              <textarea
+                className="min-h-24 w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+              />
+            </div>
+          </div>
         )}
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+            <BadgeCheck className="h-4 w-4" />
+            Today&apos;s summary
+          </div>
+          <div className="mt-4 space-y-3 text-sm text-slate-700">
+            <div className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-3">
+              <span className="font-medium">Clock-in time</span>
+              <span className="text-right text-slate-600">{summaryEntry?.clockIn ? formatDateTime(summaryEntry.clockIn) : "Pending"}</span>
+            </div>
+            <div className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-3">
+              <span className="font-medium">Current elapsed time</span>
+              <span className="text-right text-slate-600">{isIn ? formatClockDuration(liveSeconds) : "No active shift"}</span>
+            </div>
+            <div className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-3">
+              <span className="font-medium">Gross hours</span>
+              <span className="text-right text-slate-600">{formatOptionalHours(summaryEntry?.grossHours ?? summaryEntry?.hoursWorked)}</span>
+            </div>
+            <div className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-3">
+              <span className="font-medium">Paid hours</span>
+              <span className="text-right text-slate-600">{formatOptionalHours(summaryEntry?.paidHours)}</span>
+            </div>
+          </div>
+        </div>
       </div>
     </>
   );
