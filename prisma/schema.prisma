@@ -129,16 +129,6 @@ enum AutomationChannel {
   email
 }
 
-enum WorkType {
-  job_site
-  shop
-  office
-  travel
-  meeting
-  training
-  other
-}
-
 // ─── USERS ───────────────────────────────────────────
 
 model User {
@@ -366,7 +356,6 @@ model Opportunity {
 model TimeEntry {
   id                   Int       @id @default(autoincrement())
   userId               Int
-  workType             WorkType?
   jobId                Int?
   clockIn              DateTime
   clockOut             DateTime?

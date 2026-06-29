@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/trpc/react";
 import { formatDateTime } from "@/lib/utils";
-import { formatClockDuration } from "@/lib/clock";
+import { formatClockDuration, isValidClockInSelection } from "@/lib/clock";
 import { toast } from "sonner";
 import { InstallPrompt } from "@/components/employee/InstallPrompt";
 import { BadgeCheck, BriefcaseBusiness, Clock3, Coffee, LogIn, LogOut, PlayCircle, TimerReset } from "lucide-react";
@@ -210,6 +210,11 @@ export default function ClockPage() {
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-base font-semibold text-white shadow-sm"
               disabled={inMut.isPending}
               onClick={async () => {
+                if (!isValidClockInSelection(jobId)) {
+                  toast.error("Select a valid job option");
+                  return;
+                }
+
                 const pos = await getCoords();
                 if (!pos) {
                   toast.error("Location permission is required to clock in.");
