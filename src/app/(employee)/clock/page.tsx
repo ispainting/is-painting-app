@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/trpc/react";
 import { formatDateTime } from "@/lib/utils";
-import { formatClockDuration } from "@/lib/clock";
+import { formatClockDuration, getWorkTypeLabel, WORK_TYPE_OPTIONS, type WorkTypeValue } from "@/lib/clock";
 import { toast } from "sonner";
 import { InstallPrompt } from "@/components/employee/InstallPrompt";
 import { BadgeCheck, BriefcaseBusiness, Clock3, Coffee, LogIn, LogOut, PlayCircle, TimerReset } from "lucide-react";
@@ -36,6 +36,7 @@ export default function ClockPage() {
   const me = api.auth.me.useQuery();
 
   const [jobId, setJobId] = useState<number | "">("");
+  const [workType, setWorkType] = useState<WorkTypeValue | "">("");
   const [breakMinutes, setBreakMinutes] = useState(0);
   const [notes, setNotes] = useState("");
   const [now, setNow] = useState(new Date());
@@ -44,6 +45,12 @@ export default function ClockPage() {
     const id = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    if (workType !== "job_site") {
+      setJobId("");
+    }
+  }, [workType]);
 
   const startBreakMut = api.time.startBreak.useMutation({
     onSuccess: () => {
@@ -170,9 +177,9 @@ export default function ClockPage() {
                   </div>
                 </div>
                 <div>
-                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Current job</div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Current work</div>
                   <div className="mt-1 font-medium text-slate-900">
-                    {active.data?.job?.name ?? "No job selected"}
+                    {getWorkTypeLabel(active.data?.workType)}
                   </div>
                 </div>
               </div>
@@ -193,25 +200,49 @@ export default function ClockPage() {
 
         {!isIn ? (
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <label className="mb-2 block text-sm font-semibold text-slate-700">Job (optional)</label>
+            <label className="mb-2 block text-sm font-semibold text-slate-700">Work Type</label>
             <select
               className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none ring-0"
-              value={jobId}
-              onChange={(e) => setJobId(e.target.value ? Number(e.target.value) : "")}
+              value={workType}
+              onChange={(e) => setWorkType(e.target.value as WorkTypeValue | "")}
             >
-              <option value="">— Not at a jobsite —</option>
-              {jobs.data?.map((j) => (
-                <option key={j.id} value={j.id}>
-                  {j.name}
+              <option value="">Choose a work type</option>
+              {WORK_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
                 </option>
               ))}
             </select>
+
+            {workType === "job_site" ? (
+              <div className="mt-4">
+                <label className="mb-2 block text-sm font-semibold text-slate-700">Project</label>
+                <select
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none ring-0"
+                  value={jobId}
+                  onChange={(e) => setJobId(e.target.value ? Number(e.target.value) : "")}
+                >
+                  <option value="">Choose a project</option>
+                  {jobs.data?.map((j) => (
+                    <option key={j.id} value={j.id}>
+                      {j.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+
             <button
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-base font-semibold text-white shadow-sm"
               disabled={inMut.isPending}
               onClick={async () => {
-                if (!jobId) {
-                  toast.error("Pick a job first");
+                if (!workType) {
+                  toast.error("Choose a work type first");
+                  return;
+                }
+
+                if (workType === "job_site" && !jobId) {
+                  toast.error("Choose a project first");
                   return;
                 }
 
@@ -222,7 +253,8 @@ export default function ClockPage() {
                 }
 
                 inMut.mutate({
-                  jobId,
+                  workType,
+                  jobId: workType === "job_site" ? Number(jobId) : undefined,
                   lat: pos.coords.latitude,
                   lng: pos.coords.longitude,
                   accuracy: pos.coords.accuracy,
