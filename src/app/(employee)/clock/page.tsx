@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/trpc/react";
 import { formatDateTime } from "@/lib/utils";
-import { formatClockDuration } from "@/lib/clock";
+import { CLOCK_IN_NOT_AT_JOBSITE, formatClockDuration, normalizeClockInJobId } from "@/lib/clock";
 import { toast } from "sonner";
 import { InstallPrompt } from "@/components/employee/InstallPrompt";
 import { BadgeCheck, BriefcaseBusiness, Clock3, Coffee, LogIn, LogOut, PlayCircle, TimerReset } from "lucide-react";
@@ -35,7 +35,7 @@ export default function ClockPage() {
   const jobs = api.jobs.list.useQuery();
   const me = api.auth.me.useQuery();
 
-  const [jobId, setJobId] = useState<number | "">("");
+  const [jobId, setJobId] = useState(CLOCK_IN_NOT_AT_JOBSITE);
   const [breakMinutes, setBreakMinutes] = useState(0);
   const [notes, setNotes] = useState("");
   const [now, setNow] = useState(new Date());
@@ -197,9 +197,9 @@ export default function ClockPage() {
             <select
               className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none ring-0"
               value={jobId}
-              onChange={(e) => setJobId(e.target.value ? Number(e.target.value) : "")}
+              onChange={(e) => setJobId(e.target.value)}
             >
-              <option value="">— Not at a jobsite —</option>
+              <option value={CLOCK_IN_NOT_AT_JOBSITE}>— Not at a jobsite —</option>
               {jobs.data?.map((j) => (
                 <option key={j.id} value={j.id}>
                   {j.name}
@@ -216,8 +216,13 @@ export default function ClockPage() {
                   return;
                 }
 
+                if (jobId === undefined || jobId === null || jobId === "") {
+                  toast.error("Please select a job or choose “Not at a jobsite”.");
+                  return;
+                }
+
                 inMut.mutate({
-                  jobId: jobId ? Number(jobId) : undefined,
+                  jobId: normalizeClockInJobId(jobId),
                   lat: pos.coords.latitude,
                   lng: pos.coords.longitude,
                   accuracy: pos.coords.accuracy,
