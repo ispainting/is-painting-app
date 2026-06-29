@@ -13,7 +13,3 @@ export function formatClockDuration(totalSeconds: number) {
   return `${hours}:${minutes}:${seconds}`;
 }
 
-export function isValidClockInSelection(jobId: number | "") {
-  return jobId === "" || Number.isFinite(Number(jobId));
-}
-
