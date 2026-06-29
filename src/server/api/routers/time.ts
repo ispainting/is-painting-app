@@ -76,19 +76,10 @@ export const timeRouter = router({
   clockIn: protectedProcedure
   .input(
     z.object({
-      workType: z.enum(["job_site", "shop", "office", "travel", "meeting", "training", "other"]),
       jobId: z.number().int().positive().optional(),
       lat: z.number().min(-90).max(90),
       lng: z.number().min(-180).max(180),
       accuracy: z.number().min(0).optional(),
-    }).superRefine((value, ctx) => {
-      if (value.workType === "job_site" && !value.jobId) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "A project is required for job site work",
-          path: ["jobId"],
-        });
-      }
     })
   )
     .mutation(async ({ ctx, input }) => {
@@ -97,7 +88,7 @@ export const timeRouter = router({
       });
 if (open) throw new TRPCError({ code: "BAD_REQUEST", message: "Already clocked in" });
 
-const selectedJobId = input.workType === "job_site" ? input.jobId : null;
+const selectedJobId = input.jobId ?? null;
 
 // Anti-typo guard: refuse to clock into a soft-deleted or non-active job
 if (selectedJobId) {
@@ -129,7 +120,6 @@ const payroll = buildPayrollPayload({
 return ctx.prisma.timeEntry.create({
         data: {
           userId: ctx.session!.userId,
-          workType: input.workType,
           jobId: selectedJobId,
           clockIn,
           clockInLatitude: input.lat,
