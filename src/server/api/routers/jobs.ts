@@ -49,7 +49,7 @@ export const jobsRouter = router({
     return ctx.prisma.job.findMany({
       where: {
         deletedAt: null,
-        status: { in: ["active", "approved"] },
+        status: { in: ["estimate", "sent", "approved", "active"] },
       },
       orderBy: [{ status: "asc" }, { name: "asc" }],
       select: {
