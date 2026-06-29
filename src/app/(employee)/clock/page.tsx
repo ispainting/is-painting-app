@@ -206,25 +206,6 @@ export default function ClockPage() {
                 </option>
               ))}
             </select>
-            {((process.env.NODE_ENV !== "production") || me.data?.email?.includes("test")) ? (
-              <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-slate-700">
-                <div className="font-semibold text-slate-900">Clockable jobs debug</div>
-                <div className="mt-2">isLoading: {String(jobs.isLoading)}</div>
-                <div>error: {jobs.error?.message ?? "none"}</div>
-                <div>count: {jobs.data?.length ?? 0}</div>
-                {jobs.data && jobs.data.length > 0 ? (
-                  <div className="mt-2 space-y-1">
-                    <div className="font-medium">First 5 jobs:</div>
-                    {jobs.data.slice(0, 5).map((j) => (
-                      <div key={j.id} className="flex items-center justify-between gap-2 rounded-xl bg-white px-3 py-2 text-xs text-slate-700 shadow-sm">
-                        <span>{j.name}</span>
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] uppercase tracking-[0.15em] text-slate-600">{j.status}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
             <button
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-base font-semibold text-white shadow-sm"
               disabled={inMut.isPending}
