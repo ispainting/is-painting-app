@@ -61,6 +61,10 @@ type PaintColorDraft = {
   sortOrder: number;
 };
 
+function isMeaningfulRow(values: string[]) {
+  return values.some((value) => value.trim().length > 0);
+}
+
 const TEMPLATE_PRESETS: Record<(typeof PROPOSAL_TEMPLATES)[number], {
   projectSummary: string;
   scopeOfWork: string;
@@ -305,7 +309,63 @@ export default function ProposalDetailPage() {
     [form.options]
   );
 
+  const savedOptionsPreview = useMemo(
+    () =>
+      form.options.filter((o) =>
+        isMeaningfulRow([o.title, o.description, o.scope]) || o.price.trim().length > 0
+      ),
+    [form.options]
+  );
+
+  const savedAttachmentsPreview = useMemo(
+    () =>
+      form.attachments.filter((a) =>
+        isMeaningfulRow([a.category, a.fileName, a.fileUrl, a.notes])
+      ),
+    [form.attachments]
+  );
+
+  const savedPaintColorsPreview = useMemo(
+    () =>
+      form.paintColors.filter((p) =>
+        isMeaningfulRow([p.area, p.colorName, p.brand, p.finish, p.notes])
+      ),
+    [form.paintColors]
+  );
+
   const onSave = () => {
+    const optionsPayload = form.options
+      .filter((o) => isMeaningfulRow([o.title, o.description, o.scope]) || o.price.trim().length > 0)
+      .map((o, index) => ({
+        title: o.title.trim() || `Option ${index + 1}`,
+        description: o.description.trim() || undefined,
+        scope: o.scope.trim() || undefined,
+        price: o.price.trim() === "" ? null : parseFloat(o.price),
+        isVisible: o.isVisible,
+        sortOrder: o.sortOrder || index,
+      }));
+
+    const attachmentsPayload = form.attachments
+      .filter((a) => isMeaningfulRow([a.category, a.fileName, a.fileUrl, a.notes]))
+      .map((a, index) => ({
+        category: a.category.trim() || "other",
+        fileName: a.fileName.trim() || `Attachment ${index + 1}`,
+        fileUrl: a.fileUrl.trim() || undefined,
+        notes: a.notes.trim() || undefined,
+        sortOrder: a.sortOrder || index,
+      }));
+
+    const paintColorsPayload = form.paintColors
+      .filter((p) => isMeaningfulRow([p.area, p.colorName, p.brand, p.finish, p.notes]))
+      .map((p, index) => ({
+        area: p.area.trim() || "General",
+        colorName: p.colorName.trim() || "Unspecified",
+        brand: p.brand.trim() || undefined,
+        finish: p.finish.trim() || undefined,
+        notes: p.notes.trim() || undefined,
+        sortOrder: p.sortOrder || index,
+      }));
+
     update.mutate({
       id,
       data: {
@@ -337,29 +397,9 @@ export default function ProposalDetailPage() {
         totalAmount: form.totalAmount,
         expectedStartDate: form.expectedStartDate ? new Date(form.expectedStartDate) : null,
         expectedEndDate: form.expectedEndDate ? new Date(form.expectedEndDate) : null,
-        options: form.options.map((o, index) => ({
-          title: o.title,
-          description: o.description,
-          scope: o.scope,
-          price: o.price.trim() === "" ? null : parseFloat(o.price),
-          isVisible: o.isVisible,
-          sortOrder: o.sortOrder || index,
-        })),
-        attachments: form.attachments.map((a, index) => ({
-          category: a.category,
-          fileName: a.fileName,
-          fileUrl: a.fileUrl,
-          notes: a.notes,
-          sortOrder: a.sortOrder || index,
-        })),
-        paintColors: form.paintColors.map((p, index) => ({
-          area: p.area,
-          colorName: p.colorName,
-          brand: p.brand,
-          finish: p.finish,
-          notes: p.notes,
-          sortOrder: p.sortOrder || index,
-        })),
+        options: optionsPayload,
+        attachments: attachmentsPayload,
+        paintColors: paintColorsPayload,
       },
     });
   };
@@ -980,11 +1020,11 @@ export default function ProposalDetailPage() {
 
             <div>
               <h3 className="font-semibold mb-2">Options</h3>
-              {form.options.filter((o) => o.isVisible).length === 0 ? (
+              {savedOptionsPreview.filter((o) => o.isVisible).length === 0 ? (
                 <p className="text-slate-500">No visible options added.</p>
               ) : (
                 <div className="space-y-2">
-                  {form.options
+                  {savedOptionsPreview
                     .filter((o) => o.isVisible)
                     .sort((a, b) => a.sortOrder - b.sortOrder)
                     .map((o, idx) => (
@@ -999,16 +1039,37 @@ export default function ProposalDetailPage() {
               )}
             </div>
 
+            <div>
+              <h3 className="font-semibold mb-2">Paint Colors</h3>
+              {savedPaintColorsPreview.length === 0 ? (
+                <p className="text-slate-500">No paint colors added.</p>
+              ) : (
+                <div className="space-y-2">
+                  {savedPaintColorsPreview
+                    .slice()
+                    .sort((a, b) => a.sortOrder - b.sortOrder)
+                    .map((p, idx) => (
+                      <div key={`${p.area}-${p.colorName}-${idx}`} className="border border-slate-100 rounded-md p-3">
+                        <div className="font-medium">{p.area || "General"}</div>
+                        <div className="text-slate-700">{p.colorName || "Unspecified"}</div>
+                        <div className="text-slate-600">{[p.brand, p.finish].filter(Boolean).join(" · ") || ""}</div>
+                        {p.notes ? <div className="text-slate-600 mt-1">{p.notes}</div> : null}
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+
             <PreviewSection title="References" text={form.referencesText} />
             <PreviewSection title="Closing" text={form.closingText} />
 
             <div>
               <h3 className="font-semibold mb-2">Attachments List</h3>
-              {form.attachments.length === 0 ? (
+              {savedAttachmentsPreview.length === 0 ? (
                 <p className="text-slate-500">No attachments listed.</p>
               ) : (
                 <ul className="list-disc ml-5 space-y-1">
-                  {form.attachments
+                  {savedAttachmentsPreview
                     .slice()
                     .sort((a, b) => a.sortOrder - b.sortOrder)
                     .map((a, idx) => (
@@ -1018,7 +1079,15 @@ export default function ProposalDetailPage() {
               )}
             </div>
 
-            <div className="pt-2 border-t border-slate-200 font-semibold">Total: {formatCurrency(form.totalAmount)}</div>
+            <div className="pt-2 border-t border-slate-200">
+              <h3 className="font-semibold mb-2">Pricing</h3>
+              <div className="grid md:grid-cols-2 gap-2">
+                <div>Materials: {formatCurrency(form.materialsBudget)}</div>
+                <div>Labor: {formatCurrency(form.laborBudget)}</div>
+                <div>Subcontractor: {formatCurrency(form.subcontractorBudget)}</div>
+                <div className="font-semibold">Total: {formatCurrency(form.totalAmount)}</div>
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -80,6 +80,62 @@ const proposalInput = z.object({
   paintColors: z.array(proposalPaintColorInput).default([]),
 });
 
+function sanitizeOptions(options: z.infer<typeof proposalOptionInput>[]) {
+  const rows = options.filter((o) => {
+    const title = o.title.trim();
+    const description = (o.description || "").trim();
+    const scope = (o.scope || "").trim();
+    return title.length > 0 || description.length > 0 || scope.length > 0 || o.price != null;
+  });
+
+  return rows.map((o, index) => ({
+    title: o.title.trim() || `Option ${index + 1}`,
+    description: (o.description || "").trim() || undefined,
+    scope: (o.scope || "").trim() || undefined,
+    price: o.price,
+    isVisible: o.isVisible,
+    sortOrder: o.sortOrder ?? index,
+  }));
+}
+
+function sanitizeAttachments(attachments: z.infer<typeof proposalAttachmentInput>[]) {
+  const rows = attachments.filter((a) => {
+    const category = a.category.trim();
+    const fileName = a.fileName.trim();
+    const fileUrl = (a.fileUrl || "").trim();
+    const notes = (a.notes || "").trim();
+    return category.length > 0 || fileName.length > 0 || fileUrl.length > 0 || notes.length > 0;
+  });
+
+  return rows.map((a, index) => ({
+    category: a.category.trim() || "other",
+    fileName: a.fileName.trim() || `Attachment ${index + 1}`,
+    fileUrl: (a.fileUrl || "").trim() || undefined,
+    notes: (a.notes || "").trim() || undefined,
+    sortOrder: a.sortOrder ?? index,
+  }));
+}
+
+function sanitizePaintColors(colors: z.infer<typeof proposalPaintColorInput>[]) {
+  const rows = colors.filter((p) => {
+    const area = p.area.trim();
+    const colorName = p.colorName.trim();
+    const brand = (p.brand || "").trim();
+    const finish = (p.finish || "").trim();
+    const notes = (p.notes || "").trim();
+    return area.length > 0 || colorName.length > 0 || brand.length > 0 || finish.length > 0 || notes.length > 0;
+  });
+
+  return rows.map((p, index) => ({
+    area: p.area.trim() || "General",
+    colorName: p.colorName.trim() || "Unspecified",
+    brand: (p.brand || "").trim() || undefined,
+    finish: (p.finish || "").trim() || undefined,
+    notes: (p.notes || "").trim() || undefined,
+    sortOrder: p.sortOrder ?? index,
+  }));
+}
+
 export const proposalsRouter = router({
   list: protectedProcedure.query(({ ctx }) =>
     ctx.prisma.proposal.findMany({
@@ -118,6 +174,9 @@ export const proposalsRouter = router({
 
     const proposalNumber = nextNumber("PROP", last?.proposalNumber);
     const budgetTotal = input.materialsBudget + input.laborBudget + input.subcontractorBudget;
+    const sanitizedOptions = sanitizeOptions(input.options);
+    const sanitizedAttachments = sanitizeAttachments(input.attachments);
+    const sanitizedPaintColors = sanitizePaintColors(input.paintColors);
 
     return ctx.prisma.proposal.create({
       data: {
@@ -153,9 +212,9 @@ export const proposalsRouter = router({
         expectedEndDate: input.expectedEndDate ?? null,
         sentAt: input.status === "sent" ? new Date() : null,
         approvedAt: input.status === "approved" ? new Date() : null,
-        options: input.options.length
+        options: sanitizedOptions.length
           ? {
-              create: input.options.map((o, index) => ({
+              create: sanitizedOptions.map((o, index) => ({
                 title: o.title,
                 description: o.description,
                 scope: o.scope,
@@ -165,9 +224,9 @@ export const proposalsRouter = router({
               })),
             }
           : undefined,
-        attachments: input.attachments.length
+        attachments: sanitizedAttachments.length
           ? {
-              create: input.attachments.map((a, index) => ({
+              create: sanitizedAttachments.map((a, index) => ({
                 category: a.category,
                 fileName: a.fileName,
                 fileUrl: a.fileUrl,
@@ -176,9 +235,9 @@ export const proposalsRouter = router({
               })),
             }
           : undefined,
-        paintColors: input.paintColors.length
+        paintColors: sanitizedPaintColors.length
           ? {
-              create: input.paintColors.map((p, index) => ({
+              create: sanitizedPaintColors.map((p, index) => ({
                 area: p.area,
                 colorName: p.colorName,
                 brand: p.brand,
@@ -223,6 +282,9 @@ export const proposalsRouter = router({
       }
 
       const budgetTotal = input.data.materialsBudget + input.data.laborBudget + input.data.subcontractorBudget;
+      const sanitizedOptions = sanitizeOptions(input.data.options);
+      const sanitizedAttachments = sanitizeAttachments(input.data.attachments);
+      const sanitizedPaintColors = sanitizePaintColors(input.data.paintColors);
 
       return ctx.prisma.proposal.update({
         where: { id: input.id },
@@ -260,7 +322,7 @@ export const proposalsRouter = router({
           approvedAt: input.data.status === "approved" && !current.approvedAt ? new Date() : current.approvedAt,
           options: {
             deleteMany: {},
-            create: input.data.options.map((o, index) => ({
+            create: sanitizedOptions.map((o, index) => ({
               title: o.title,
               description: o.description,
               scope: o.scope,
@@ -271,7 +333,7 @@ export const proposalsRouter = router({
           },
           attachments: {
             deleteMany: {},
-            create: input.data.attachments.map((a, index) => ({
+            create: sanitizedAttachments.map((a, index) => ({
               category: a.category,
               fileName: a.fileName,
               fileUrl: a.fileUrl,
@@ -281,7 +343,7 @@ export const proposalsRouter = router({
           },
           paintColors: {
             deleteMany: {},
-            create: input.data.paintColors.map((p, index) => ({
+            create: sanitizedPaintColors.map((p, index) => ({
               area: p.area,
               colorName: p.colorName,
               brand: p.brand,
