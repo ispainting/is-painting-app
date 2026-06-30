@@ -8,7 +8,7 @@ import { formatCurrency, formatDate } from "@/lib/utils";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
 
-const STATUSES = ["draft", "sent", "approved", "declined", "follow_up"] as const;
+const STATUSES = ["draft", "ready", "sent", "viewed", "approved", "declined", "follow_up", "converted"] as const;
 
 export default function ProposalsPage() {
   const utils = api.useUtils();

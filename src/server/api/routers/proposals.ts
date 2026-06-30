@@ -1,8 +1,26 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, adminProcedure } from "../trpc";
 import { nextNumber } from "@/lib/utils";
 
-const ProposalStatusZ = z.enum(["draft", "sent", "approved", "declined", "follow_up"]);
+const ProposalStatusZ = z.enum(["draft", "ready", "sent", "viewed", "approved", "declined", "follow_up", "converted"]);
+
+const proposalOptionInput = z.object({
+  title: z.string().min(1),
+  description: z.string().optional(),
+  scope: z.string().optional(),
+  price: z.number().nullable().optional(),
+  isVisible: z.boolean().default(true),
+  sortOrder: z.number().int().default(0),
+});
+
+const proposalAttachmentInput = z.object({
+  category: z.string().min(1),
+  fileName: z.string().min(1),
+  fileUrl: z.string().optional(),
+  notes: z.string().optional(),
+  sortOrder: z.number().int().default(0),
+});
 
 const proposalInput = z.object({
   customerId: z.number(),
@@ -13,17 +31,39 @@ const proposalInput = z.object({
   zipCode: z.string().optional(),
   status: ProposalStatusZ.default("draft"),
   scopeOfWork: z.string().optional(),
+  includedWork: z.string().optional(),
+  exclusions: z.string().optional(),
+  importantNotes: z.string().optional(),
+  recommendations: z.string().optional(),
+  proposalBody: z.string().optional(),
+  aiAssistantNotes: z.string().optional(),
   notes: z.string().optional(),
+  emailBody: z.string().optional(),
+  referencesText: z.string().optional(),
+  termsAndConditions: z.string().optional(),
+  paymentSchedule: z.string().optional(),
   materialsBudget: z.number().min(0).default(0),
   laborBudget: z.number().min(0).default(0),
   subcontractorBudget: z.number().min(0).default(0),
   totalAmount: z.number().min(0).optional(),
+  expectedStartDate: z.date().nullable().optional(),
+  expectedEndDate: z.date().nullable().optional(),
+  options: z.array(proposalOptionInput).default([]),
+  attachments: z.array(proposalAttachmentInput).default([]),
 });
 
 export const proposalsRouter = router({
   list: protectedProcedure.query(({ ctx }) =>
     ctx.prisma.proposal.findMany({
-      include: { customer: true },
+      include: {
+        customer: true,
+        _count: {
+          select: {
+            options: true,
+            attachments: true,
+          },
+        },
+      },
       orderBy: { createdAt: "desc" },
       take: 200,
     })
@@ -32,7 +72,11 @@ export const proposalsRouter = router({
   byId: protectedProcedure.input(z.object({ id: z.number() })).query(({ ctx, input }) =>
     ctx.prisma.proposal.findUnique({
       where: { id: input.id },
-      include: { customer: true },
+      include: {
+        customer: true,
+        options: { orderBy: { sortOrder: "asc" } },
+        attachments: { orderBy: { sortOrder: "asc" } },
+      },
     })
   ),
 
@@ -47,25 +91,282 @@ export const proposalsRouter = router({
 
     return ctx.prisma.proposal.create({
       data: {
-        ...input,
+        customerId: input.customerId,
+        projectName: input.projectName,
+        address: input.address,
+        city: input.city,
+        state: input.state,
+        zipCode: input.zipCode,
+        status: input.status,
+        scopeOfWork: input.scopeOfWork,
+        includedWork: input.includedWork,
+        exclusions: input.exclusions,
+        importantNotes: input.importantNotes,
+        recommendations: input.recommendations,
+        proposalBody: input.proposalBody,
+        aiAssistantNotes: input.aiAssistantNotes,
+        notes: input.notes,
+        emailBody: input.emailBody,
+        referencesText: input.referencesText,
+        termsAndConditions: input.termsAndConditions,
+        paymentSchedule: input.paymentSchedule,
+        materialsBudget: input.materialsBudget,
+        laborBudget: input.laborBudget,
+        subcontractorBudget: input.subcontractorBudget,
         proposalNumber,
         totalAmount: input.totalAmount ?? budgetTotal,
+        expectedStartDate: input.expectedStartDate ?? null,
+        expectedEndDate: input.expectedEndDate ?? null,
         sentAt: input.status === "sent" ? new Date() : null,
         approvedAt: input.status === "approved" ? new Date() : null,
+        options: input.options.length
+          ? {
+              create: input.options.map((o, index) => ({
+                title: o.title,
+                description: o.description,
+                scope: o.scope,
+                price: o.price,
+                isVisible: o.isVisible,
+                sortOrder: o.sortOrder ?? index,
+              })),
+            }
+          : undefined,
+        attachments: input.attachments.length
+          ? {
+              create: input.attachments.map((a, index) => ({
+                category: a.category,
+                fileName: a.fileName,
+                fileUrl: a.fileUrl,
+                notes: a.notes,
+                sortOrder: a.sortOrder ?? index,
+              })),
+            }
+          : undefined,
+      },
+      include: {
+        customer: true,
+        options: { orderBy: { sortOrder: "asc" } },
+        attachments: { orderBy: { sortOrder: "asc" } },
       },
     });
   }),
 
+  update: adminProcedure
+    .input(
+      z.object({
+        id: z.number(),
+        data: proposalInput,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const current = await ctx.prisma.proposal.findUnique({
+        where: { id: input.id },
+        select: { status: true, sentAt: true, approvedAt: true },
+      });
+
+      if (!current) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Proposal not found" });
+      }
+
+      if (current.status === "converted") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Converted proposals are read-only.",
+        });
+      }
+
+      const budgetTotal = input.data.materialsBudget + input.data.laborBudget + input.data.subcontractorBudget;
+
+      return ctx.prisma.proposal.update({
+        where: { id: input.id },
+        data: {
+          customerId: input.data.customerId,
+          projectName: input.data.projectName,
+          address: input.data.address,
+          city: input.data.city,
+          state: input.data.state,
+          zipCode: input.data.zipCode,
+          status: input.data.status,
+          scopeOfWork: input.data.scopeOfWork,
+          includedWork: input.data.includedWork,
+          exclusions: input.data.exclusions,
+          importantNotes: input.data.importantNotes,
+          recommendations: input.data.recommendations,
+          proposalBody: input.data.proposalBody,
+          aiAssistantNotes: input.data.aiAssistantNotes,
+          notes: input.data.notes,
+          emailBody: input.data.emailBody,
+          referencesText: input.data.referencesText,
+          termsAndConditions: input.data.termsAndConditions,
+          paymentSchedule: input.data.paymentSchedule,
+          materialsBudget: input.data.materialsBudget,
+          laborBudget: input.data.laborBudget,
+          subcontractorBudget: input.data.subcontractorBudget,
+          totalAmount: input.data.totalAmount ?? budgetTotal,
+          expectedStartDate: input.data.expectedStartDate ?? null,
+          expectedEndDate: input.data.expectedEndDate ?? null,
+          sentAt: input.data.status === "sent" && !current.sentAt ? new Date() : current.sentAt,
+          approvedAt: input.data.status === "approved" && !current.approvedAt ? new Date() : current.approvedAt,
+          options: {
+            deleteMany: {},
+            create: input.data.options.map((o, index) => ({
+              title: o.title,
+              description: o.description,
+              scope: o.scope,
+              price: o.price,
+              isVisible: o.isVisible,
+              sortOrder: o.sortOrder ?? index,
+            })),
+          },
+          attachments: {
+            deleteMany: {},
+            create: input.data.attachments.map((a, index) => ({
+              category: a.category,
+              fileName: a.fileName,
+              fileUrl: a.fileUrl,
+              notes: a.notes,
+              sortOrder: a.sortOrder ?? index,
+            })),
+          },
+        },
+        include: {
+          customer: true,
+          options: { orderBy: { sortOrder: "asc" } },
+          attachments: { orderBy: { sortOrder: "asc" } },
+        },
+      });
+    }),
+
   setStatus: adminProcedure
     .input(z.object({ id: z.number(), status: ProposalStatusZ }))
-    .mutation(({ ctx, input }) =>
-      ctx.prisma.proposal.update({
+    .mutation(async ({ ctx, input }) => {
+      const current = await ctx.prisma.proposal.findUnique({
+        where: { id: input.id },
+        select: { status: true, sentAt: true, approvedAt: true },
+      });
+
+      if (!current) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Proposal not found" });
+      }
+
+      if (current.status === "converted") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Converted proposals are read-only.",
+        });
+      }
+
+      return ctx.prisma.proposal.update({
         where: { id: input.id },
         data: {
           status: input.status,
-          sentAt: input.status === "sent" ? new Date() : undefined,
-          approvedAt: input.status === "approved" ? new Date() : undefined,
+          sentAt: input.status === "sent" && !current.sentAt ? new Date() : current.sentAt,
+          approvedAt: input.status === "approved" && !current.approvedAt ? new Date() : current.approvedAt,
         },
+      });
+    }),
+
+  generateProposalDraft: adminProcedure
+    .input(
+      z.object({
+        roughNotes: z.string().min(1),
+        customerName: z.string().optional(),
+        projectName: z.string().optional(),
+        options: z.array(proposalOptionInput.pick({ title: true, price: true })).default([]),
       })
-    ),
+    )
+    .mutation(({ input }) => {
+      const customerName = input.customerName || "Valued Customer";
+      const projectName = input.projectName || "your project";
+      const notes = input.roughNotes.trim();
+
+      const includedWork = [
+        "Detailed site preparation and protection of adjacent surfaces.",
+        "Professional-grade labor and materials consistent with the selected option.",
+        "Daily cleanup and final walkthrough before completion.",
+      ].join("\n");
+
+      const exclusions = [
+        "Hidden substrate damage not visible during initial walkthrough.",
+        "Permit fees or third-party inspections unless listed in an option.",
+        "Owner-supplied materials unless approved in writing.",
+      ].join("\n");
+
+      const recommendations = [
+        "Select the preferred option based on desired longevity and finish quality.",
+        "Schedule work during a weather window that supports curing and prep quality.",
+        "Finalize color and finish decisions before mobilization to avoid delays.",
+      ].join("\n");
+
+      const optionsText = input.options.length
+        ? input.options
+            .map((o, index) => `${index + 1}. ${o.title}${o.price == null ? " (TBD)" : ` (${o.price.toLocaleString("en-US", { style: "currency", currency: "USD" })})`}`)
+            .join("\n")
+        : "Options can be adjusted based on your preferred level of restoration and scope.";
+
+      const proposalBody = [
+        `<h2>Greeting</h2><p>Hi ${customerName},</p>`,
+        `<h2>Project Summary</h2><p>Thank you for the opportunity to provide a proposal for ${projectName}. Based on our walkthrough and your goals, we prepared the following plan.</p>`,
+        `<h2>Scope of Work</h2><p>${notes.replace(/\n/g, "<br />")}</p>`,
+        `<h2>Options</h2><p>${optionsText.replace(/\n/g, "<br />")}</p>`,
+        `<h2>Included Work</h2><p>${includedWork.replace(/\n/g, "<br />")}</p>`,
+        `<h2>Exclusions</h2><p>${exclusions.replace(/\n/g, "<br />")}</p>`,
+        `<h2>Important Notes</h2><p>Pricing is based on the current visible conditions and scope. Any requested scope adjustments will be quoted before execution.</p>`,
+        `<h2>Recommendations</h2><p>${recommendations.replace(/\n/g, "<br />")}</p>`,
+        `<h2>Pricing</h2><p>Final pricing is listed in the options section of this proposal.</p>`,
+        "<h2>Closing</h2><p>We appreciate the opportunity to earn your business and look forward to delivering professional results.</p>",
+        "<h2>References</h2><p>References and project photos are available upon request.</p>",
+        "<h2>Attachments</h2><p>Relevant attachments can be included with this proposal package.</p>",
+      ].join("\n");
+
+      return {
+        scopeOfWork: notes,
+        includedWork,
+        exclusions,
+        importantNotes:
+          "Client to provide clear site access on scheduled start date. Color selections must be approved prior to mobilization.",
+        recommendations,
+        referencesText: "Available upon request: local projects, testimonials, and before/after examples.",
+        proposalBody,
+      };
+    }),
+
+  generateEmailDraft: adminProcedure
+    .input(
+      z.object({
+        customerName: z.string().optional(),
+        projectName: z.string().optional(),
+        includeCoi: z.boolean().default(true),
+        includeBooklet: z.boolean().default(true),
+        includeReferences: z.boolean().default(true),
+      })
+    )
+    .mutation(({ input }) => {
+      const customer = input.customerName || "there";
+      const project = input.projectName || "your project";
+      const references = input.includeReferences ? "References and prior project examples are available for review." : "";
+      const coi = input.includeCoi ? "Our current COI can be included with the proposal package." : "";
+      const booklet = input.includeBooklet ? "We can also include our services booklet for quick scope comparisons." : "";
+
+      const body = [
+        `Hi ${customer},`,
+        "",
+        `Thank you again for the opportunity to quote ${project}. Attached is your proposal for review.`,
+        "",
+        coi,
+        booklet,
+        references,
+        "",
+        "If the proposal looks good, reply to this email and we can finalize scheduling windows right away.",
+        "",
+        "Please let me know if you would like any option adjusted before approval.",
+        "",
+        "Best regards,",
+        "I.S. Painting",
+      ]
+        .filter(Boolean)
+        .join("\n");
+
+      return { body };
+    }),
 });
