@@ -8,7 +8,7 @@ import { formatCurrency, formatDate } from "@/lib/utils";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
 
-const STATUSES = ["draft", "ready", "sent", "viewed", "approved", "declined", "follow_up", "converted"] as const;
+const STATUSES = ["draft", "ready", "sent", "viewed", "approved", "declined", "converted"] as const;
 
 export default function ProposalsPage() {
   const utils = api.useUtils();
@@ -190,7 +190,7 @@ export default function ProposalsPage() {
               <div>
                 <label className="label">Status</label>
                 <select className="input" value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as (typeof STATUSES)[number] }))}>
-                  {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                  {STATUSES.map((s) => <option key={s} value={s}>{s === "declined" ? "rejected" : s}</option>)}
                 </select>
               </div>
 

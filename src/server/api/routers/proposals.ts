@@ -460,65 +460,144 @@ export const proposalsRouter = router({
   generateProposalDraft: adminProcedure
     .input(
       z.object({
-        roughNotes: z.string().min(1),
+        aiDraftNotes: z.string().min(1),
+        proposalTemplate: ProposalTemplateZ.nullable().optional(),
         customerName: z.string().optional(),
         projectName: z.string().optional(),
-        options: z.array(proposalOptionInput.pick({ title: true, price: true })).default([]),
+        options: z
+          .array(
+            z.object({
+              title: z.string().optional(),
+              description: z.string().optional(),
+              price: z.number().nullable().optional(),
+            })
+          )
+          .default([]),
+        attachments: z.array(z.string()).default([]),
       })
     )
     .mutation(({ input }) => {
       const customerName = input.customerName || "Valued Customer";
       const projectName = input.projectName || "your project";
-      const notes = input.roughNotes.trim();
+      const notes = input.aiDraftNotes.trim();
 
-      const includedWork = [
-        "Detailed site preparation and protection of adjacent surfaces.",
-        "Professional-grade labor and materials consistent with the selected option.",
-        "Daily cleanup and final walkthrough before completion.",
-      ].join("\n");
-
-      const exclusions = [
-        "Hidden substrate damage not visible during initial walkthrough.",
-        "Permit fees or third-party inspections unless listed in an option.",
-        "Owner-supplied materials unless approved in writing.",
-      ].join("\n");
-
-      const recommendations = [
-        "Select the preferred option based on desired longevity and finish quality.",
-        "Schedule work during a weather window that supports curing and prep quality.",
-        "Finalize color and finish decisions before mobilization to avoid delays.",
-      ].join("\n");
+      const templateLabel = input.proposalTemplate ? input.proposalTemplate.replace(/_/g, " ") : "painting";
 
       const optionsText = input.options.length
         ? input.options
-            .map((o, index) => `${index + 1}. ${o.title}${o.price == null ? " (TBD)" : ` (${o.price.toLocaleString("en-US", { style: "currency", currency: "USD" })})`}`)
+            .map((o, index) => {
+              const title = (o.title || "").trim() || `Option ${index + 1}`;
+              const description = (o.description || "").trim();
+              const price = o.price == null ? "TBD" : o.price.toLocaleString("en-US", { style: "currency", currency: "USD" });
+              return `${index + 1}. ${title} - ${price}${description ? `\n   ${description}` : ""}`;
+            })
             .join("\n")
-        : "Options can be adjusted based on your preferred level of restoration and scope.";
+        : "Pricing options can be customized after final scope confirmation.";
 
-      const proposalBody = [
-        `<h2>Greeting</h2><p>Hi ${customerName},</p>`,
-        `<h2>Project Summary</h2><p>Thank you for the opportunity to provide a proposal for ${projectName}. Based on our walkthrough and your goals, we prepared the following plan.</p>`,
-        `<h2>Scope of Work</h2><p>${notes.replace(/\n/g, "<br />")}</p>`,
-        `<h2>Options</h2><p>${optionsText.replace(/\n/g, "<br />")}</p>`,
-        `<h2>Included Work</h2><p>${includedWork.replace(/\n/g, "<br />")}</p>`,
-        `<h2>Exclusions</h2><p>${exclusions.replace(/\n/g, "<br />")}</p>`,
-        `<h2>Important Notes</h2><p>Pricing is based on the current visible conditions and scope. Any requested scope adjustments will be quoted before execution.</p>`,
-        `<h2>Recommendations</h2><p>${recommendations.replace(/\n/g, "<br />")}</p>`,
-        `<h2>Pricing</h2><p>Final pricing is listed in the options section of this proposal.</p>`,
-        "<h2>Closing</h2><p>We appreciate the opportunity to earn your business and look forward to delivering professional results.</p>",
-        "<h2>References</h2><p>References and project photos are available upon request.</p>",
-        "<h2>Attachments</h2><p>Relevant attachments can be included with this proposal package.</p>",
+      const attachmentText = input.attachments.length
+        ? input.attachments.map((name) => `- ${name}`).join("\n")
+        : "- I.S. Painting Booklet\n- Certificate of Insurance\n- References";
+
+      const projectSummary = `Thank you for the opportunity to provide a proposal for ${projectName}. Based on our walkthrough and your goals, this proposal outlines a ${templateLabel} approach with clear options and expectations.`;
+
+      const importantNotes = [
+        "This proposal is based on visible site conditions at the time of visit.",
+        "Any hidden substrate issues discovered during preparation will be reviewed before additional work proceeds.",
+        "Color matching may require wider blend areas if adjacent surfaces have aged or faded.",
       ].join("\n");
 
+      const recommendations = [
+        "Choose the option that balances long-term durability with your immediate budget.",
+        "Approve colors and finish levels before scheduling to avoid production delays.",
+        "If exact color match is critical, plan for potential wall touch-ups or broader repaint areas.",
+      ].join("\n");
+
+      const referencesText = "Client references and before/after project examples are available upon request.";
+      const closingText = `We appreciate the opportunity to serve you, ${customerName}. If you would like any option adjusted, we can revise quickly before scheduling.`;
+
+      const sections = [
+        {
+          templateKey: "greeting",
+          title: "Greeting",
+          description: `Hi ${customerName},`,
+          bulletItems: [],
+          notes: "",
+          sortOrder: 0,
+        },
+        {
+          templateKey: "project_summary",
+          title: "Project Summary",
+          description: projectSummary,
+          bulletItems: [],
+          notes: "",
+          sortOrder: 1,
+        },
+        {
+          templateKey: "scope_of_work",
+          title: "Scope of Work",
+          description: "",
+          bulletItems: notes.split("\n").map((line) => line.trim()).filter(Boolean),
+          notes: "",
+          sortOrder: 2,
+        },
+        {
+          templateKey: "options",
+          title: "Options",
+          description: optionsText,
+          bulletItems: [],
+          notes: "",
+          sortOrder: 3,
+        },
+        {
+          templateKey: "important_notes",
+          title: "Important Notes",
+          description: importantNotes,
+          bulletItems: [],
+          notes: "",
+          sortOrder: 4,
+        },
+        {
+          templateKey: "recommendations",
+          title: "Recommendations",
+          description: recommendations,
+          bulletItems: [],
+          notes: "",
+          sortOrder: 5,
+        },
+        {
+          templateKey: "included_attachments",
+          title: "Included Attachments",
+          description: attachmentText,
+          bulletItems: [],
+          notes: "",
+          sortOrder: 6,
+        },
+        {
+          templateKey: "references",
+          title: "References",
+          description: referencesText,
+          bulletItems: [],
+          notes: "",
+          sortOrder: 7,
+        },
+        {
+          templateKey: "closing",
+          title: "Closing",
+          description: closingText,
+          bulletItems: [],
+          notes: "",
+          sortOrder: 8,
+        },
+      ];
+
       return {
+        projectSummary,
         scopeOfWork: notes,
-        includedWork,
-        exclusions,
-        importantNotes:
-          "Client to provide clear site access on scheduled start date. Color selections must be approved prior to mobilization.",
+        importantNotes,
         recommendations,
-        referencesText: "Available upon request: local projects, testimonials, and before/after examples.",
-        proposalBody,
+        referencesText,
+        closingText,
+        sections,
       };
     }),
 

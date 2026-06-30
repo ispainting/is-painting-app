@@ -13,12 +13,20 @@ const TABS = [
   { id: "paint-colors", label: "Paint Colors" },
   { id: "attachments", label: "Attachments" },
   { id: "preview", label: "Preview" },
-  { id: "approval", label: "Approval" },
   { id: "activity", label: "Activity" },
 ] as const;
 
 type ProposalTab = (typeof TABS)[number]["id"];
 const PROPOSAL_STATUSES = ["draft", "ready", "sent", "viewed", "approved", "declined", "follow_up", "converted"] as const;
+const STATUS_OPTIONS: Array<{ value: (typeof PROPOSAL_STATUSES)[number]; label: string }> = [
+  { value: "draft", label: "Draft" },
+  { value: "ready", label: "Ready" },
+  { value: "sent", label: "Sent" },
+  { value: "viewed", label: "Viewed" },
+  { value: "approved", label: "Approved" },
+  { value: "declined", label: "Rejected" },
+  { value: "converted", label: "Converted" },
+];
 const PROPOSAL_TYPES = ["residential", "commercial", "restoration", "maintenance", "new_construction", "custom"] as const;
 const PROPOSAL_TEMPLATES = [
   "interior_painting",
@@ -349,6 +357,32 @@ export default function ProposalDetailPage() {
     onError: (e) => toast.error(e.message),
   });
 
+  const generateProposalDraft = api.proposals.generateProposalDraft.useMutation({
+    onSuccess: (draft) => {
+      setForm((current) => ({
+        ...current,
+        projectSummary: draft.projectSummary || current.projectSummary,
+        scopeOfWork: draft.scopeOfWork || current.scopeOfWork,
+        importantNotes: draft.importantNotes || current.importantNotes,
+        recommendations: draft.recommendations || current.recommendations,
+        referencesText: draft.referencesText || current.referencesText,
+        closingText: draft.closingText || current.closingText,
+        sections: draft.sections.length
+          ? draft.sections.map((section, index) => ({
+              templateKey: section.templateKey || "custom_section",
+              title: section.title,
+              description: section.description || "",
+              bulletItems: section.bulletItems.length ? section.bulletItems : [""],
+              notes: section.notes || "",
+              sortOrder: section.sortOrder ?? index,
+            }))
+          : current.sections,
+      }));
+      toast.success("Proposal draft generated. Review and edit as needed.");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
   useEffect(() => {
     if (!proposal) return;
     setCustomerSearch(proposal.customer.name);
@@ -461,6 +495,14 @@ export default function ProposalDetailPage() {
     [form.sections]
   );
 
+  const greetingSection = useMemo(
+    () =>
+      savedSectionsPreview.find(
+        (section) => section.templateKey === "greeting" || section.title.toLowerCase().includes("greeting")
+      ),
+    [savedSectionsPreview]
+  );
+
   const activityItems = useMemo(() => {
     if (!proposal) return [] as { label: string; timestamp: Date; detail?: string }[];
 
@@ -487,6 +529,10 @@ export default function ProposalDetailPage() {
     proposal.attachments.forEach((attachment) => {
       items.push({ label: "Attachment Uploaded", timestamp: new Date(attachment.createdAt), detail: attachment.fileName });
     });
+
+    const statusLabel =
+      proposal.status === "declined" ? "Rejected" : proposal.status === "follow_up" ? "Follow Up" : proposal.status;
+    items.push({ label: "Status Changed", timestamp: new Date(proposal.updatedAt), detail: statusLabel });
 
     if (proposal.sentAt) items.push({ label: "Status Changed", timestamp: new Date(proposal.sentAt), detail: "Sent" });
     if (proposal.approvedAt) items.push({ label: "Status Changed", timestamp: new Date(proposal.approvedAt), detail: "Approved" });
@@ -661,6 +707,25 @@ export default function ProposalDetailPage() {
 
   const openAttachmentPicker = () => attachmentInputRef.current?.click();
 
+  const previewAttachment = (attachment: AttachmentDraft) => {
+    if (!attachment.fileUrl) {
+      toast.error("Preview not available. Please download this file.");
+      return;
+    }
+
+    const fileName = attachment.fileName.toLowerCase();
+    const dataUrl = attachment.fileUrl.toLowerCase();
+    const isImage = dataUrl.startsWith("data:image/") || /\.(png|jpg|jpeg|gif|webp|bmp|svg)$/.test(fileName);
+    const isPdf = dataUrl.startsWith("data:application/pdf") || fileName.endsWith(".pdf");
+
+    if (!isImage && !isPdf) {
+      toast.error("Preview not available. Please download this file.");
+      return;
+    }
+
+    window.open(attachment.fileUrl, "_blank", "noopener,noreferrer");
+  };
+
   const onAttachmentSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -763,11 +828,12 @@ export default function ProposalDetailPage() {
               onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as (typeof PROPOSAL_STATUSES)[number] }))}
               disabled={isReadOnly}
             >
-              {PROPOSAL_STATUSES.map((status) => (
-                <option key={status} value={status}>
-                  {status}
+              {STATUS_OPTIONS.map((status) => (
+                <option key={status.value} value={status.value}>
+                  {status.label}
                 </option>
               ))}
+              {form.status === "follow_up" ? <option value="follow_up">Follow Up (Legacy)</option> : null}
             </select>
           </div>
           <FieldDate label="Expected Start" value={form.expectedStartDate} onChange={(v) => setForm((f) => ({ ...f, expectedStartDate: v }))} disabled={isReadOnly} />
@@ -832,7 +898,26 @@ export default function ProposalDetailPage() {
                 </select>
               </div>
               <FieldArea label="AI Draft Notes" value={form.aiAssistantNotes} onChange={(v) => setForm((f) => ({ ...f, aiAssistantNotes: v }))} disabled={isReadOnly} />
-              <button className="btn btn-secondary w-full" disabled>Generate Proposal</button>
+              <button
+                className="btn btn-secondary w-full"
+                disabled={isReadOnly || generateProposalDraft.isPending || !form.aiAssistantNotes.trim()}
+                onClick={() =>
+                  generateProposalDraft.mutate({
+                    aiDraftNotes: form.aiAssistantNotes,
+                    proposalTemplate: form.proposalTemplate,
+                    customerName: customerSearch,
+                    projectName: form.projectName,
+                    options: form.options.map((option) => ({
+                      title: option.title,
+                      description: option.description,
+                      price: option.price.trim() ? parseFloat(option.price) : null,
+                    })),
+                    attachments: form.attachments.map((attachment) => attachment.fileName).filter(Boolean),
+                  })
+                }
+              >
+                {generateProposalDraft.isPending ? "Generating..." : "Generate Proposal"}
+              </button>
               <FieldArea label="Proposal Notes" value={form.notes} onChange={(v) => setForm((f) => ({ ...f, notes: v }))} disabled={isReadOnly} />
             </div>
           </div>
@@ -892,12 +977,22 @@ export default function ProposalDetailPage() {
       {tab === "pricing" && (
         <div className="grid md:grid-cols-2 gap-4">
           <div className="card p-5">
-            <h2 className="text-base font-semibold mb-3">Budget and Pricing</h2>
+            <h2 className="text-base font-semibold mb-3">Internal Budget</h2>
             <div className="grid md:grid-cols-2 gap-3">
               <FieldNumber label="Materials Budget" value={form.materialsBudget} onChange={(v) => setForm((f) => ({ ...f, materialsBudget: v }))} disabled={isReadOnly} />
               <FieldNumber label="Labor Budget" value={form.laborBudget} onChange={(v) => setForm((f) => ({ ...f, laborBudget: v }))} disabled={isReadOnly} />
               <FieldNumber label="Subcontractor Budget" value={form.subcontractorBudget} onChange={(v) => setForm((f) => ({ ...f, subcontractorBudget: v }))} disabled={isReadOnly} />
-              <FieldNumber label="Total Amount" value={form.totalAmount} onChange={(v) => setForm((f) => ({ ...f, totalAmount: v }))} disabled={isReadOnly} />
+              <div>
+                <label className="label">Internal Cost</label>
+                <div className="input flex items-center">{formatCurrency(form.materialsBudget + form.laborBudget + form.subcontractorBudget)}</div>
+              </div>
+              <div>
+                <label className="label">Internal Margin</label>
+                <div className="input flex items-center">
+                  {formatCurrency(form.totalAmount - (form.materialsBudget + form.laborBudget + form.subcontractorBudget))}
+                </div>
+              </div>
+              <FieldNumber label="Final Proposal Price" value={form.totalAmount} onChange={(v) => setForm((f) => ({ ...f, totalAmount: v }))} disabled={isReadOnly} />
               <FieldArea label="Payment Schedule" value={form.paymentSchedule} onChange={(v) => setForm((f) => ({ ...f, paymentSchedule: v }))} disabled={isReadOnly} className="md:col-span-2" />
               <FieldArea label="Terms" value={form.termsAndConditions} onChange={(v) => setForm((f) => ({ ...f, termsAndConditions: v }))} disabled={isReadOnly} className="md:col-span-2" />
             </div>
@@ -1089,7 +1184,7 @@ export default function ProposalDetailPage() {
                     {attachment.notes ? <div className="text-sm text-slate-600 mt-1">{attachment.notes}</div> : null}
                   </div>
                   <div className="flex gap-2">
-                    <button className="btn btn-secondary" disabled={!attachment.fileUrl} onClick={() => window.open(attachment.fileUrl, "_blank")}>Preview</button>
+                    <button className="btn btn-secondary" disabled={!attachment.fileUrl} onClick={() => previewAttachment(attachment)}>Preview</button>
                     <a className={`btn btn-secondary ${!attachment.fileUrl ? "pointer-events-none opacity-50" : ""}`} href={attachment.fileUrl || "#"} download={attachment.fileName || "attachment"}>Download</a>
                     <button className="btn btn-secondary" disabled={isReadOnly} onClick={() => setForm((f) => ({ ...f, attachments: f.attachments.filter((_, i) => i !== index).map((item, sortOrder) => ({ ...item, sortOrder })) }))}>Delete</button>
                   </div>
@@ -1109,6 +1204,10 @@ export default function ProposalDetailPage() {
               <div className="text-2xl font-semibold mt-1">{form.projectName || "Untitled Proposal"}</div>
               <div className="text-slate-600 mt-2">{proposal.proposalNumber} · {customerSearch || "Customer"}</div>
               <div className="text-slate-600">{[form.address, form.city, form.state, form.zipCode].filter(Boolean).join(", ") || "Address pending"}</div>
+            </div>
+
+            <div className="text-base text-slate-800 whitespace-pre-wrap">
+              {greetingSection?.description || `Hi ${customerSearch || "there"},`}
             </div>
 
             <PreviewSection title="Project Summary" text={form.projectSummary} />
@@ -1143,12 +1242,11 @@ export default function ProposalDetailPage() {
 
             <div>
               <h3 className="font-semibold mb-2">Options</h3>
-              {savedOptionsPreview.filter((o) => o.isVisible).length === 0 ? (
-                <p className="text-slate-500">No visible options added.</p>
+              {savedOptionsPreview.length === 0 ? (
+                <p className="text-slate-500">No options added.</p>
               ) : (
                 <div className="space-y-2">
                   {savedOptionsPreview
-                    .filter((o) => o.isVisible)
                     .sort((a, b) => a.sortOrder - b.sortOrder)
                     .map((o, idx) => (
                       <div key={`${o.title}-${idx}`} className="border border-slate-100 rounded-md p-3">
@@ -1203,44 +1301,15 @@ export default function ProposalDetailPage() {
             </div>
 
             <div className="pt-2 border-t border-slate-200">
-              <h3 className="font-semibold mb-2">Pricing</h3>
+              <h3 className="font-semibold mb-2">Final Investment</h3>
               <div className="grid md:grid-cols-2 gap-2">
-                <div>Materials: {formatCurrency(form.materialsBudget)}</div>
-                <div>Labor: {formatCurrency(form.laborBudget)}</div>
-                <div>Subcontractor: {formatCurrency(form.subcontractorBudget)}</div>
-                <div className="font-semibold">Total: {formatCurrency(form.totalAmount)}</div>
+                <div className="font-semibold">Total Proposal Price: {formatCurrency(form.totalAmount)}</div>
               </div>
               <div className="mt-3 grid md:grid-cols-2 gap-3">
                 <PreviewSection title="Payment Schedule" text={form.paymentSchedule} />
                 <PreviewSection title="Terms" text={form.termsAndConditions} />
               </div>
             </div>
-          </div>
-        </div>
-      )}
-
-      {tab === "approval" && (
-        <div className="card p-5">
-          <h2 className="text-base font-semibold mb-4">Approval Workflow</h2>
-          <div className="grid md:grid-cols-7 gap-3">
-            {[
-              { status: "draft", timestamp: proposal.createdAt },
-              { status: "ready", timestamp: null },
-              { status: "sent", timestamp: proposal.sentAt },
-              { status: "viewed", timestamp: null },
-              { status: "approved", timestamp: proposal.approvedAt },
-              { status: "declined", timestamp: null },
-              { status: "converted", timestamp: form.status === "converted" ? proposal.updatedAt : null },
-            ].map(({ status, timestamp }) => {
-              const active = form.status === status;
-              return (
-                <div key={status} className={`rounded-md border p-3 ${active ? "border-brand-500 bg-brand-50" : "border-slate-200 bg-white"}`}>
-                  <div className="text-xs uppercase tracking-wide text-slate-500">{status === "declined" ? "Rejected" : status}</div>
-                  <div className="text-sm font-medium mt-1">{active ? "Current" : "Workflow"}</div>
-                  <div className="text-xs text-slate-500 mt-2">{timestamp ? formatDateTime(timestamp as Date) : "No timestamp yet"}</div>
-                </div>
-              );
-            })}
           </div>
         </div>
       )}
@@ -1264,15 +1333,6 @@ export default function ProposalDetailPage() {
         </div>
       )}
     </>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div className="text-xs text-slate-500 uppercase tracking-wide">{label}</div>
-      <div className="text-base font-medium mt-0.5">{value}</div>
-    </div>
   );
 }
 
