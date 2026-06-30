@@ -169,6 +169,207 @@ function sanitizePaintColors(colors: z.infer<typeof proposalPaintColorInput>[]) 
   }));
 }
 
+const TEMPLATE_WRITING_GUIDE: Record<z.infer<typeof ProposalTemplateZ>, { summaryNoun: string; scopeLead: string }> = {
+  interior_painting: {
+    summaryNoun: "interior painting proposal",
+    scopeLead: "Interior scope is organized below by area for clarity.",
+  },
+  exterior_painting: {
+    summaryNoun: "exterior painting proposal",
+    scopeLead: "Exterior scope is organized below by elevation and work type where applicable.",
+  },
+  cabinet_refinishing: {
+    summaryNoun: "cabinet refinishing proposal",
+    scopeLead: "Cabinet refinishing scope is organized below by area and production step.",
+  },
+  deck_restoration: {
+    summaryNoun: "deck restoration proposal",
+    scopeLead: "Deck restoration scope is organized below by surface and restoration step.",
+  },
+  pergola_restoration: {
+    summaryNoun: "pergola restoration proposal",
+    scopeLead: "Pergola restoration scope is organized below by component and restoration step.",
+  },
+  trim_restoration: {
+    summaryNoun: "trim restoration proposal",
+    scopeLead: "Trim restoration scope is organized below by area and finish step.",
+  },
+  wallpaper_removal: {
+    summaryNoun: "wallpaper removal proposal",
+    scopeLead: "Wallpaper removal scope is organized below by area and preparation stage.",
+  },
+  drywall_repair: {
+    summaryNoun: "drywall repair proposal",
+    scopeLead: "Drywall repair scope is organized below by area and repair step.",
+  },
+  commercial_painting: {
+    summaryNoun: "commercial painting proposal",
+    scopeLead: "Commercial scope is organized below to support clear planning and execution.",
+  },
+  new_construction: {
+    summaryNoun: "new construction painting proposal",
+    scopeLead: "New construction scope is organized below by production sequence.",
+  },
+  property_maintenance: {
+    summaryNoun: "property maintenance painting proposal",
+    scopeLead: "Maintenance scope is organized below by area and recurring service need.",
+  },
+};
+
+const ROOM_PATTERNS: Array<{ title: string; pattern: RegExp }> = [
+  { title: "Living Room", pattern: /\b(living room|family room|great room)\b/i },
+  { title: "Kitchen", pattern: /\bkitchen\b/i },
+  { title: "Dining Room", pattern: /\bdining\b/i },
+  { title: "Primary Bedroom", pattern: /\b(master|primary bedroom|main bedroom)\b/i },
+  { title: "Bedroom", pattern: /\bbedroom\b/i },
+  { title: "Bathroom", pattern: /\bbath(room)?\b/i },
+  { title: "Hallway", pattern: /\bhall(way)?\b/i },
+  { title: "Stairwell", pattern: /\bstair(s|well)?\b/i },
+  { title: "Entry", pattern: /\b(entry|foyer)\b/i },
+  { title: "Office", pattern: /\boffice\b/i },
+  { title: "Trim", pattern: /\b(trim|baseboard|casing|moulding|molding)\b/i },
+  { title: "Doors", pattern: /\bdoor(s)?\b/i },
+  { title: "Ceilings", pattern: /\bceiling(s)?\b/i },
+  { title: "Exterior", pattern: /\b(exterior|outside|facade|siding)\b/i },
+  { title: "Deck", pattern: /\bdeck\b/i },
+  { title: "Pergola", pattern: /\bpergola\b/i },
+  { title: "Cabinets", pattern: /\bcabinet(s)?\b/i },
+];
+
+function normalizeText(value: string) {
+  return value.trim().replace(/\s+/g, " ");
+}
+
+function uniqueSentences(items: string[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of items) {
+    const cleaned = normalizeText(item);
+    if (!cleaned) continue;
+    const key = cleaned.toLowerCase().replace(/[^a-z0-9]+/g, "");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(cleaned);
+  }
+  return result;
+}
+
+function splitDraftNotes(notes: string) {
+  return notes
+    .split(/\n+/)
+    .flatMap((line) => line.split(/[;|]/))
+    .map((line) => normalizeText(line))
+    .filter(Boolean);
+}
+
+function detectRoomTitle(line: string) {
+  for (const room of ROOM_PATTERNS) {
+    if (room.pattern.test(line)) return room.title;
+  }
+  return null;
+}
+
+function parsePaymentSchedule(line: string) {
+  const match = line.match(/\b(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(\d{1,2})\b/);
+  if (!match) return null;
+  return `${match[1]}/${match[2]}/${match[3]}`;
+}
+
+function parseSqft(line: string) {
+  const match = line.match(/\b(\d{3,6})\s*(sq\.?\s?ft|sqft|square\s+feet)\b/i);
+  if (!match) return null;
+  return Number(match[1]);
+}
+
+function parseStandaloneAmount(line: string) {
+  if (/sq\.?\s?ft|sqft|square\s+feet/i.test(line)) return null;
+  if (parsePaymentSchedule(line)) return null;
+  const numeric = line.replace(/[$,\s]/g, "");
+  if (!/^\d+(\.\d{1,2})?$/.test(numeric)) return null;
+  const amount = Number(numeric);
+  return amount >= 1000 ? amount : null;
+}
+
+function toSentence(text: string) {
+  const clean = normalizeText(text);
+  if (!clean) return "";
+  const withCapital = clean.charAt(0).toUpperCase() + clean.slice(1);
+  return /[.!?]$/.test(withCapital) ? withCapital : `${withCapital}.`;
+}
+
+function rewriteScopeLine(rawLine: string) {
+  const line = normalizeText(rawLine);
+  const lower = line.toLowerCase();
+  if (!line) return "";
+
+  const surfaces: Array<[RegExp, string]> = [
+    [/\bwalls?\b/, "walls"],
+    [/\bceilings?\b/, "ceilings"],
+    [/\btrim\b|\bbaseboards?\b|\bcasing\b|\bmoulding\b|\bmolding\b/, "trim"],
+    [/\bdoors?\b/, "doors"],
+    [/\bbaseboards?\b/, "baseboards"],
+    [/\bcabinets?\b/, "cabinet surfaces"],
+  ];
+
+  if (/\bpaint\b|\brepaint\b/.test(lower)) {
+    const mentioned = surfaces.filter(([pattern]) => pattern.test(lower)).map(([, label]) => label);
+    if (mentioned.length) {
+      return `Our scope includes preparing and painting ${mentioned.join(", ")} as noted for this project.`;
+    }
+    return "Our scope includes thorough preparation and application of the selected finish system for the noted areas.";
+  }
+
+  if (/\bnail holes?\b|\bimperfection(s)?\b|\bcrack(s)?\b/.test(lower)) {
+    return "Minor drywall repairs, including nail holes and surface imperfections, will be completed before primer and finish coats.";
+  }
+
+  if (/\bpatch\b/.test(lower) && /\bbacksplash\b/.test(lower)) {
+    return "Drywall areas around the backsplash will be patched, sanded smooth, and prepared for finish painting.";
+  }
+
+  if (/\bpatch\b|\brepair\b/.test(lower)) {
+    return "Surface repairs will be completed as needed to create a consistent paint-ready substrate.";
+  }
+
+  if (/\bprotect\b|\bmask\b|\bcover\b/.test(lower)) {
+    const subject = line.replace(/^(protect|mask|cover)\s+/i, "").trim();
+    if (subject) {
+      return `Adjacent ${subject} will be carefully protected before preparation and painting begin.`;
+    }
+    return "Adjacent finishes and fixtures will be carefully protected throughout production.";
+  }
+
+  if (/\bstain\b/.test(lower) && /\bceiling\b/.test(lower)) {
+    return "Any visible ceiling staining will be sealed with an appropriate stain-blocking primer before finish coats are applied.";
+  }
+
+  if (/\bcaulk\b/.test(lower)) {
+    return "Open gaps at trim and transitions will be caulked where needed to improve finish lines and durability.";
+  }
+
+  if (/\bsand\b/.test(lower)) {
+    return "Surfaces will be sanded as needed to ensure proper adhesion and a uniform final finish.";
+  }
+
+  if (/\bprime\b/.test(lower)) {
+    return "Primer will be applied where required to support adhesion, uniformity, and coverage.";
+  }
+
+  if (/\bbm\s*regal\b|\bregal\b/.test(lower)) {
+    return "Benjamin Moore Regal is noted for designated wall and ceiling finish coats.";
+  }
+
+  if (/\badvance\b/.test(lower) && /\btrim\b/.test(lower)) {
+    return "Benjamin Moore Advance is noted for designated trim and millwork surfaces.";
+  }
+
+  if (/\bworks? from home\b/.test(lower)) {
+    return "Project sequencing will be coordinated to reduce disruption during working hours.";
+  }
+
+  return `Work includes ${line.toLowerCase()}.`;
+}
+
 export const proposalsRouter = router({
   list: protectedProcedure.query(({ ctx }) =>
     ctx.prisma.proposal.findMany({
@@ -477,127 +678,123 @@ export const proposalsRouter = router({
       })
     )
     .mutation(({ input }) => {
-      const customerName = input.customerName || "Valued Customer";
-      const projectName = input.projectName || "your project";
-      const notes = input.aiDraftNotes.trim();
+      const customerName = normalizeText(input.customerName || "") || "Valued Customer";
+      const projectName = normalizeText(input.projectName || "") || "your project";
+      const lines = splitDraftNotes(input.aiDraftNotes);
+      const writingGuide = input.proposalTemplate ? TEMPLATE_WRITING_GUIDE[input.proposalTemplate] : null;
 
-      const templateLabel = input.proposalTemplate ? input.proposalTemplate.replace(/_/g, " ") : "painting";
+      let sqft: number | null = null;
+      let totalAmount: number | null = null;
+      let paymentSchedule: string | null = null;
+      let worksFromHome = false;
+      const importantNotesList: string[] = [];
+      const recommendationsList: string[] = [];
+      const roomTasks = new Map<string, string[]>();
+      const generalTasks: string[] = [];
 
-      const optionsText = input.options.length
-        ? input.options
-            .map((o, index) => {
-              const title = (o.title || "").trim() || `Option ${index + 1}`;
-              const description = (o.description || "").trim();
-              const price = o.price == null ? "TBD" : o.price.toLocaleString("en-US", { style: "currency", currency: "USD" });
-              return `${index + 1}. ${title} - ${price}${description ? `\n   ${description}` : ""}`;
-            })
-            .join("\n")
-        : "Pricing options can be customized after final scope confirmation.";
+      for (const line of lines) {
+        const lower = line.toLowerCase();
 
-      const attachmentText = input.attachments.length
-        ? input.attachments.map((name) => `- ${name}`).join("\n")
-        : "- I.S. Painting Booklet\n- Certificate of Insurance\n- References";
+        if (!sqft) {
+          const parsedSqft = parseSqft(line);
+          if (parsedSqft) sqft = parsedSqft;
+        }
 
-      const projectSummary = `Thank you for the opportunity to provide a proposal for ${projectName}. Based on our walkthrough and your goals, this proposal outlines a ${templateLabel} approach with clear options and expectations.`;
+        if (!paymentSchedule) {
+          const parsedPayment = parsePaymentSchedule(line);
+          if (parsedPayment) paymentSchedule = parsedPayment;
+        }
 
-      const importantNotes = [
-        "This proposal is based on visible site conditions at the time of visit.",
-        "Any hidden substrate issues discovered during preparation will be reviewed before additional work proceeds.",
-        "Color matching may require wider blend areas if adjacent surfaces have aged or faded.",
-      ].join("\n");
+        const parsedAmount = parseStandaloneAmount(line);
+        if (parsedAmount) totalAmount = parsedAmount;
 
-      const recommendations = [
-        "Choose the option that balances long-term durability with your immediate budget.",
-        "Approve colors and finish levels before scheduling to avoid production delays.",
-        "If exact color match is critical, plan for potential wall touch-ups or broader repaint areas.",
-      ].join("\n");
+        if (/\bworks? from home\b/.test(lower)) {
+          worksFromHome = true;
+          continue;
+        }
 
-      const referencesText = "Client references and before/after project examples are available upon request.";
-      const closingText = `We appreciate the opportunity to serve you, ${customerName}. If you would like any option adjusted, we can revise quickly before scheduling.`;
+        if (/\bbm\s*regal\b|\bregal\b/.test(lower) || /\badvance\b/.test(lower)) {
+          const sentence = rewriteScopeLine(line);
+          if (sentence) recommendationsList.push(sentence);
+          continue;
+        }
 
-      const sections = [
-        {
-          templateKey: "greeting",
-          title: "Greeting",
-          description: `Hi ${customerName},`,
-          bulletItems: [],
-          notes: "",
-          sortOrder: 0,
-        },
-        {
-          templateKey: "project_summary",
-          title: "Project Summary",
-          description: projectSummary,
-          bulletItems: [],
-          notes: "",
-          sortOrder: 1,
-        },
-        {
-          templateKey: "scope_of_work",
-          title: "Scope of Work",
+        if (parsePaymentSchedule(line) || parseSqft(line) || parseStandaloneAmount(line)) {
+          continue;
+        }
+
+        const sentence = rewriteScopeLine(line);
+        if (!sentence) continue;
+        const room = detectRoomTitle(line);
+        if (room) {
+          const bucket = roomTasks.get(room) || [];
+          bucket.push(sentence);
+          roomTasks.set(room, bucket);
+        } else {
+          generalTasks.push(sentence);
+        }
+      }
+
+      if (worksFromHome) {
+        importantNotesList.push("We will coordinate daily sequencing and access with your work-from-home schedule.");
+      }
+
+      if (paymentSchedule) {
+        importantNotesList.push(`Requested payment schedule: ${paymentSchedule}.`);
+      }
+
+      if (input.options.some((option) => (option.title || "").trim().length > 0)) {
+        recommendationsList.push("Optional scope items are listed separately so final selections can be confirmed before scheduling.");
+      }
+
+      if (!recommendationsList.length) {
+        recommendationsList.push("Please review the organized scope below and let us know if any area needs to be adjusted before scheduling.");
+      }
+
+      const uniqueGeneralTasks = uniqueSentences(generalTasks);
+      const uniqueRoomEntries = Array.from(roomTasks.entries()).map(([room, tasks]) => [room, uniqueSentences(tasks)] as const).filter(([, tasks]) => tasks.length > 0);
+      const scopeSections = [
+        ...uniqueRoomEntries.map(([room, tasks], index) => ({
+          templateKey: `scope_${room.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`,
+          title: room,
           description: "",
-          bulletItems: notes.split("\n").map((line) => line.trim()).filter(Boolean),
+          bulletItems: tasks,
           notes: "",
-          sortOrder: 2,
-        },
-        {
-          templateKey: "options",
-          title: "Options",
-          description: optionsText,
-          bulletItems: [],
-          notes: "",
-          sortOrder: 3,
-        },
-        {
-          templateKey: "important_notes",
-          title: "Important Notes",
-          description: importantNotes,
-          bulletItems: [],
-          notes: "",
-          sortOrder: 4,
-        },
-        {
-          templateKey: "recommendations",
-          title: "Recommendations",
-          description: recommendations,
-          bulletItems: [],
-          notes: "",
-          sortOrder: 5,
-        },
-        {
-          templateKey: "included_attachments",
-          title: "Included Attachments",
-          description: attachmentText,
-          bulletItems: [],
-          notes: "",
-          sortOrder: 6,
-        },
-        {
-          templateKey: "references",
-          title: "References",
-          description: referencesText,
-          bulletItems: [],
-          notes: "",
-          sortOrder: 7,
-        },
-        {
-          templateKey: "closing",
-          title: "Closing",
-          description: closingText,
-          bulletItems: [],
-          notes: "",
-          sortOrder: 8,
-        },
+          sortOrder: index,
+        })),
+        ...(uniqueGeneralTasks.length
+          ? [
+              {
+                templateKey: "scope_general",
+                title: uniqueRoomEntries.length ? "General Scope" : "Scope of Work",
+                description: "",
+                bulletItems: uniqueGeneralTasks,
+                notes: "",
+                sortOrder: uniqueRoomEntries.length,
+              },
+            ]
+          : []),
       ];
+
+      const areaText = sqft ? ` for approximately ${sqft.toLocaleString("en-US")} sq ft` : "";
+      const summaryNoun = writingGuide?.summaryNoun || "painting proposal";
+      const projectSummary = `Thank you for the opportunity to provide this ${summaryNoun} for ${projectName}${areaText}. Our goal is a clean, well-planned execution with clear expectations from start to finish.`;
+      const scopeOfWork = writingGuide?.scopeLead || "Scope is organized below by area based on your field notes.";
+      const importantNotes = uniqueSentences(importantNotesList).join("\n");
+      const recommendations = uniqueSentences(recommendationsList).join("\n");
+      const referencesText = "References and relevant project examples are available upon request.";
+      const closingText = `We appreciate the opportunity to work with you, ${customerName}. If you would like any adjustments to scope or pricing options, we can update this proposal promptly.`;
 
       return {
         projectSummary,
-        scopeOfWork: notes,
+        scopeOfWork,
         importantNotes,
         recommendations,
         referencesText,
         closingText,
-        sections,
+        paymentSchedule: paymentSchedule || undefined,
+        totalAmount: totalAmount ?? undefined,
+        sections: scopeSections,
       };
     }),
 

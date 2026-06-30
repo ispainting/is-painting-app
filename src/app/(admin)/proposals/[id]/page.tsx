@@ -177,6 +177,21 @@ function isMeaningfulRow(values: string[]) {
   return values.some((value) => value.trim().length > 0);
 }
 
+function sanitizeNumericInput(value: string) {
+  const cleaned = value.replace(/[^0-9.]/g, "");
+  if (!cleaned) return "";
+  const [rawInteger, ...rawFractionParts] = cleaned.split(".");
+  const integerPart = rawInteger.replace(/^0+(?=\d)/, "");
+  const fractionPart = rawFractionParts.join("");
+  return rawFractionParts.length ? `${integerPart || "0"}.${fractionPart}` : integerPart;
+}
+
+function parseCurrencyValue(value: string) {
+  const cleaned = value.replace(/[^0-9.-]/g, "");
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+
 const TEMPLATE_PRESETS: Record<(typeof PROPOSAL_TEMPLATES)[number], {
   projectSummary: string;
   scopeOfWork: string;
@@ -367,6 +382,8 @@ export default function ProposalDetailPage() {
         recommendations: draft.recommendations || current.recommendations,
         referencesText: draft.referencesText || current.referencesText,
         closingText: draft.closingText || current.closingText,
+        paymentSchedule: current.paymentSchedule || draft.paymentSchedule || current.paymentSchedule,
+        totalAmount: current.totalAmount > 0 ? current.totalAmount : draft.totalAmount ?? current.totalAmount,
         sections: draft.sections.length
           ? draft.sections.map((section, index) => ({
               templateKey: section.templateKey || "custom_section",
@@ -457,7 +474,7 @@ export default function ProposalDetailPage() {
   const totalOptionsAmount = useMemo(
     () =>
       form.options.reduce((sum, option) => {
-        const parsed = parseFloat(option.price);
+        const parsed = parseCurrencyValue(option.price);
         return Number.isFinite(parsed) ? sum + parsed : sum;
       }, 0),
     [form.options]
@@ -544,14 +561,17 @@ export default function ProposalDetailPage() {
   const onSave = () => {
     const optionsPayload = form.options
       .filter((o) => isMeaningfulRow([o.title, o.description, o.scope]) || o.price.trim().length > 0)
-      .map((o, index) => ({
-        title: o.title.trim() || `Option ${index + 1}`,
-        description: o.description.trim() || undefined,
-        scope: o.scope.trim() || undefined,
-        price: o.price.trim() === "" ? null : parseFloat(o.price),
-        isVisible: o.isVisible,
-        sortOrder: o.sortOrder || index,
-      }));
+      .map((o, index) => {
+        const parsedPrice = parseCurrencyValue(o.price);
+        return {
+          title: o.title.trim() || `Option ${index + 1}`,
+          description: o.description.trim() || undefined,
+          scope: o.scope.trim() || undefined,
+          price: o.price.trim() === "" || !Number.isFinite(parsedPrice) ? null : parsedPrice,
+          isVisible: o.isVisible,
+          sortOrder: o.sortOrder || index,
+        };
+      });
 
     const attachmentsPayload = form.attachments
       .filter((a) => isMeaningfulRow([a.category, a.fileName, a.fileUrl, a.notes]))
@@ -910,7 +930,10 @@ export default function ProposalDetailPage() {
                     options: form.options.map((option) => ({
                       title: option.title,
                       description: option.description,
-                      price: option.price.trim() ? parseFloat(option.price) : null,
+                      price: (() => {
+                        const parsed = parseCurrencyValue(option.price);
+                        return option.price.trim() && Number.isFinite(parsed) ? parsed : null;
+                      })(),
                     })),
                     attachments: form.attachments.map((attachment) => attachment.fileName).filter(Boolean),
                   })
@@ -979,9 +1002,9 @@ export default function ProposalDetailPage() {
           <div className="card p-5">
             <h2 className="text-base font-semibold mb-3">Internal Budget</h2>
             <div className="grid md:grid-cols-2 gap-3">
-              <FieldNumber label="Materials Budget" value={form.materialsBudget} onChange={(v) => setForm((f) => ({ ...f, materialsBudget: v }))} disabled={isReadOnly} />
-              <FieldNumber label="Labor Budget" value={form.laborBudget} onChange={(v) => setForm((f) => ({ ...f, laborBudget: v }))} disabled={isReadOnly} />
-              <FieldNumber label="Subcontractor Budget" value={form.subcontractorBudget} onChange={(v) => setForm((f) => ({ ...f, subcontractorBudget: v }))} disabled={isReadOnly} />
+              <FieldNumber label="Materials Budget" value={form.materialsBudget} onChange={(v) => setForm((f) => ({ ...f, materialsBudget: v }))} disabled={isReadOnly} currency />
+              <FieldNumber label="Labor Budget" value={form.laborBudget} onChange={(v) => setForm((f) => ({ ...f, laborBudget: v }))} disabled={isReadOnly} currency />
+              <FieldNumber label="Subcontractor Budget" value={form.subcontractorBudget} onChange={(v) => setForm((f) => ({ ...f, subcontractorBudget: v }))} disabled={isReadOnly} currency />
               <div>
                 <label className="label">Internal Cost</label>
                 <div className="input flex items-center">{formatCurrency(form.materialsBudget + form.laborBudget + form.subcontractorBudget)}</div>
@@ -992,7 +1015,7 @@ export default function ProposalDetailPage() {
                   {formatCurrency(form.totalAmount - (form.materialsBudget + form.laborBudget + form.subcontractorBudget))}
                 </div>
               </div>
-              <FieldNumber label="Final Proposal Price" value={form.totalAmount} onChange={(v) => setForm((f) => ({ ...f, totalAmount: v }))} disabled={isReadOnly} />
+              <FieldNumber label="Final Proposal Price" value={form.totalAmount} onChange={(v) => setForm((f) => ({ ...f, totalAmount: v }))} disabled={isReadOnly} currency />
               <FieldArea label="Payment Schedule" value={form.paymentSchedule} onChange={(v) => setForm((f) => ({ ...f, paymentSchedule: v }))} disabled={isReadOnly} className="md:col-span-2" />
               <FieldArea label="Terms" value={form.termsAndConditions} onChange={(v) => setForm((f) => ({ ...f, termsAndConditions: v }))} disabled={isReadOnly} className="md:col-span-2" />
             </div>
@@ -1046,17 +1069,34 @@ export default function ProposalDetailPage() {
                             }
                             disabled={isReadOnly}
                           />
-                          <FieldText
-                            label="Price"
-                            value={option.price}
-                            onChange={(v) =>
-                              setForm((f) => ({
-                                ...f,
-                                options: f.options.map((current, i) => (i === index ? { ...current, price: v } : current)),
-                              }))
-                            }
-                            disabled={isReadOnly}
-                          />
+                          <div>
+                            <label className="label">Price</label>
+                            <input
+                              className="input"
+                              value={option.price}
+                              disabled={isReadOnly}
+                              onChange={(e) =>
+                                setForm((f) => ({
+                                  ...f,
+                                  options: f.options.map((current, i) =>
+                                    i === index ? { ...current, price: sanitizeNumericInput(e.target.value) } : current
+                                  ),
+                                }))
+                              }
+                              onBlur={() =>
+                                setForm((f) => ({
+                                  ...f,
+                                  options: f.options.map((current, i) => {
+                                    if (i !== index) return current;
+                                    const parsed = parseCurrencyValue(current.price);
+                                    return Number.isFinite(parsed)
+                                      ? { ...current, price: formatCurrency(parsed) }
+                                      : { ...current, price: "" };
+                                  }),
+                                }))
+                              }
+                            />
+                          </div>
                           <FieldArea
                             label="Description"
                             value={option.description}
@@ -1253,7 +1293,7 @@ export default function ProposalDetailPage() {
                         <div className="font-medium">{o.title || `Option ${idx + 1}`}</div>
                         <div className="text-slate-700">{o.description || "No description."}</div>
                         {o.isVisible ? <div className="text-xs uppercase tracking-wide text-brand-700 mt-1">Default Selected</div> : null}
-                        <div className="font-semibold mt-1">{o.price.trim() ? formatCurrency(parseFloat(o.price) || 0) : "TBD"}</div>
+                        <div className="font-semibold mt-1">{o.price.trim() ? formatCurrency(parseCurrencyValue(o.price) || 0) : "TBD"}</div>
                       </div>
                     ))}
                 </div>
@@ -1420,21 +1460,25 @@ function FieldNumber({
   value,
   onChange,
   disabled,
+  currency,
 }: {
   label: string;
   value: number;
   onChange: (v: number) => void;
   disabled?: boolean;
+  currency?: boolean;
 }) {
   return (
     <div>
       <label className="label">{label}</label>
       <input
-        type="number"
-        step="0.01"
+        type="text"
         className="input"
-        value={value}
-        onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+        value={currency ? formatCurrency(value) : String(value)}
+        onChange={(e) => {
+          const next = currency ? parseCurrencyValue(e.target.value) : Number(sanitizeNumericInput(e.target.value));
+          onChange(Number.isFinite(next) ? next : 0);
+        }}
         disabled={disabled}
       />
     </div>
