@@ -8,6 +8,16 @@ import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { toast } from "sonner";
 
 const STATUSES = ["estimate", "sent", "approved", "active", "completed", "on_hold", "cancelled"] as const;
+const WORKSPACE_TABS = [
+  { id: "overview", label: "Overview" },
+  { id: "budget", label: "Budget" },
+  { id: "scope", label: "Scope" },
+  { id: "tracking", label: "Tracking" },
+  { id: "financials", label: "Financials" },
+  { id: "documents", label: "Documents" },
+] as const;
+
+type WorkspaceTab = (typeof WORKSPACE_TABS)[number]["id"];
 
 export default function JobDetailPage() {
   const params = useParams<{ id: string }>();
@@ -15,6 +25,8 @@ export default function JobDetailPage() {
   const utils = api.useUtils();
   const { data: job, isLoading } = api.jobs.byId.useQuery({ id });
   const customers = api.customers.list.useQuery();
+
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>("overview");
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editForm, setEditForm] = useState({
     customerId: 0,
@@ -27,6 +39,7 @@ export default function JobDetailPage() {
     totalEstimate: 0,
     contractAmount: 0,
   });
+
   const [paintForm, setPaintForm] = useState({
     area: "",
     colorName: "",
@@ -184,6 +197,19 @@ export default function JobDetailPage() {
   const actualProfit = contractOrTotalAmount - actualTotalCost;
   const actualMarginPct = contractOrTotalAmount > 0 ? (actualProfit / contractOrTotalAmount) * 100 : 0;
 
+  const invoiceTotal = job.invoices.reduce((sum, i) => sum + Number(i.total), 0);
+  const paymentsTotal = job.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+  const balanceDue = contractOrTotalAmount - paymentsTotal;
+
+  const knownAttachments = [
+    ...job.expenses
+      .filter((e) => !!e.receiptUrl)
+      .map((e) => ({ id: `expense-${e.id}`, name: e.vendor || "Expense receipt", url: e.receiptUrl! })),
+    ...job.payments
+      .filter((p) => !!p.attachmentUrl)
+      .map((p) => ({ id: `payment-${p.id}`, name: `Payment ${formatDateTime(p.dateReceived)}`, url: p.attachmentUrl! })),
+  ];
+
   return (
     <>
       <PageHeader
@@ -207,307 +233,482 @@ export default function JobDetailPage() {
         }
       />
 
-      <div className="grid md:grid-cols-3 gap-4">
-        <div className="card p-5 md:col-span-2">
-          <h2 className="text-base font-semibold">Overview</h2>
-          <div className="grid grid-cols-2 gap-4 mt-3 text-sm">
-            <Stat label="Materials budget" value={formatCurrency(Number(job.materialsBudget))} />
-            <Stat label="Labor budget" value={formatCurrency(Number(job.laborBudget))} />
-            <Stat label="Subtotal (after burden)" value={formatCurrency(Number(job.subtotalBeforeMarkup))} />
-            <Stat label="Total estimate" value={formatCurrency(Number(job.totalEstimate))} />
-            <Stat label="Contract" value={formatCurrency(Number(job.contractAmount))} />
-            <Stat label="Approved" value={job.approvedAt ? formatDateTime(job.approvedAt) : "—"} />
-          </div>
-
-          <h2 className="text-base font-semibold mt-8 mb-2">Scope of Work</h2>
-          <p className="text-sm text-slate-700 whitespace-pre-wrap">{job.scopeOfWork || "—"}</p>
-        </div>
-
-        <div className="card p-5">
-          <h2 className="text-base font-semibold mb-2">Assigned Crew</h2>
-          {job.assignments.length === 0 ? (
-            <p className="text-sm text-slate-500">Nobody assigned yet.</p>
-          ) : (
-            <ul className="text-sm space-y-1">
-              {job.assignments.map((a) => (
-                <li key={a.id}>{a.user.name}</li>
-              ))}
-            </ul>
-          )}
+      <div className="card p-2 mb-4">
+        <div className="flex flex-wrap gap-2">
+          {WORKSPACE_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={[
+                "px-3 py-2 rounded-md text-sm font-medium transition",
+                activeTab === tab.id ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200",
+              ].join(" ")}
+              onClick={() => setActiveTab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
       </div>
 
-      <div className="grid md:grid-cols-2 gap-4 mt-4">
-        <div className="card p-5">
-          <h2 className="text-base font-semibold mb-3">Recent Time Entries</h2>
-          {job.timeEntries.length === 0 ? (
-            <p className="text-sm text-slate-500">No time logged.</p>
-          ) : (
-            <ul className="text-sm divide-y">
-              {job.timeEntries.slice(0, 8).map((t) => (
-                <li key={t.id} className="py-2 flex justify-between">
-                  <span>{t.user.name}</span>
-                  <span className="text-slate-500">
-                    {t.hoursWorked ? `${Number(t.hoursWorked).toFixed(2)}h` : "in progress"}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        <div className="card p-5">
-          <h2 className="text-base font-semibold mb-3">Invoices</h2>
-          {job.invoices.length === 0 ? (
-            <p className="text-sm text-slate-500">No invoices yet.</p>
-          ) : (
-            <ul className="text-sm divide-y">
-              {job.invoices.map((i) => (
-                <li key={i.id} className="py-2 flex justify-between">
-                  <span>{i.invoiceNumber} · {i.title}</span>
-                  <span>{formatCurrency(Number(i.total))}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-
-      <div className="card p-5 mt-4">
-        <h2 className="text-base font-semibold mb-1">Budget &amp; ROI</h2>
-        <p className="text-xs text-slate-500 mb-4">Quick cost and profitability foundation for this job.</p>
-
-        <div className="grid md:grid-cols-2 gap-6">
-          <div>
-            <div className="text-sm font-semibold mb-2">Estimated</div>
-            <div className="grid grid-cols-2 gap-4">
-              <Stat label="Contract / total amount" value={formatCurrency(contractOrTotalAmount)} />
-              <Stat label="Estimated materials budget" value={formatCurrency(estimatedMaterials)} />
-              <Stat label="Estimated labor budget" value={formatCurrency(estimatedLabor)} />
-              <Stat
-                label="Estimated subcontractor budget"
-                value={estimatedSubcontractorPending ? `${formatCurrency(estimatedSubcontractor)} (Pending)` : formatCurrency(estimatedSubcontractor)}
-              />
+      {activeTab === "overview" && (
+        <div className="grid md:grid-cols-3 gap-4">
+          <div className="card p-5 md:col-span-2">
+            <h2 className="text-base font-semibold mb-3">Overview</h2>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <Stat label="Customer" value={job.customer.name} />
+              <Stat label="Address" value={job.address || "Pending"} />
+              <Stat label="Status" value={job.status} />
+              <Stat label="Contract" value={formatCurrency(contractOrTotalAmount)} />
               <Stat label="Estimated total cost" value={formatCurrency(estimatedTotalCost)} />
-              <Stat label="Estimated gross profit" value={formatCurrency(estimatedGrossProfit)} />
-              <Stat label="Estimated margin %" value={`${estimatedMarginPct.toFixed(1)}%`} />
-              <RoiFlag profit={estimatedGrossProfit} />
+              <Stat label="Estimated margin" value={`${estimatedMarginPct.toFixed(1)}%`} />
+              <Stat label="Actual total cost" value={formatCurrency(actualTotalCost)} />
+              <Stat label="Actual margin" value={`${actualMarginPct.toFixed(1)}%`} />
             </div>
           </div>
 
-          <div>
-            <div className="text-sm font-semibold mb-2">Actual</div>
-            <div className="grid grid-cols-2 gap-4">
-              <Stat
-                label="Actual labor cost"
-                value={actualLaborPending ? `${formatCurrency(actualLaborCost)} (Pending)` : formatCurrency(actualLaborCost)}
+          <div className="card p-5">
+            <h2 className="text-base font-semibold mb-2">Assigned Crew</h2>
+            {job.assignments.length === 0 ? (
+              <p className="text-sm text-slate-500">Nobody assigned yet.</p>
+            ) : (
+              <ul className="text-sm space-y-1">
+                {job.assignments.map((a) => (
+                  <li key={a.id}>{a.user.name}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="card p-5">
+            <h2 className="text-base font-semibold mb-2">Quick Actions</h2>
+            <div className="space-y-2">
+              <button className="btn btn-secondary w-full" type="button" onClick={openEditModal}>Edit Job</button>
+              <div>
+                <label className="label">Update status</label>
+                <select
+                  className="input"
+                  value={job.status}
+                  onChange={(e) => setStatus.mutate({ id, status: e.target.value as any })}
+                >
+                  {STATUSES.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "budget" && (
+        <div className="space-y-4">
+          <div className="card p-5">
+            <h2 className="text-base font-semibold mb-3">Budget</h2>
+            <div className="grid md:grid-cols-3 gap-4">
+              <Stat label="Materials budget" value={formatCurrency(estimatedMaterials)} />
+              <Stat label="Labor budget" value={formatCurrency(estimatedLabor)} />
+              <Stat label="Subcontractor budget" value={estimatedSubcontractorPending ? `${formatCurrency(estimatedSubcontractor)} (Pending)` : formatCurrency(estimatedSubcontractor)} />
+              <Stat label="Estimated total cost" value={formatCurrency(estimatedTotalCost)} />
+              <Stat label="Contract amount" value={formatCurrency(contractOrTotalAmount)} />
+              <Stat label="ROI estimate" value={`${estimatedMarginPct.toFixed(1)}%`} />
+            </div>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-4">
+            <ComingSoonCard title="Equipment" description="Equipment budgeting tools are coming soon." />
+            <ComingSoonCard title="Budget Line Items" description="Detailed editable line items are coming soon." />
+          </div>
+        </div>
+      )}
+
+      {activeTab === "scope" && (
+        <div className="space-y-4">
+          <div className="card p-5">
+            <h2 className="text-base font-semibold mb-2">Scope of Work</h2>
+            <p className="text-sm text-slate-700 whitespace-pre-wrap">{job.scopeOfWork || "Pending"}</p>
+            <h3 className="text-sm font-semibold mt-5 mb-1">Notes</h3>
+            <p className="text-sm text-slate-600 whitespace-pre-wrap">{job.notes || "Pending"}</p>
+          </div>
+
+          <div className="card p-5">
+            <h2 className="text-base font-semibold mb-2">Paint Colors</h2>
+            <p className="text-xs text-slate-500 mb-4">
+              Track paint decisions by area. Examples: Walls / Pinecone Hill / Behr, Trims / Windswept, Doors / Haute Couture.
+            </p>
+
+            <div className="grid md:grid-cols-5 gap-2">
+              <input
+                className="input"
+                placeholder="Area (Walls)"
+                value={paintForm.area}
+                onChange={(e) => setPaintForm((f) => ({ ...f, area: e.target.value }))}
               />
-              <Stat
-                label="Actual expenses total"
-                value={actualExpensesPending ? `${formatCurrency(actualExpensesTotal)} (Pending)` : formatCurrency(actualExpensesTotal)}
+              <input
+                className="input"
+                placeholder="Color name"
+                value={paintForm.colorName}
+                onChange={(e) => setPaintForm((f) => ({ ...f, colorName: e.target.value }))}
               />
-              <Stat
-                label="Actual subcontractor cost"
-                value={actualSubcontractorPending ? `${formatCurrency(actualSubcontractorCost)} (Pending)` : formatCurrency(actualSubcontractorCost)}
+              <input
+                className="input"
+                placeholder="Brand (optional)"
+                value={paintForm.brand}
+                onChange={(e) => setPaintForm((f) => ({ ...f, brand: e.target.value }))}
               />
-              <Stat label="Actual total cost" value={formatCurrency(actualTotalCost)} />
-              <Stat label="Actual profit" value={formatCurrency(actualProfit)} />
-              <Stat label="Actual margin %" value={`${actualMarginPct.toFixed(1)}%`} />
+              <input
+                className="input"
+                placeholder="Finish (optional)"
+                value={paintForm.finish}
+                onChange={(e) => setPaintForm((f) => ({ ...f, finish: e.target.value }))}
+              />
+              <button
+                className="btn btn-primary"
+                disabled={addPaintColor.isPending || !paintForm.area || !paintForm.colorName}
+                onClick={() => addPaintColor.mutate({ jobId: id, ...paintForm })}
+              >
+                {addPaintColor.isPending ? "Adding…" : "Add Color"}
+              </button>
+            </div>
+
+            <textarea
+              className="input mt-2"
+              placeholder="Notes (optional)"
+              value={paintForm.notes}
+              onChange={(e) => setPaintForm((f) => ({ ...f, notes: e.target.value }))}
+            />
+
+            {job.paintColors.length === 0 ? (
+              <p className="text-sm text-slate-500 mt-4">No paint colors added yet.</p>
+            ) : (
+              <div className="overflow-x-auto mt-4">
+                <table className="w-full text-sm">
+                  <thead className="text-left bg-slate-50">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">Area</th>
+                      <th className="px-3 py-2 font-medium">Color</th>
+                      <th className="px-3 py-2 font-medium">Brand</th>
+                      <th className="px-3 py-2 font-medium">Finish</th>
+                      <th className="px-3 py-2 font-medium">Notes</th>
+                      <th className="px-3 py-2 font-medium text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {job.paintColors.map((color) => {
+                      const isEditing = editingPaintColorId === color.id;
+                      return (
+                        <tr key={color.id} className="border-t border-slate-100 align-top">
+                          <td className="px-3 py-2">
+                            {isEditing ? (
+                              <input
+                                className="input"
+                                value={editingPaintForm.area}
+                                onChange={(e) => setEditingPaintForm((f) => ({ ...f, area: e.target.value }))}
+                              />
+                            ) : (
+                              color.area
+                            )}
+                          </td>
+                          <td className="px-3 py-2">
+                            {isEditing ? (
+                              <input
+                                className="input"
+                                value={editingPaintForm.colorName}
+                                onChange={(e) => setEditingPaintForm((f) => ({ ...f, colorName: e.target.value }))}
+                              />
+                            ) : (
+                              color.colorName
+                            )}
+                          </td>
+                          <td className="px-3 py-2">
+                            {isEditing ? (
+                              <input
+                                className="input"
+                                value={editingPaintForm.brand}
+                                onChange={(e) => setEditingPaintForm((f) => ({ ...f, brand: e.target.value }))}
+                              />
+                            ) : (
+                              color.brand || "—"
+                            )}
+                          </td>
+                          <td className="px-3 py-2">
+                            {isEditing ? (
+                              <input
+                                className="input"
+                                value={editingPaintForm.finish}
+                                onChange={(e) => setEditingPaintForm((f) => ({ ...f, finish: e.target.value }))}
+                              />
+                            ) : (
+                              color.finish || "—"
+                            )}
+                          </td>
+                          <td className="px-3 py-2 max-w-xs">
+                            {isEditing ? (
+                              <textarea
+                                className="input"
+                                value={editingPaintForm.notes}
+                                onChange={(e) => setEditingPaintForm((f) => ({ ...f, notes: e.target.value }))}
+                              />
+                            ) : (
+                              <span className="text-slate-600">{color.notes || "—"}</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="flex justify-end gap-2">
+                              {isEditing ? (
+                                <>
+                                  <button
+                                    className="btn btn-secondary text-xs"
+                                    onClick={() => {
+                                      setEditingPaintColorId(null);
+                                      setEditingPaintForm({ area: "", colorName: "", brand: "", finish: "", notes: "" });
+                                    }}
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    className="btn btn-primary text-xs"
+                                    disabled={updatePaintColor.isPending || !editingPaintForm.area || !editingPaintForm.colorName}
+                                    onClick={() =>
+                                      updatePaintColor.mutate({
+                                        id: color.id,
+                                        data: {
+                                          area: editingPaintForm.area,
+                                          colorName: editingPaintForm.colorName,
+                                          brand: editingPaintForm.brand,
+                                          finish: editingPaintForm.finish,
+                                          notes: editingPaintForm.notes,
+                                        },
+                                      })
+                                    }
+                                  >
+                                    Save
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button
+                                    className="btn btn-secondary text-xs"
+                                    onClick={() => {
+                                      setEditingPaintColorId(color.id);
+                                      setEditingPaintForm({
+                                        area: color.area,
+                                        colorName: color.colorName,
+                                        brand: color.brand || "",
+                                        finish: color.finish || "",
+                                        notes: color.notes || "",
+                                      });
+                                    }}
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    className="btn btn-secondary text-xs"
+                                    disabled={deletePaintColor.isPending}
+                                    onClick={() => deletePaintColor.mutate({ id: color.id })}
+                                  >
+                                    Delete
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-4">
+            <ComingSoonCard title="AI Scope Builder" description="AI-assisted scope drafting is coming soon." />
+            {job.priceBreakdownJson ? (
+              <div className="card p-5">
+                <h3 className="text-base font-semibold mb-2">Price Breakdown</h3>
+                <pre className="text-xs bg-slate-50 border border-slate-200 rounded-md p-3 overflow-auto">
+                  {JSON.stringify(job.priceBreakdownJson, null, 2)}
+                </pre>
+              </div>
+            ) : (
+              <ComingSoonCard title="Price Breakdown" description="Interactive price breakdown tools are coming soon." />
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === "tracking" && (
+        <div className="space-y-4">
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="card p-5">
+              <h2 className="text-base font-semibold mb-3">Time Entries</h2>
+              {job.timeEntries.length === 0 ? (
+                <p className="text-sm text-slate-500">No time logged.</p>
+              ) : (
+                <ul className="text-sm divide-y">
+                  {job.timeEntries.slice(0, 12).map((t) => (
+                    <li key={t.id} className="py-2 flex justify-between">
+                      <span>{t.user.name}</span>
+                      <span className="text-slate-500">
+                        {t.paidHours != null
+                          ? `${Number(t.paidHours).toFixed(2)}h`
+                          : t.hoursWorked != null
+                            ? `${Number(t.hoursWorked).toFixed(2)}h`
+                            : "in progress"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="card p-5">
+              <h2 className="text-base font-semibold mb-3">Labor Cost</h2>
+              <div className="grid grid-cols-2 gap-4">
+                <Stat label="Actual labor cost" value={actualLaborPending ? `${formatCurrency(actualLaborCost)} (Pending)` : formatCurrency(actualLaborCost)} />
+                <Stat label="Tracked entries" value={String(job.timeEntries.length)} />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="card p-5">
+              <h2 className="text-base font-semibold mb-3">Expenses</h2>
+              {nonRejectedExpenses.length === 0 ? (
+                <p className="text-sm text-slate-500">No expenses tracked yet.</p>
+              ) : (
+                <ul className="text-sm divide-y">
+                  {nonRejectedExpenses.slice(0, 12).map((e) => (
+                    <li key={e.id} className="py-2 flex items-start justify-between gap-3">
+                      <span className="text-slate-700">{e.vendor || "Expense"} · {e.category}</span>
+                      <span>{formatCurrency(Number(e.amount))}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="card p-5">
+              <h2 className="text-base font-semibold mb-3">Receipts</h2>
+              {job.expenses.filter((e) => !!e.receiptUrl).length === 0 ? (
+                <p className="text-sm text-slate-500">No receipts uploaded yet.</p>
+              ) : (
+                <ul className="text-sm divide-y">
+                  {job.expenses.filter((e) => !!e.receiptUrl).slice(0, 12).map((e) => (
+                    <li key={e.id} className="py-2 flex items-start justify-between gap-3">
+                      <span>{e.vendor || "Receipt"}</span>
+                      <a className="text-brand-700 hover:underline" href={e.receiptUrl!} target="_blank" rel="noreferrer">Open</a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+
+          <div className="grid md:grid-cols-3 gap-4">
+            <div className="card p-5">
+              <h2 className="text-base font-semibold mb-3">Subcontractors</h2>
+              {subcontractorExpenses.length === 0 ? (
+                <p className="text-sm text-slate-500">No subcontractor costs tracked yet.</p>
+              ) : (
+                <ul className="text-sm divide-y">
+                  {subcontractorExpenses.slice(0, 8).map((e) => (
+                    <li key={e.id} className="py-2 flex justify-between">
+                      <span>{e.vendor || "Subcontractor"}</span>
+                      <span>{formatCurrency(Number(e.amount))}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <ComingSoonCard title="Progress Photos" description="Progress photo timeline is coming soon." />
+            <ComingSoonCard title="Daily Logs" description="Daily work logs are coming soon." />
+          </div>
+        </div>
+      )}
+
+      {activeTab === "financials" && (
+        <div className="space-y-4">
+          <div className="card p-5">
+            <h2 className="text-base font-semibold mb-3">Financial Summary</h2>
+            <div className="grid md:grid-cols-3 gap-4">
+              <Stat label="Contract amount" value={formatCurrency(contractOrTotalAmount)} />
+              <Stat label="Change orders" value="Coming Soon" />
+              <Stat label="Invoices total" value={formatCurrency(invoiceTotal)} />
+              <Stat label="Payments received" value={formatCurrency(paymentsTotal)} />
+              <Stat label="Balance due" value={formatCurrency(balanceDue)} />
+              <Stat label="Actual costs" value={formatCurrency(actualTotalCost)} />
+              <Stat label="Gross profit" value={formatCurrency(actualProfit)} />
+              <Stat label="Net profit" value={formatCurrency(actualProfit)} />
+              <Stat label="Margin" value={`${actualMarginPct.toFixed(1)}%`} />
+              <Stat label="ROI" value={`${actualMarginPct.toFixed(1)}%`} />
               <RoiFlag profit={actualProfit} />
             </div>
           </div>
-        </div>
-      </div>
 
-      <div className="card p-5 mt-4">
-        <h2 className="text-base font-semibold mb-2">Paint Colors</h2>
-        <p className="text-xs text-slate-500 mb-4">
-          Track paint decisions by area. Examples: Walls / Pinecone Hill / Behr, Trims / Windswept, Doors / Haute Couture.
-        </p>
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="card p-5">
+              <h2 className="text-base font-semibold mb-3">Invoices</h2>
+              {job.invoices.length === 0 ? (
+                <p className="text-sm text-slate-500">No invoices yet.</p>
+              ) : (
+                <ul className="text-sm divide-y">
+                  {job.invoices.map((i) => (
+                    <li key={i.id} className="py-2 flex justify-between">
+                      <span>{i.invoiceNumber} · {i.title}</span>
+                      <span>{formatCurrency(Number(i.total))}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
 
-        <div className="grid md:grid-cols-5 gap-2">
-          <input
-            className="input"
-            placeholder="Area (Walls)"
-            value={paintForm.area}
-            onChange={(e) => setPaintForm((f) => ({ ...f, area: e.target.value }))}
-          />
-          <input
-            className="input"
-            placeholder="Color name"
-            value={paintForm.colorName}
-            onChange={(e) => setPaintForm((f) => ({ ...f, colorName: e.target.value }))}
-          />
-          <input
-            className="input"
-            placeholder="Brand (optional)"
-            value={paintForm.brand}
-            onChange={(e) => setPaintForm((f) => ({ ...f, brand: e.target.value }))}
-          />
-          <input
-            className="input"
-            placeholder="Finish (optional)"
-            value={paintForm.finish}
-            onChange={(e) => setPaintForm((f) => ({ ...f, finish: e.target.value }))}
-          />
-          <button
-            className="btn btn-primary"
-            disabled={addPaintColor.isPending || !paintForm.area || !paintForm.colorName}
-            onClick={() => addPaintColor.mutate({ jobId: id, ...paintForm })}
-          >
-            {addPaintColor.isPending ? "Adding…" : "Add Color"}
-          </button>
-        </div>
-
-        <textarea
-          className="input mt-2"
-          placeholder="Notes (optional)"
-          value={paintForm.notes}
-          onChange={(e) => setPaintForm((f) => ({ ...f, notes: e.target.value }))}
-        />
-
-        {job.paintColors.length === 0 ? (
-          <p className="text-sm text-slate-500 mt-4">No paint colors added yet.</p>
-        ) : (
-          <div className="overflow-x-auto mt-4">
-            <table className="w-full text-sm">
-              <thead className="text-left bg-slate-50">
-                <tr>
-                  <th className="px-3 py-2 font-medium">Area</th>
-                  <th className="px-3 py-2 font-medium">Color</th>
-                  <th className="px-3 py-2 font-medium">Brand</th>
-                  <th className="px-3 py-2 font-medium">Finish</th>
-                  <th className="px-3 py-2 font-medium">Notes</th>
-                  <th className="px-3 py-2 font-medium text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {job.paintColors.map((color) => {
-                  const isEditing = editingPaintColorId === color.id;
-                  return (
-                    <tr key={color.id} className="border-t border-slate-100 align-top">
-                      <td className="px-3 py-2">
-                        {isEditing ? (
-                          <input
-                            className="input"
-                            value={editingPaintForm.area}
-                            onChange={(e) => setEditingPaintForm((f) => ({ ...f, area: e.target.value }))}
-                          />
-                        ) : (
-                          color.area
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        {isEditing ? (
-                          <input
-                            className="input"
-                            value={editingPaintForm.colorName}
-                            onChange={(e) => setEditingPaintForm((f) => ({ ...f, colorName: e.target.value }))}
-                          />
-                        ) : (
-                          color.colorName
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        {isEditing ? (
-                          <input
-                            className="input"
-                            value={editingPaintForm.brand}
-                            onChange={(e) => setEditingPaintForm((f) => ({ ...f, brand: e.target.value }))}
-                          />
-                        ) : (
-                          color.brand || "—"
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        {isEditing ? (
-                          <input
-                            className="input"
-                            value={editingPaintForm.finish}
-                            onChange={(e) => setEditingPaintForm((f) => ({ ...f, finish: e.target.value }))}
-                          />
-                        ) : (
-                          color.finish || "—"
-                        )}
-                      </td>
-                      <td className="px-3 py-2 max-w-xs">
-                        {isEditing ? (
-                          <textarea
-                            className="input"
-                            value={editingPaintForm.notes}
-                            onChange={(e) => setEditingPaintForm((f) => ({ ...f, notes: e.target.value }))}
-                          />
-                        ) : (
-                          <span className="text-slate-600">{color.notes || "—"}</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        <div className="flex justify-end gap-2">
-                          {isEditing ? (
-                            <>
-                              <button
-                                className="btn btn-secondary text-xs"
-                                onClick={() => {
-                                  setEditingPaintColorId(null);
-                                  setEditingPaintForm({ area: "", colorName: "", brand: "", finish: "", notes: "" });
-                                }}
-                              >
-                                Cancel
-                              </button>
-                              <button
-                                className="btn btn-primary text-xs"
-                                disabled={updatePaintColor.isPending || !editingPaintForm.area || !editingPaintForm.colorName}
-                                onClick={() =>
-                                  updatePaintColor.mutate({
-                                    id: color.id,
-                                    data: {
-                                      area: editingPaintForm.area,
-                                      colorName: editingPaintForm.colorName,
-                                      brand: editingPaintForm.brand,
-                                      finish: editingPaintForm.finish,
-                                      notes: editingPaintForm.notes,
-                                    },
-                                  })
-                                }
-                              >
-                                Save
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <button
-                                className="btn btn-secondary text-xs"
-                                onClick={() => {
-                                  setEditingPaintColorId(color.id);
-                                  setEditingPaintForm({
-                                    area: color.area,
-                                    colorName: color.colorName,
-                                    brand: color.brand || "",
-                                    finish: color.finish || "",
-                                    notes: color.notes || "",
-                                  });
-                                }}
-                              >
-                                Edit
-                              </button>
-                              <button
-                                className="btn btn-secondary text-xs"
-                                disabled={deletePaintColor.isPending}
-                                onClick={() => deletePaintColor.mutate({ id: color.id })}
-                              >
-                                Delete
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            <div className="card p-5">
+              <h2 className="text-base font-semibold mb-3">Payments</h2>
+              {job.payments.length === 0 ? (
+                <p className="text-sm text-slate-500">No payments recorded yet.</p>
+              ) : (
+                <ul className="text-sm divide-y">
+                  {job.payments.map((p) => (
+                    <li key={p.id} className="py-2 flex justify-between">
+                      <span>{p.method} · {formatDateTime(p.dateReceived)}</span>
+                      <span>{formatCurrency(Number(p.amount))}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {activeTab === "documents" && (
+        <div className="space-y-4">
+          <div className="grid md:grid-cols-3 gap-4">
+            <ComingSoonCard title="Proposal" description="Linked proposal document is coming soon." />
+            <ComingSoonCard title="Signed Contract" description="Signed contract storage is coming soon." />
+            <ComingSoonCard title="Permits" description="Permit tracking is coming soon." />
+            <ComingSoonCard title="Warranty" description="Warranty documents are coming soon." />
+            <ComingSoonCard title="Photos" description="Project photo documents are coming soon." />
+            <div className="card p-5">
+              <h3 className="text-base font-semibold mb-2">Uploaded Files</h3>
+              {knownAttachments.length === 0 ? (
+                <p className="text-sm text-slate-500">No uploaded files yet.</p>
+              ) : (
+                <ul className="text-sm divide-y">
+                  {knownAttachments.slice(0, 12).map((f) => (
+                    <li key={f.id} className="py-2 flex justify-between gap-2">
+                      <span className="text-slate-700 truncate">{f.name}</span>
+                      <a className="text-brand-700 hover:underline" href={f.url} target="_blank" rel="noreferrer">Open</a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {isEditOpen && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
@@ -599,6 +800,16 @@ function RoiFlag({ profit }: { profit: number }) {
       <div className={`text-sm font-semibold mt-1 ${profitable ? "text-emerald-700" : "text-rose-700"}`}>
         {profitable ? "Profitable" : "Losing Money"}
       </div>
+    </div>
+  );
+}
+
+function ComingSoonCard({ title, description }: { title: string; description: string }) {
+  return (
+    <div className="card p-5">
+      <h3 className="text-base font-semibold mb-2">{title}</h3>
+      <p className="text-sm text-slate-500">Coming Soon</p>
+      <p className="text-xs text-slate-500 mt-1">{description}</p>
     </div>
   );
 }
