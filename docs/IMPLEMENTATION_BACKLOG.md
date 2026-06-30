@@ -278,3 +278,44 @@
 
 ## Suggested Commit Message For This Docs Update
 - `docs: expand implementation backlog from user audit`
+
+---
+
+## Admin UX Polish Pass
+
+### Objective
+- Run a focused admin UX polish pass before the next feature build so the system feels consistent, fast to operate, and premium rather than MVP-level.
+
+### Goals
+1. Every table row should be clickable when it represents an entity.
+2. Every major entity should have a detail view/workspace:
+	- Job/Project
+	- Customer
+	- Opportunity/Lead
+	- Employee
+	- Invoice
+	- Expense
+3. Add missing Edit buttons where needed.
+4. Add clear Create/Add buttons where missing.
+5. Add loading states.
+6. Add empty states.
+7. Add Save/Cancel buttons to all forms and modals.
+8. Standardize cards, spacing, typography, and button styles.
+9. Make the app feel like a premium business operating system, not an MVP.
+
+### Recommended Small Commits For Admin UX Polish
+- `feat(admin-ux): make entity table rows clickable and route to detail workspaces`
+- `feat(admin-ux): add missing Create/Add and Edit actions across admin modules`
+- `feat(admin-ux): add standardized loading and empty states for list/detail screens`
+- `feat(admin-ux): enforce Save/Cancel action pattern in forms and modals`
+- `feat(admin-ux): apply shared UI standards for cards, spacing, typography, and buttons`
+
+### Next 5 Small Commits (Exact Order)
+1. `feat(admin-ux): make entity table rows clickable and route to detail workspaces`
+2. `feat(admin-ux): add missing Create/Add and Edit actions across admin modules`
+3. `feat(admin-ux): add standardized loading and empty states for list/detail screens`
+4. `feat(admin-ux): enforce Save/Cancel action pattern in forms and modals`
+5. `feat(admin-ux): apply shared UI standards for cards, spacing, typography, and buttons`
+
+### Suggested Commit Message For This Docs Update
+- `docs: add admin ux polish plan`
