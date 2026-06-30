@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -9,6 +9,7 @@ import { Plus } from "lucide-react";
 import { toast } from "sonner";
 
 export default function JobsPage() {
+  const router = useRouter();
   const utils = api.useUtils();
   const { data, isLoading } = api.jobs.list.useQuery();
   const customers = api.customers.list.useQuery();
@@ -66,13 +67,22 @@ export default function JobsPage() {
               <tr><td colSpan={6} className="px-4 py-6 text-slate-500">No jobs yet.</td></tr>
             ) : (
               data?.map((j) => (
-                <tr key={j.id} className="border-t border-slate-100 hover:bg-slate-50">
+                <tr
+                  key={j.id}
+                  className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer"
+                  onClick={() => router.push(`/jobs/${j.id}`)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      router.push(`/jobs/${j.id}`);
+                    }
+                  }}
+                  tabIndex={0}
+                  role="link"
+                  aria-label={`Open job ${j.name}`}
+                >
                   <td className="px-4 py-2 font-mono text-xs">{j.estimateNumber}</td>
-                  <td className="px-4 py-2">
-                    <Link className="text-brand-700 hover:underline" href={`/jobs/${j.id}`}>
-                      {j.name}
-                    </Link>
-                  </td>
+                  <td className="px-4 py-2 text-brand-700">{j.name}</td>
                   <td className="px-4 py-2">{j.customer.name}</td>
                   <td className="px-4 py-2">
                     <span className="badge bg-slate-100 text-slate-700 capitalize">{j.status}</span>

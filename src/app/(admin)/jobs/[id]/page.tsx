@@ -28,24 +28,27 @@ export default function JobDetailPage() {
         title={job.name}
         description={`${job.estimateNumber} · ${job.customer.name}`}
         actions={
-          <select
-            className="input w-auto"
-            value={job.status}
-            onChange={(e) => setStatus.mutate({ id, status: e.target.value as any })}
-          >
-            {STATUSES.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
+          <div className="flex items-center gap-2">
+            <button className="btn btn-secondary" type="button" disabled>
+              Edit Job
+            </button>
+            <select
+              className="input w-auto"
+              value={job.status}
+              onChange={(e) => setStatus.mutate({ id, status: e.target.value as any })}
+            >
+              {STATUSES.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </div>
         }
       />
 
       <div className="grid md:grid-cols-3 gap-4">
         <div className="card p-5 md:col-span-2">
-          <div className="text-sm font-medium mb-2">Scope of work</div>
-          <p className="text-sm text-slate-700 whitespace-pre-wrap">{job.scopeOfWork || "—"}</p>
-
-          <div className="grid grid-cols-2 gap-4 mt-6 text-sm">
+          <h2 className="text-base font-semibold">Overview</h2>
+          <div className="grid grid-cols-2 gap-4 mt-3 text-sm">
             <Stat label="Materials budget" value={formatCurrency(Number(job.materialsBudget))} />
             <Stat label="Labor budget" value={formatCurrency(Number(job.laborBudget))} />
             <Stat label="Subtotal (after burden)" value={formatCurrency(Number(job.subtotalBeforeMarkup))} />
@@ -53,10 +56,13 @@ export default function JobDetailPage() {
             <Stat label="Contract" value={formatCurrency(Number(job.contractAmount))} />
             <Stat label="Approved" value={job.approvedAt ? formatDateTime(job.approvedAt) : "—"} />
           </div>
+
+          <h2 className="text-base font-semibold mt-8 mb-2">Scope of Work</h2>
+          <p className="text-sm text-slate-700 whitespace-pre-wrap">{job.scopeOfWork || "—"}</p>
         </div>
 
         <div className="card p-5">
-          <div className="text-sm font-medium mb-2">Assigned crew</div>
+          <h2 className="text-base font-semibold mb-2">Assigned Crew</h2>
           {job.assignments.length === 0 ? (
             <p className="text-sm text-slate-500">Nobody assigned yet.</p>
           ) : (
@@ -71,7 +77,7 @@ export default function JobDetailPage() {
 
       <div className="grid md:grid-cols-2 gap-4 mt-4">
         <div className="card p-5">
-          <div className="text-sm font-medium mb-3">Recent time entries</div>
+          <h2 className="text-base font-semibold mb-3">Recent Time Entries</h2>
           {job.timeEntries.length === 0 ? (
             <p className="text-sm text-slate-500">No time logged.</p>
           ) : (
@@ -88,7 +94,7 @@ export default function JobDetailPage() {
           )}
         </div>
         <div className="card p-5">
-          <div className="text-sm font-medium mb-3">Invoices</div>
+          <h2 className="text-base font-semibold mb-3">Invoices</h2>
           {job.invoices.length === 0 ? (
             <p className="text-sm text-slate-500">No invoices yet.</p>
           ) : (
