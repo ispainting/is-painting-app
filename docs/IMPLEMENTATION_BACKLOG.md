@@ -269,6 +269,43 @@
 - Dashboard should read from standardized aggregates, not per-page custom calculations.
 - Payroll and profitability should share a single source of truth for approved time and approved costs.
 
+## Architecture Decision - Proposal Before Job
+
+### Decision
+- Proposals come before Jobs.
+- Canonical flow:
+	- Lead / Customer -> Proposal -> Sent / Approved -> Job created from approved Proposal -> Time, Expenses, Payments, and ROI tracked inside Job.
+
+### Proposal Module Responsibilities
+- Customer selection.
+- Project address.
+- Scope of work.
+- Paint colors.
+- Materials budget.
+- Labor budget.
+- Subcontractors.
+- Add-ons.
+- Payment schedule.
+- Proposal PDF generation.
+- Sent date.
+- Proposal status lifecycle:
+	- draft
+	- sent
+	- approved
+	- declined
+	- follow_up
+
+### Job Module Responsibilities (After Proposal Approval)
+- Job is created by copying approved proposal data as the starting baseline.
+- Job then becomes the operational and financial execution workspace for:
+	- Clock-ins.
+	- Actual labor cost.
+	- Actual expenses.
+	- Receipts.
+	- Payments.
+	- Invoices.
+	- Profit / ROI.
+
 ## Recommended Next 5 Commits (Exact Order)
 1. `feat(jobs): add clickable job detail workspace with editable status workflow`
 2. `feat(opportunities): add opportunity detail with pipeline stages, source, notes, and follow-up`
