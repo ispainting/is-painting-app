@@ -60,6 +60,14 @@ enum OpportunityStatus {
   lost
 }
 
+enum ProposalStatus {
+  draft
+  sent
+  approved
+  declined
+  follow_up
+}
+
 enum InvoiceStatus {
   draft
   sent
@@ -187,6 +195,7 @@ model Customer {
 externalId String? @db.VarChar(100)
 
   jobs              Job[]
+  proposals         Proposal[]
   opportunities     Opportunity[]
   invoices          Invoice[]
   reviewSubmissions ReviewSubmission[]
@@ -377,6 +386,33 @@ model Opportunity {
   @@index([customerId])
   @@index([pipeline, stage])
   @@index([stage])
+}
+
+model Proposal {
+  id                 Int            @id @default(autoincrement())
+  proposalNumber     String         @unique @db.VarChar(20)
+  customerId         Int
+  projectName        String
+  address            String?
+  city               String?        @db.VarChar(100)
+  state              String?        @db.VarChar(50)
+  zipCode            String?        @db.VarChar(20)
+  status             ProposalStatus @default(draft)
+  scopeOfWork        String?        @db.Text
+  notes              String?        @db.Text
+  materialsBudget    Decimal        @default(0) @db.Decimal(12, 2)
+  laborBudget        Decimal        @default(0) @db.Decimal(12, 2)
+  subcontractorBudget Decimal       @default(0) @db.Decimal(12, 2)
+  totalAmount        Decimal        @default(0) @db.Decimal(12, 2)
+  sentAt             DateTime?
+  approvedAt         DateTime?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id])
+
+  @@index([customerId])
+  @@index([status])
 }
 
 // ─── TIME ENTRIES ────────────────────────────────────

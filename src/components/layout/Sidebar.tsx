@@ -15,6 +15,7 @@ const NAV = [
   { href: "/jobs", label: "Jobs", icon: Briefcase },
   { href: "/customers", label: "Customers", icon: Users },
   { href: "/opportunities", label: "Opportunities", icon: Workflow },
+  { href: "/proposals", label: "Proposals", icon: FileText },
   { href: "/time", label: "Time", icon: Clock },
   { href: "/inventory", label: "Inventory", icon: Package },
   { href: "/expenses", label: "Expenses", icon: Receipt },
