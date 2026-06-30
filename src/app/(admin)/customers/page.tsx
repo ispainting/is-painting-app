@@ -123,9 +123,9 @@ export default function CustomersPage() {
 
       {open && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
-          <div className="card w-full max-w-md p-6">
+          <div className="card w-full max-w-md p-6 max-h-[85vh] flex flex-col">
             <div className="text-lg font-semibold mb-3">New customer</div>
-            <div className="space-y-3">
+            <div className="space-y-3 overflow-y-auto pr-1 flex-1">
               <Input label="Name" value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v }))} />
               <Input label="Email" value={form.email} onChange={(v) => setForm((f) => ({ ...f, email: v }))} />
               <Input label="Phone" value={form.phone} onChange={(v) => setForm((f) => ({ ...f, phone: v }))} />
@@ -137,7 +137,7 @@ export default function CustomersPage() {
               <Input label="Zip Code" value={form.zipCode} onChange={(v) => setForm((f) => ({ ...f, zipCode: v }))} />
               <Input label="Source" value={form.source} onChange={(v) => setForm((f) => ({ ...f, source: v }))} />
             </div>
-            <div className="flex justify-end gap-2 mt-5">
+            <div className="flex justify-end gap-2 mt-4 pt-4 border-t border-slate-200 bg-white sticky bottom-0">
               <button className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button>
               <button
                 className="btn btn-primary"
@@ -153,9 +153,9 @@ export default function CustomersPage() {
 
       {editOpen && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
-          <div className="card w-full max-w-md p-6">
+          <div className="card w-full max-w-md p-6 max-h-[85vh] flex flex-col">
             <div className="text-lg font-semibold mb-3">Edit customer</div>
-            <div className="space-y-3">
+            <div className="space-y-3 overflow-y-auto pr-1 flex-1">
               <Input label="Name" value={editForm.name} onChange={(v) => setEditForm((f) => ({ ...f, name: v }))} />
               <Input label="Email" value={editForm.email} onChange={(v) => setEditForm((f) => ({ ...f, email: v }))} />
               <Input label="Phone" value={editForm.phone} onChange={(v) => setEditForm((f) => ({ ...f, phone: v }))} />
@@ -167,7 +167,7 @@ export default function CustomersPage() {
               <Input label="Zip Code" value={editForm.zipCode} onChange={(v) => setEditForm((f) => ({ ...f, zipCode: v }))} />
               <Input label="Source" value={editForm.source} onChange={(v) => setEditForm((f) => ({ ...f, source: v }))} />
             </div>
-            <div className="flex justify-end gap-2 mt-5">
+            <div className="flex justify-end gap-2 mt-4 pt-4 border-t border-slate-200 bg-white sticky bottom-0">
               <button className="btn btn-secondary" onClick={() => setEditOpen(false)}>Cancel</button>
               <button
                 className="btn btn-primary"

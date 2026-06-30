@@ -62,8 +62,22 @@ export default function ProposalsPage() {
     onError: (e) => toast.error(e.message),
   });
 
-  const selectCustomer = (customer: { id: number; name: string }) => {
-    setForm((f) => ({ ...f, customerId: customer.id }));
+  const selectCustomer = (customer: {
+    id: number;
+    name: string;
+    address: string | null;
+    city: string | null;
+    state: string | null;
+    zipCode: string | null;
+  }) => {
+    setForm((f) => ({
+      ...f,
+      customerId: customer.id,
+      address: customer.address || "",
+      city: customer.city || "",
+      state: customer.state || "",
+      zipCode: customer.zipCode || "",
+    }));
     setCustomerSearch(customer.name);
     setShowCustomerResults(false);
   };
@@ -119,9 +133,9 @@ export default function ProposalsPage() {
 
       {open && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
-          <div className="card w-full max-w-3xl p-6">
+          <div className="card w-full max-w-3xl p-6 max-h-[85vh] flex flex-col">
             <div className="text-lg font-semibold mb-3">Create Proposal</div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3 overflow-y-auto pr-1 flex-1">
               <div className="col-span-2">
                 <label className="label">Customer</label>
                 <div className="relative">
@@ -195,7 +209,7 @@ export default function ProposalsPage() {
                 <textarea className="input min-h-20" value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
               </div>
             </div>
-            <div className="flex justify-end gap-2 mt-5">
+            <div className="flex justify-end gap-2 mt-4 pt-4 border-t border-slate-200 bg-white sticky bottom-0">
               <button className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button>
               <button
                 className="btn btn-primary"

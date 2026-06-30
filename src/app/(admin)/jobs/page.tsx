@@ -31,6 +31,10 @@ export default function JobsPage() {
   const [form, setForm] = useState({
     customerId: 0,
     name: "",
+    address: "",
+    city: "",
+    state: "",
+    zipCode: "",
     materialsBudget: 0,
     laborBudget: 0,
     wcPercent: 17.5,
@@ -41,8 +45,22 @@ export default function JobsPage() {
     jobType: "interior" as "interior" | "exterior" | "both" | "commercial" | "other",
   });
 
-  const selectCustomer = (customer: { id: number; name: string }) => {
-    setForm((f) => ({ ...f, customerId: customer.id }));
+  const selectCustomer = (customer: {
+    id: number;
+    name: string;
+    address: string | null;
+    city: string | null;
+    state: string | null;
+    zipCode: string | null;
+  }) => {
+    setForm((f) => ({
+      ...f,
+      customerId: customer.id,
+      address: customer.address || "",
+      city: customer.city || "",
+      state: customer.state || "",
+      zipCode: customer.zipCode || "",
+    }));
     setCustomerSearch(customer.name);
     setShowCustomerResults(false);
   };
@@ -109,9 +127,9 @@ export default function JobsPage() {
 
       {open && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
-          <div className="card w-full max-w-lg p-6">
+          <div className="card w-full max-w-lg p-6 max-h-[85vh] flex flex-col">
             <div className="text-lg font-semibold mb-3">New job</div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3 overflow-y-auto pr-1 flex-1">
               <div className="col-span-2">
                 <label className="label">Customer</label>
                 <div className="relative">
@@ -153,6 +171,13 @@ export default function JobsPage() {
                 <label className="label">Job name</label>
                 <input className="input" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
               </div>
+              <div className="col-span-2">
+                <label className="label">Street</label>
+                <input className="input" value={form.address} onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))} />
+              </div>
+              <FieldText label="City" value={form.city} onChange={(v) => setForm((f) => ({ ...f, city: v }))} />
+              <FieldText label="State" value={form.state} onChange={(v) => setForm((f) => ({ ...f, state: v }))} />
+              <FieldText label="Zip" value={form.zipCode} onChange={(v) => setForm((f) => ({ ...f, zipCode: v }))} />
               <Field label="Materials" value={form.materialsBudget} onChange={(v) => setForm((f) => ({ ...f, materialsBudget: v }))} />
               <Field label="Labor" value={form.laborBudget} onChange={(v) => setForm((f) => ({ ...f, laborBudget: v }))} />
               <Field label="WC %" value={form.wcPercent} onChange={(v) => setForm((f) => ({ ...f, wcPercent: v }))} />
@@ -161,7 +186,7 @@ export default function JobsPage() {
               <Field label="Markup %" value={form.markupPercent} onChange={(v) => setForm((f) => ({ ...f, markupPercent: v }))} />
               <Field label="Tax %" value={form.taxPercent} onChange={(v) => setForm((f) => ({ ...f, taxPercent: v }))} />
             </div>
-            <div className="flex justify-end gap-2 mt-5">
+            <div className="flex justify-end gap-2 mt-4 pt-4 border-t border-slate-200 bg-white sticky bottom-0">
               <button className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button>
               <button
                 className="btn btn-primary"
@@ -189,6 +214,15 @@ function Field({ label, value, onChange }: { label: string; value: number; onCha
         value={value}
         onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
       />
+    </div>
+  );
+}
+
+function FieldText({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <div>
+      <label className="label">{label}</label>
+      <input className="input" value={value} onChange={(e) => onChange(e.target.value)} />
     </div>
   );
 }
