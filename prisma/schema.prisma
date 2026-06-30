@@ -71,6 +71,29 @@ enum ProposalStatus {
   converted
 }
 
+enum ProposalTemplate {
+  interior_painting
+  exterior_painting
+  cabinet_refinishing
+  deck_restoration
+  pergola_restoration
+  trim_restoration
+  wallpaper_removal
+  drywall_repair
+  commercial_painting
+  new_construction
+  property_maintenance
+}
+
+enum ProposalType {
+  residential
+  commercial
+  restoration
+  maintenance
+  new_construction
+  custom
+}
+
 enum InvoiceStatus {
   draft
   sent
@@ -401,11 +424,15 @@ model Proposal {
   state               String?        @db.VarChar(50)
   zipCode             String?        @db.VarChar(20)
   status              ProposalStatus @default(draft)
+  proposalTemplate    ProposalTemplate?
+  proposalType        ProposalType?
+  projectSummary      String?        @db.Text
   scopeOfWork         String?        @db.Text
   includedWork        String?        @db.Text
   exclusions          String?        @db.Text
   importantNotes      String?        @db.Text
   recommendations     String?        @db.Text
+  closingText         String?        @db.Text
   proposalBody        String?        @db.Text
   aiAssistantNotes    String?        @db.Text
   notes               String?        @db.Text
@@ -427,9 +454,28 @@ model Proposal {
   customer    Customer             @relation(fields: [customerId], references: [id])
   options     ProposalOption[]
   attachments ProposalAttachment[]
+  paintColors ProposalPaintColor[]
 
   @@index([customerId])
   @@index([status])
+}
+
+model ProposalPaintColor {
+  id         Int      @id @default(autoincrement())
+  proposalId Int
+  area       String   @db.VarChar(100)
+  colorName  String   @db.VarChar(150)
+  brand      String?  @db.VarChar(100)
+  finish     String?  @db.VarChar(100)
+  notes      String?  @db.Text
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  proposal Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+
+  @@index([proposalId])
+  @@index([proposalId, sortOrder])
 }
 
 model ProposalOption {

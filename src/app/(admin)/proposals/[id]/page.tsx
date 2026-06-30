@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -9,16 +9,31 @@ import { toast } from "sonner";
 
 const TABS = [
   { id: "overview", label: "Overview" },
-  { id: "builder", label: "Builder" },
-  { id: "options", label: "Options" },
+  { id: "scope", label: "Scope" },
+  { id: "pricing", label: "Pricing" },
+  { id: "paint-colors", label: "Paint Colors" },
   { id: "attachments", label: "Attachments" },
-  { id: "pdf-send", label: "PDF" },
-  { id: "email", label: "Email" },
+  { id: "preview", label: "Preview" },
   { id: "approval", label: "Approval" },
+  { id: "activity", label: "Activity" },
 ] as const;
 
 type ProposalTab = (typeof TABS)[number]["id"];
 const PROPOSAL_STATUSES = ["draft", "ready", "sent", "viewed", "approved", "declined", "follow_up", "converted"] as const;
+const PROPOSAL_TYPES = ["residential", "commercial", "restoration", "maintenance", "new_construction", "custom"] as const;
+const PROPOSAL_TEMPLATES = [
+  "interior_painting",
+  "exterior_painting",
+  "cabinet_refinishing",
+  "deck_restoration",
+  "pergola_restoration",
+  "trim_restoration",
+  "wallpaper_removal",
+  "drywall_repair",
+  "commercial_painting",
+  "new_construction",
+  "property_maintenance",
+] as const;
 
 type OptionDraft = {
   title: string;
@@ -37,6 +52,137 @@ type AttachmentDraft = {
   sortOrder: number;
 };
 
+type PaintColorDraft = {
+  area: string;
+  colorName: string;
+  brand: string;
+  finish: string;
+  notes: string;
+  sortOrder: number;
+};
+
+const TEMPLATE_PRESETS: Record<(typeof PROPOSAL_TEMPLATES)[number], {
+  projectSummary: string;
+  scopeOfWork: string;
+  includedWork: string;
+  exclusions: string;
+  recommendations: string;
+  importantNotes: string;
+  referencesText: string;
+  closingText: string;
+}> = {
+  interior_painting: {
+    projectSummary: "Interior repaint focused on finish quality, cleanliness, and minimal disruption.",
+    scopeOfWork: "Prepare surfaces, patch minor imperfections, apply primer as needed, and apply finish coats.",
+    includedWork: "Masking and protection, wall and trim painting, daily cleanup.",
+    exclusions: "Major drywall replacement and structural repairs unless added in options.",
+    recommendations: "Finalize sheen and color schedule prior to start date.",
+    importantNotes: "Furniture should be moved from immediate work zones before mobilization.",
+    referencesText: "Interior residential references available upon request.",
+    closingText: "Thank you for the opportunity. We look forward to delivering a clean professional result.",
+  },
+  exterior_painting: {
+    projectSummary: "Exterior coating project designed for durability, curb appeal, and long-term protection.",
+    scopeOfWork: "Power wash, scrape, sand, spot-prime, caulk, and apply exterior finish coats.",
+    includedWork: "Surface preparation, minor sealant touchups, and finish application.",
+    exclusions: "Wood replacement, rot remediation, and carpentry unless listed.",
+    recommendations: "Schedule around weather windows for best curing performance.",
+    importantNotes: "Access to all elevations and perimeter must be available during work days.",
+    referencesText: "Exterior project references and before/after images are available.",
+    closingText: "We appreciate the opportunity to protect and refresh your property.",
+  },
+  cabinet_refinishing: {
+    projectSummary: "Cabinet refinishing with controlled prep and durable finish process.",
+    scopeOfWork: "Degrease, sand, prime, and spray or brush/roll finish system based on selected option.",
+    includedWork: "Door/drawer labeling, prep, finish application, and reinstallation.",
+    exclusions: "Hardware replacement and interior cabinet modifications unless listed.",
+    recommendations: "Approve color sample before production coating.",
+    importantNotes: "Kitchen access windows should be coordinated for production efficiency.",
+    referencesText: "Cabinet refinishing references available upon request.",
+    closingText: "Thank you for trusting us with your cabinet refinishing project.",
+  },
+  deck_restoration: {
+    projectSummary: "Deck restoration focused on prep quality, coating longevity, and visual consistency.",
+    scopeOfWork: "Clean, sand, repair minor imperfections, and apply stain or coating system.",
+    includedWork: "Decking and rail prep, finish application, and cleanup.",
+    exclusions: "Board replacement and structural framing repair unless listed.",
+    recommendations: "Select finish type based on sun exposure and maintenance preference.",
+    importantNotes: "Foot traffic should be restricted during curing period.",
+    referencesText: "Deck restoration references can be provided.",
+    closingText: "We look forward to restoring your deck with a durable finish system.",
+  },
+  pergola_restoration: {
+    projectSummary: "Pergola restoration to refresh appearance and improve weather resistance.",
+    scopeOfWork: "Prep, sanding, spot repairs, and protective coating application.",
+    includedWork: "Surface prep, coating/stain, and cleanup.",
+    exclusions: "Structural replacement unless added as an option.",
+    recommendations: "Annual maintenance wash improves finish lifespan.",
+    importantNotes: "Work sequencing may vary based on sun and weather conditions.",
+    referencesText: "Pergola references are available upon request.",
+    closingText: "Thank you for the opportunity to restore your pergola.",
+  },
+  trim_restoration: {
+    projectSummary: "Trim restoration focused on crisp lines and durable finish quality.",
+    scopeOfWork: "Prepare surfaces, repair minor defects, prime, and apply finish coats.",
+    includedWork: "Detail prep, caulking touchups, and finish coats.",
+    exclusions: "Major carpentry replacement unless listed.",
+    recommendations: "Match finish sheen to adjacent surfaces for visual consistency.",
+    importantNotes: "Existing substrate condition may impact prep effort.",
+    referencesText: "Trim restoration references available upon request.",
+    closingText: "We appreciate the opportunity to improve your trim finishes.",
+  },
+  wallpaper_removal: {
+    projectSummary: "Wallpaper removal and wall prep for repaint-ready surfaces.",
+    scopeOfWork: "Remove wallpaper, clean adhesive residue, patch and smooth walls for finish prep.",
+    includedWork: "Wallpaper removal, wall prep, and cleanup.",
+    exclusions: "Large drywall replacement and moisture remediation unless listed.",
+    recommendations: "Confirm final wall texture and paint plan before finishing.",
+    importantNotes: "Hidden wall conditions may only appear after paper removal.",
+    referencesText: "Wallpaper removal references available upon request.",
+    closingText: "Thank you for the opportunity to prepare your space for a fresh finish.",
+  },
+  drywall_repair: {
+    projectSummary: "Drywall repair scope built for smooth finish-ready surfaces.",
+    scopeOfWork: "Patch damaged areas, tape/mud as required, sand, and prep for primer/paint.",
+    includedWork: "Surface repair and prep to paint-ready condition.",
+    exclusions: "Framing correction and moisture-source remediation unless listed.",
+    recommendations: "Allow adequate curing and sanding stages for best finish quality.",
+    importantNotes: "Dust control setup will be used in active work zones.",
+    referencesText: "Drywall repair examples are available upon request.",
+    closingText: "We appreciate the opportunity to restore your walls properly.",
+  },
+  commercial_painting: {
+    projectSummary: "Commercial painting scope built for schedule reliability and professional finishes.",
+    scopeOfWork: "Coordinate access, prep surfaces, and apply commercial-grade coating systems.",
+    includedWork: "Site protection, prep, coatings, and punch-list walkthrough.",
+    exclusions: "After-hours premium scheduling unless listed as an option.",
+    recommendations: "Align phase plan with occupancy schedule to reduce disruption.",
+    importantNotes: "Site coordination contact should be designated before kickoff.",
+    referencesText: "Commercial references and certificates available upon request.",
+    closingText: "Thank you for considering us for your commercial painting needs.",
+  },
+  new_construction: {
+    projectSummary: "New construction finish package for consistent quality across project phases.",
+    scopeOfWork: "Prime, caulk, and apply finish systems per approved schedule and specs.",
+    includedWork: "Standard production prep and coating application.",
+    exclusions: "Change-order scope outside approved plan unless added.",
+    recommendations: "Finalize color schedule and punch milestones in advance.",
+    importantNotes: "Work is sequenced around project readiness and trade completion.",
+    referencesText: "New construction project references available.",
+    closingText: "We look forward to supporting your construction schedule with dependable delivery.",
+  },
+  property_maintenance: {
+    projectSummary: "Recurring property maintenance scope to protect finishes and control long-term costs.",
+    scopeOfWork: "Inspect and address touch-ups, wear areas, and preventive coating needs.",
+    includedWork: "Scheduled touch-up execution and condition reporting.",
+    exclusions: "Major restoration or replacement outside maintenance scope.",
+    recommendations: "Use quarterly review cycles for best long-term asset performance.",
+    importantNotes: "Maintenance windows should be coordinated with occupancy requirements.",
+    referencesText: "Maintenance program references are available.",
+    closingText: "Thank you for the opportunity to maintain your property proactively.",
+  },
+};
+
 export default function ProposalDetailPage() {
   const utils = api.useUtils();
   const params = useParams<{ id: string }>();
@@ -47,6 +193,7 @@ export default function ProposalDetailPage() {
   const [showCustomerResults, setShowCustomerResults] = useState(false);
   const customers = api.customers.list.useQuery({ search: customerSearch.trim() || undefined }, { enabled: !!proposal });
   const [roughNotes, setRoughNotes] = useState("");
+  const [collapsedOptions, setCollapsedOptions] = useState<Record<number, boolean>>({});
   const [form, setForm] = useState({
     customerId: 0,
     projectName: "",
@@ -55,12 +202,15 @@ export default function ProposalDetailPage() {
     state: "",
     zipCode: "",
     status: "draft" as (typeof PROPOSAL_STATUSES)[number],
+    proposalTemplate: null as (typeof PROPOSAL_TEMPLATES)[number] | null,
+    proposalType: null as (typeof PROPOSAL_TYPES)[number] | null,
+    projectSummary: "",
     scopeOfWork: "",
     includedWork: "",
     exclusions: "",
     importantNotes: "",
     recommendations: "",
-    proposalBody: "",
+    closingText: "",
     aiAssistantNotes: "",
     notes: "",
     emailBody: "",
@@ -75,40 +225,14 @@ export default function ProposalDetailPage() {
     expectedEndDate: "",
     options: [] as OptionDraft[],
     attachments: [] as AttachmentDraft[],
+    paintColors: [] as PaintColorDraft[],
   });
-
-  const editorRef = useRef<HTMLDivElement>(null);
 
   const update = api.proposals.update.useMutation({
     onSuccess: () => {
       toast.success("Proposal saved");
       utils.proposals.byId.invalidate({ id });
       utils.proposals.list.invalidate();
-    },
-    onError: (e) => toast.error(e.message),
-  });
-
-  const generateProposalDraft = api.proposals.generateProposalDraft.useMutation({
-    onSuccess: (data) => {
-      setForm((f) => ({
-        ...f,
-        scopeOfWork: data.scopeOfWork,
-        includedWork: data.includedWork,
-        exclusions: data.exclusions,
-        importantNotes: data.importantNotes,
-        recommendations: data.recommendations,
-        referencesText: data.referencesText,
-        proposalBody: data.proposalBody,
-      }));
-      toast.success("AI proposal draft generated");
-    },
-    onError: (e) => toast.error(e.message),
-  });
-
-  const generateEmailDraft = api.proposals.generateEmailDraft.useMutation({
-    onSuccess: (data) => {
-      setForm((f) => ({ ...f, emailBody: data.body }));
-      toast.success("AI email draft generated");
     },
     onError: (e) => toast.error(e.message),
   });
@@ -124,12 +248,15 @@ export default function ProposalDetailPage() {
       state: proposal.state || "",
       zipCode: proposal.zipCode || "",
       status: proposal.status as (typeof PROPOSAL_STATUSES)[number],
+      proposalTemplate: (proposal.proposalTemplate as (typeof PROPOSAL_TEMPLATES)[number] | null) || null,
+      proposalType: (proposal.proposalType as (typeof PROPOSAL_TYPES)[number] | null) || null,
+      projectSummary: proposal.projectSummary || "",
       scopeOfWork: proposal.scopeOfWork || "",
       includedWork: proposal.includedWork || "",
       exclusions: proposal.exclusions || "",
       importantNotes: proposal.importantNotes || "",
       recommendations: proposal.recommendations || "",
-      proposalBody: proposal.proposalBody || "",
+      closingText: proposal.closingText || "",
       aiAssistantNotes: proposal.aiAssistantNotes || "",
       notes: proposal.notes || "",
       emailBody: proposal.emailBody || "",
@@ -157,14 +284,16 @@ export default function ProposalDetailPage() {
         notes: a.notes || "",
         sortOrder: a.sortOrder,
       })),
+      paintColors: proposal.paintColors.map((p) => ({
+        area: p.area,
+        colorName: p.colorName,
+        brand: p.brand || "",
+        finish: p.finish || "",
+        notes: p.notes || "",
+        sortOrder: p.sortOrder,
+      })),
     });
   }, [proposal]);
-
-  useEffect(() => {
-    if (editorRef.current && editorRef.current.innerHTML !== form.proposalBody) {
-      editorRef.current.innerHTML = form.proposalBody;
-    }
-  }, [form.proposalBody]);
 
   const isReadOnly = form.status === "converted";
   const totalOptionsAmount = useMemo(
@@ -187,12 +316,15 @@ export default function ProposalDetailPage() {
         state: form.state,
         zipCode: form.zipCode,
         status: form.status,
+        proposalTemplate: form.proposalTemplate,
+        proposalType: form.proposalType,
+        projectSummary: form.projectSummary,
         scopeOfWork: form.scopeOfWork,
         includedWork: form.includedWork,
         exclusions: form.exclusions,
         importantNotes: form.importantNotes,
         recommendations: form.recommendations,
-        proposalBody: form.proposalBody,
+        closingText: form.closingText,
         aiAssistantNotes: form.aiAssistantNotes,
         notes: form.notes,
         emailBody: form.emailBody,
@@ -220,6 +352,14 @@ export default function ProposalDetailPage() {
           notes: a.notes,
           sortOrder: a.sortOrder || index,
         })),
+        paintColors: form.paintColors.map((p, index) => ({
+          area: p.area,
+          colorName: p.colorName,
+          brand: p.brand,
+          finish: p.finish,
+          notes: p.notes,
+          sortOrder: p.sortOrder || index,
+        })),
       },
     });
   };
@@ -244,11 +384,20 @@ export default function ProposalDetailPage() {
     setShowCustomerResults(false);
   };
 
-  const execCommand = (command: string, value?: string) => {
-    if (isReadOnly) return;
-    editorRef.current?.focus();
-    document.execCommand(command, false, value);
-    setForm((f) => ({ ...f, proposalBody: editorRef.current?.innerHTML || "" }));
+  const applyTemplate = (template: (typeof PROPOSAL_TEMPLATES)[number]) => {
+    const preset = TEMPLATE_PRESETS[template];
+    setForm((f) => ({
+      ...f,
+      proposalTemplate: template,
+      projectSummary: preset.projectSummary,
+      scopeOfWork: preset.scopeOfWork,
+      includedWork: preset.includedWork,
+      exclusions: preset.exclusions,
+      recommendations: preset.recommendations,
+      importantNotes: preset.importantNotes,
+      referencesText: preset.referencesText,
+      closingText: preset.closingText,
+    }));
   };
 
   if (isLoading || !proposal) return <div className="text-slate-500">Loading…</div>;
@@ -363,11 +512,64 @@ export default function ProposalDetailPage() {
               </select>
             </div>
 
+            <div>
+              <label className="label">Proposal Type</label>
+              <select
+                className="input"
+                value={form.proposalType || ""}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    proposalType: e.target.value ? (e.target.value as (typeof PROPOSAL_TYPES)[number]) : null,
+                  }))
+                }
+                disabled={isReadOnly}
+              >
+                <option value="">Select type</option>
+                {PROPOSAL_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="label">Proposal Template</label>
+              <select
+                className="input"
+                value={form.proposalTemplate || ""}
+                onChange={(e) => {
+                  const template = e.target.value as (typeof PROPOSAL_TEMPLATES)[number] | "";
+                  if (!template) {
+                    setForm((f) => ({ ...f, proposalTemplate: null }));
+                    return;
+                  }
+                  applyTemplate(template);
+                }}
+                disabled={isReadOnly}
+              >
+                <option value="">Select template</option>
+                {PROPOSAL_TEMPLATES.map((template) => (
+                  <option key={template} value={template}>
+                    {template.replace(/_/g, " ")}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <FieldText label="Project Name" value={form.projectName} onChange={(v) => setForm((f) => ({ ...f, projectName: v }))} disabled={isReadOnly} className="md:col-span-3" />
             <FieldText label="Street" value={form.address} onChange={(v) => setForm((f) => ({ ...f, address: v }))} disabled={isReadOnly} className="md:col-span-3" />
             <FieldText label="City" value={form.city} onChange={(v) => setForm((f) => ({ ...f, city: v }))} disabled={isReadOnly} />
             <FieldText label="State" value={form.state} onChange={(v) => setForm((f) => ({ ...f, state: v }))} disabled={isReadOnly} />
             <FieldText label="Zip" value={form.zipCode} onChange={(v) => setForm((f) => ({ ...f, zipCode: v }))} disabled={isReadOnly} />
+
+            <FieldArea label="AI Notes" value={form.aiAssistantNotes} onChange={(v) => setForm((f) => ({ ...f, aiAssistantNotes: v }))} disabled={isReadOnly} className="md:col-span-3" />
+            <div className="md:col-span-3 flex justify-end">
+              <button className="btn btn-secondary" disabled>
+                Generate Proposal
+              </button>
+            </div>
 
             <FieldNumber label="Materials Budget" value={form.materialsBudget} onChange={(v) => setForm((f) => ({ ...f, materialsBudget: v }))} disabled={isReadOnly} />
             <FieldNumber label="Labor Budget" value={form.laborBudget} onChange={(v) => setForm((f) => ({ ...f, laborBudget: v }))} disabled={isReadOnly} />
@@ -379,163 +581,257 @@ export default function ProposalDetailPage() {
         </div>
       )}
 
-      {tab === "builder" && (
+      {tab === "scope" && (
         <div className="card p-5">
-          <h2 className="text-base font-semibold mb-3">AI Proposal Assistant</h2>
+          <h2 className="text-base font-semibold mb-3">Scope Builder</h2>
           <div className="grid md:grid-cols-2 gap-3 mb-6">
-            <div className="md:col-span-2">
-              <label className="label">Large Notes Input</label>
-              <textarea
-                className="input min-h-28"
-                value={roughNotes}
-                onChange={(e) => setRoughNotes(e.target.value)}
-                disabled={isReadOnly}
-                placeholder="Example: 12x12 mahogany deck / light sanding option 1300 / full sanding option 1600"
-              />
-            </div>
-            <div className="md:col-span-2 flex justify-end">
-              <button
-                className="btn btn-secondary"
-                disabled={isReadOnly || generateProposalDraft.isPending || roughNotes.trim().length === 0}
-                onClick={() =>
-                  generateProposalDraft.mutate({
-                    roughNotes,
-                    customerName: customerSearch,
-                    projectName: form.projectName,
-                    options: form.options.map((o) => ({
-                      title: o.title,
-                      price: o.price.trim() === "" ? null : parseFloat(o.price),
-                    })),
-                  })
-                }
-              >
-                {generateProposalDraft.isPending ? "Generating..." : "Generate Proposal"}
-              </button>
-            </div>
-          </div>
-
-          <div className="grid md:grid-cols-2 gap-3 mb-6">
+            <FieldArea label="Project Summary" value={form.projectSummary} onChange={(v) => setForm((f) => ({ ...f, projectSummary: v }))} disabled={isReadOnly} className="md:col-span-2" />
             <FieldArea label="Scope of Work" value={form.scopeOfWork} onChange={(v) => setForm((f) => ({ ...f, scopeOfWork: v }))} disabled={isReadOnly} />
             <FieldArea label="Included Work" value={form.includedWork} onChange={(v) => setForm((f) => ({ ...f, includedWork: v }))} disabled={isReadOnly} />
-            <FieldArea label="Exclusions" value={form.exclusions} onChange={(v) => setForm((f) => ({ ...f, exclusions: v }))} disabled={isReadOnly} />
+            <FieldArea label="Excluded Work" value={form.exclusions} onChange={(v) => setForm((f) => ({ ...f, exclusions: v }))} disabled={isReadOnly} />
             <FieldArea label="Important Notes" value={form.importantNotes} onChange={(v) => setForm((f) => ({ ...f, importantNotes: v }))} disabled={isReadOnly} />
             <FieldArea label="Recommendations" value={form.recommendations} onChange={(v) => setForm((f) => ({ ...f, recommendations: v }))} disabled={isReadOnly} />
             <FieldArea label="References" value={form.referencesText} onChange={(v) => setForm((f) => ({ ...f, referencesText: v }))} disabled={isReadOnly} />
-            <FieldArea label="Payment Schedule" value={form.paymentSchedule} onChange={(v) => setForm((f) => ({ ...f, paymentSchedule: v }))} disabled={isReadOnly} />
-            <FieldArea label="Terms" value={form.termsAndConditions} onChange={(v) => setForm((f) => ({ ...f, termsAndConditions: v }))} disabled={isReadOnly} />
-            <FieldArea label="Proposal Notes" value={form.notes} onChange={(v) => setForm((f) => ({ ...f, notes: v }))} disabled={isReadOnly} />
-            <FieldArea label="AI Assistant Notes" value={form.aiAssistantNotes} onChange={(v) => setForm((f) => ({ ...f, aiAssistantNotes: v }))} disabled={isReadOnly} />
+            <FieldArea label="Closing" value={form.closingText} onChange={(v) => setForm((f) => ({ ...f, closingText: v }))} disabled={isReadOnly} />
+            <FieldArea label="Proposal Notes" value={form.notes} onChange={(v) => setForm((f) => ({ ...f, notes: v }))} disabled={isReadOnly} className="md:col-span-2" />
           </div>
-
-          <h3 className="text-sm font-semibold mb-2">Proposal Designer</h3>
-          <div className="flex flex-wrap gap-2 mb-2">
-            <button type="button" className="btn btn-secondary" onClick={() => execCommand("bold")} disabled={isReadOnly}>Bold</button>
-            <button type="button" className="btn btn-secondary" onClick={() => execCommand("insertUnorderedList")} disabled={isReadOnly}>List</button>
-            <button type="button" className="btn btn-secondary" onClick={() => execCommand("formatBlock", "<h2>")} disabled={isReadOnly}>Header</button>
-            <button type="button" className="btn btn-secondary" onClick={() => execCommand("insertParagraph")} disabled={isReadOnly}>Paragraph</button>
-          </div>
-          <div
-            ref={editorRef}
-            contentEditable={!isReadOnly}
-            suppressContentEditableWarning
-            className="min-h-72 rounded-md border border-slate-200 p-3 text-sm leading-6 focus:outline-none focus:ring-2 focus:ring-brand-500"
-            onInput={() => setForm((f) => ({ ...f, proposalBody: editorRef.current?.innerHTML || "" }))}
-          />
         </div>
       )}
 
-      {tab === "options" && (
+      {tab === "pricing" && (
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="card p-5">
+            <h2 className="text-base font-semibold mb-3">Budget and Pricing</h2>
+            <div className="grid md:grid-cols-2 gap-3">
+              <FieldNumber label="Materials Budget" value={form.materialsBudget} onChange={(v) => setForm((f) => ({ ...f, materialsBudget: v }))} disabled={isReadOnly} />
+              <FieldNumber label="Labor Budget" value={form.laborBudget} onChange={(v) => setForm((f) => ({ ...f, laborBudget: v }))} disabled={isReadOnly} />
+              <FieldNumber label="Subcontractor Budget" value={form.subcontractorBudget} onChange={(v) => setForm((f) => ({ ...f, subcontractorBudget: v }))} disabled={isReadOnly} />
+              <FieldNumber label="Total Amount" value={form.totalAmount} onChange={(v) => setForm((f) => ({ ...f, totalAmount: v }))} disabled={isReadOnly} />
+              <FieldArea label="Payment Schedule" value={form.paymentSchedule} onChange={(v) => setForm((f) => ({ ...f, paymentSchedule: v }))} disabled={isReadOnly} className="md:col-span-2" />
+              <FieldArea label="Terms" value={form.termsAndConditions} onChange={(v) => setForm((f) => ({ ...f, termsAndConditions: v }))} disabled={isReadOnly} className="md:col-span-2" />
+            </div>
+          </div>
+
+          <div className="card p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-base font-semibold">Proposal Options</h2>
+              <button
+                className="btn btn-secondary"
+                disabled={isReadOnly}
+                onClick={() =>
+                  setForm((f) => ({
+                    ...f,
+                    options: [
+                      ...f.options,
+                      { title: "", description: "", scope: "", price: "", isVisible: true, sortOrder: f.options.length },
+                    ],
+                  }))
+                }
+              >
+                Add Option
+              </button>
+            </div>
+            <div className="space-y-3">
+              {form.options.length === 0 ? (
+                <div className="text-sm text-slate-500">No options yet. Add unlimited options for this proposal.</div>
+              ) : (
+                form.options.map((option, index) => {
+                  const collapsed = collapsedOptions[index] ?? false;
+                  return (
+                    <div key={index} className="rounded-md border border-slate-200">
+                      <button
+                        type="button"
+                        className="w-full px-3 py-2 text-left flex items-center justify-between"
+                        onClick={() => setCollapsedOptions((prev) => ({ ...prev, [index]: !collapsed }))}
+                      >
+                        <span className="text-sm font-medium">{option.title || `Option ${index + 1}`}</span>
+                        <span className="text-xs text-slate-500">{collapsed ? "Expand" : "Collapse"}</span>
+                      </button>
+                      {!collapsed && (
+                        <div className="px-3 pb-3 grid md:grid-cols-2 gap-3">
+                          <FieldText
+                            label="Title"
+                            value={option.title}
+                            onChange={(v) =>
+                              setForm((f) => ({
+                                ...f,
+                                options: f.options.map((current, i) => (i === index ? { ...current, title: v } : current)),
+                              }))
+                            }
+                            disabled={isReadOnly}
+                          />
+                          <FieldText
+                            label="Price"
+                            value={option.price}
+                            onChange={(v) =>
+                              setForm((f) => ({
+                                ...f,
+                                options: f.options.map((current, i) => (i === index ? { ...current, price: v } : current)),
+                              }))
+                            }
+                            disabled={isReadOnly}
+                          />
+                          <FieldArea
+                            label="Description"
+                            value={option.description}
+                            onChange={(v) =>
+                              setForm((f) => ({
+                                ...f,
+                                options: f.options.map((current, i) => (i === index ? { ...current, description: v } : current)),
+                              }))
+                            }
+                            disabled={isReadOnly}
+                          />
+                          <FieldArea
+                            label="Included Work"
+                            value={option.scope}
+                            onChange={(v) =>
+                              setForm((f) => ({
+                                ...f,
+                                options: f.options.map((current, i) => (i === index ? { ...current, scope: v } : current)),
+                              }))
+                            }
+                            disabled={isReadOnly}
+                          />
+                          <div>
+                            <label className="label">Visible</label>
+                            <input
+                              type="checkbox"
+                              checked={option.isVisible}
+                              disabled={isReadOnly}
+                              onChange={(e) =>
+                                setForm((f) => ({
+                                  ...f,
+                                  options: f.options.map((current, i) => (i === index ? { ...current, isVisible: e.target.checked } : current)),
+                                }))
+                              }
+                            />
+                          </div>
+                          <FieldNumber
+                            label="Sort Order"
+                            value={option.sortOrder}
+                            onChange={(v) =>
+                              setForm((f) => ({
+                                ...f,
+                                options: f.options.map((current, i) => (i === index ? { ...current, sortOrder: Math.trunc(v) } : current)),
+                              }))
+                            }
+                            disabled={isReadOnly}
+                          />
+                          <div className="md:col-span-2 flex justify-end">
+                            <button
+                              className="btn btn-secondary"
+                              disabled={isReadOnly}
+                              onClick={() =>
+                                setForm((f) => ({
+                                  ...f,
+                                  options: f.options.filter((_, i) => i !== index),
+                                }))
+                              }
+                            >
+                              Remove Option
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tab === "paint-colors" && (
         <div className="card p-5">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-base font-semibold">Proposal Options</h2>
+            <h2 className="text-base font-semibold">Paint Colors</h2>
             <button
               className="btn btn-secondary"
               disabled={isReadOnly}
               onClick={() =>
                 setForm((f) => ({
                   ...f,
-                  options: [
-                    ...f.options,
-                    { title: "", description: "", scope: "", price: "", isVisible: true, sortOrder: f.options.length },
+                  paintColors: [
+                    ...f.paintColors,
+                    { area: "", colorName: "", brand: "", finish: "", notes: "", sortOrder: f.paintColors.length },
                   ],
                 }))
               }
             >
-              Add Option
+              Add Paint Color
             </button>
           </div>
           <div className="space-y-4">
-            {form.options.length === 0 ? (
-              <div className="text-sm text-slate-500">No options yet. Add unlimited options for this proposal.</div>
+            {form.paintColors.length === 0 ? (
+              <div className="text-sm text-slate-500">No paint colors yet.</div>
             ) : (
-              form.options.map((option, index) => (
+              form.paintColors.map((color, index) => (
                 <div key={index} className="rounded-md border border-slate-200 p-3 grid md:grid-cols-2 gap-3">
                   <FieldText
-                    label="Title"
-                    value={option.title}
+                    label="Area"
+                    value={color.area}
                     onChange={(v) =>
                       setForm((f) => ({
                         ...f,
-                        options: f.options.map((current, i) => (i === index ? { ...current, title: v } : current)),
+                        paintColors: f.paintColors.map((current, i) => (i === index ? { ...current, area: v } : current)),
                       }))
                     }
                     disabled={isReadOnly}
                   />
                   <FieldText
-                    label="Price"
-                    value={option.price}
+                    label="Color"
+                    value={color.colorName}
                     onChange={(v) =>
                       setForm((f) => ({
                         ...f,
-                        options: f.options.map((current, i) => (i === index ? { ...current, price: v } : current)),
+                        paintColors: f.paintColors.map((current, i) => (i === index ? { ...current, colorName: v } : current)),
+                      }))
+                    }
+                    disabled={isReadOnly}
+                  />
+                  <FieldText
+                    label="Brand"
+                    value={color.brand}
+                    onChange={(v) =>
+                      setForm((f) => ({
+                        ...f,
+                        paintColors: f.paintColors.map((current, i) => (i === index ? { ...current, brand: v } : current)),
+                      }))
+                    }
+                    disabled={isReadOnly}
+                  />
+                  <FieldText
+                    label="Finish"
+                    value={color.finish}
+                    onChange={(v) =>
+                      setForm((f) => ({
+                        ...f,
+                        paintColors: f.paintColors.map((current, i) => (i === index ? { ...current, finish: v } : current)),
                       }))
                     }
                     disabled={isReadOnly}
                   />
                   <FieldArea
-                    label="Description"
-                    value={option.description}
+                    label="Notes"
+                    value={color.notes}
                     onChange={(v) =>
                       setForm((f) => ({
                         ...f,
-                        options: f.options.map((current, i) => (i === index ? { ...current, description: v } : current)),
+                        paintColors: f.paintColors.map((current, i) => (i === index ? { ...current, notes: v } : current)),
                       }))
                     }
                     disabled={isReadOnly}
+                    className="md:col-span-2"
                   />
-                  <FieldArea
-                    label="Scope"
-                    value={option.scope}
-                    onChange={(v) =>
-                      setForm((f) => ({
-                        ...f,
-                        options: f.options.map((current, i) => (i === index ? { ...current, scope: v } : current)),
-                      }))
-                    }
-                    disabled={isReadOnly}
-                  />
-
-                  <div>
-                    <label className="label">Visible</label>
-                    <input
-                      type="checkbox"
-                      checked={option.isVisible}
-                      disabled={isReadOnly}
-                      onChange={(e) =>
-                        setForm((f) => ({
-                          ...f,
-                          options: f.options.map((current, i) => (i === index ? { ...current, isVisible: e.target.checked } : current)),
-                        }))
-                      }
-                    />
-                  </div>
                   <FieldNumber
                     label="Sort Order"
-                    value={option.sortOrder}
+                    value={color.sortOrder}
                     onChange={(v) =>
                       setForm((f) => ({
                         ...f,
-                        options: f.options.map((current, i) => (i === index ? { ...current, sortOrder: Math.trunc(v) } : current)),
+                        paintColors: f.paintColors.map((current, i) => (i === index ? { ...current, sortOrder: Math.trunc(v) } : current)),
                       }))
                     }
                     disabled={isReadOnly}
@@ -547,11 +843,11 @@ export default function ProposalDetailPage() {
                       onClick={() =>
                         setForm((f) => ({
                           ...f,
-                          options: f.options.filter((_, i) => i !== index),
+                          paintColors: f.paintColors.filter((_, i) => i !== index),
                         }))
                       }
                     >
-                      Remove Option
+                      Remove Color
                     </button>
                   </div>
                 </div>
@@ -664,54 +960,66 @@ export default function ProposalDetailPage() {
         </div>
       )}
 
-      {tab === "pdf-send" && (
+      {tab === "preview" && (
         <div className="card p-5">
-          <h2 className="text-base font-semibold mb-3">PDF Package</h2>
-          <p className="text-sm text-slate-600 mb-4">
-            Architecture is ready for branded PDF export with logo, customer details, scope, options, pricing,
-            terms, attachment list, references, and signature section.
-          </p>
-          <div className="grid md:grid-cols-2 gap-4 text-sm">
-            <Stat label="Customer" value={customerSearch || "—"} />
-            <Stat label="Address" value={[form.address, form.city, form.state, form.zipCode].filter(Boolean).join(", ") || "—"} />
-            <Stat label="Proposal #" value={proposal.proposalNumber} />
-            <Stat label="Options" value={String(form.options.length)} />
-            <Stat label="Attachments" value={String(form.attachments.length)} />
-            <Stat label="Pricing" value={formatCurrency(form.totalAmount)} />
-          </div>
-          <div className="mt-4">
-            <button className="btn btn-secondary" onClick={() => toast.info("PDF generation will be added on top of this data architecture.")}>Generate PDF</button>
-          </div>
-        </div>
-      )}
+          <h2 className="text-base font-semibold mb-3">Proposal Preview</h2>
+          <div className="rounded-md border border-slate-200 p-5 space-y-4 text-sm">
+            <div>
+              <div className="text-xs uppercase tracking-wide text-slate-500">Proposal</div>
+              <div className="text-xl font-semibold">{form.projectName || "Untitled Proposal"}</div>
+              <div className="text-slate-600 mt-1">{proposal.proposalNumber} · {customerSearch || "Customer"}</div>
+              <div className="text-slate-600">{[form.address, form.city, form.state, form.zipCode].filter(Boolean).join(", ") || "Address pending"}</div>
+            </div>
 
-      {tab === "email" && (
-        <div className="card p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-base font-semibold">Email Draft</h2>
-            <button
-              className="btn btn-secondary"
-              disabled={isReadOnly || generateEmailDraft.isPending}
-              onClick={() =>
-                generateEmailDraft.mutate({
-                  customerName: customerSearch,
-                  projectName: form.projectName,
-                  includeCoi: true,
-                  includeBooklet: true,
-                  includeReferences: true,
-                })
-              }
-            >
-              {generateEmailDraft.isPending ? "Generating..." : "Generate Email"}
-            </button>
+            <PreviewSection title="Project Summary" text={form.projectSummary} />
+            <PreviewSection title="Scope of Work" text={form.scopeOfWork} />
+            <PreviewSection title="Included Work" text={form.includedWork} />
+            <PreviewSection title="Excluded Work" text={form.exclusions} />
+            <PreviewSection title="Recommendations" text={form.recommendations} />
+            <PreviewSection title="Important Notes" text={form.importantNotes} />
+
+            <div>
+              <h3 className="font-semibold mb-2">Options</h3>
+              {form.options.filter((o) => o.isVisible).length === 0 ? (
+                <p className="text-slate-500">No visible options added.</p>
+              ) : (
+                <div className="space-y-2">
+                  {form.options
+                    .filter((o) => o.isVisible)
+                    .sort((a, b) => a.sortOrder - b.sortOrder)
+                    .map((o, idx) => (
+                      <div key={`${o.title}-${idx}`} className="border border-slate-100 rounded-md p-3">
+                        <div className="font-medium">{o.title || `Option ${idx + 1}`}</div>
+                        <div className="text-slate-700">{o.description || "No description."}</div>
+                        <div className="text-slate-700">{o.scope || "No included work entered."}</div>
+                        <div className="font-semibold mt-1">{o.price.trim() ? formatCurrency(parseFloat(o.price) || 0) : "TBD"}</div>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+
+            <PreviewSection title="References" text={form.referencesText} />
+            <PreviewSection title="Closing" text={form.closingText} />
+
+            <div>
+              <h3 className="font-semibold mb-2">Attachments List</h3>
+              {form.attachments.length === 0 ? (
+                <p className="text-slate-500">No attachments listed.</p>
+              ) : (
+                <ul className="list-disc ml-5 space-y-1">
+                  {form.attachments
+                    .slice()
+                    .sort((a, b) => a.sortOrder - b.sortOrder)
+                    .map((a, idx) => (
+                      <li key={`${a.fileName}-${idx}`}>{a.category}: {a.fileName || "Untitled file"}</li>
+                    ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="pt-2 border-t border-slate-200 font-semibold">Total: {formatCurrency(form.totalAmount)}</div>
           </div>
-          <textarea
-            className="input min-h-72"
-            value={form.emailBody}
-            onChange={(e) => setForm((f) => ({ ...f, emailBody: e.target.value }))}
-            disabled={isReadOnly}
-            placeholder="AI generated email will appear here and remain fully editable."
-          />
         </div>
       )}
 
@@ -728,6 +1036,20 @@ export default function ProposalDetailPage() {
           </div>
           <ComingSoonCard title="Job Conversion" description="Conversion button is in place. Data model now contains required conversion payload fields." />
           <ComingSoonCard title="Audit" description="Proposal remains fully editable until status is converted." />
+        </div>
+      )}
+
+      {tab === "activity" && (
+        <div className="card p-5">
+          <h2 className="text-base font-semibold mb-3">Activity</h2>
+          <div className="grid md:grid-cols-2 gap-4 text-sm">
+            <Stat label="Created" value={formatDateTime(proposal.createdAt)} />
+            <Stat label="Updated" value={formatDateTime(proposal.updatedAt)} />
+            <Stat label="Sent" value={proposal.sentAt ? formatDateTime(proposal.sentAt) : "—"} />
+            <Stat label="Approved" value={proposal.approvedAt ? formatDateTime(proposal.approvedAt) : "—"} />
+            <Stat label="Current Status" value={form.status} />
+            <Stat label="Last Save" value={update.isPending ? "Saving..." : "Saved"} />
+          </div>
         </div>
       )}
     </>
@@ -749,6 +1071,15 @@ function ComingSoonCard({ title, description }: { title: string; description: st
       <h3 className="text-base font-semibold mb-2">{title}</h3>
       <p className="text-sm text-slate-500">Coming Soon</p>
       <p className="text-xs text-slate-500 mt-1">{description}</p>
+    </div>
+  );
+}
+
+function PreviewSection({ title, text }: { title: string; text: string }) {
+  return (
+    <div>
+      <h3 className="font-semibold mb-1">{title}</h3>
+      <p className="text-slate-700 whitespace-pre-wrap">{text || "—"}</p>
     </div>
   );
 }

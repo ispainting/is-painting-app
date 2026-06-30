@@ -4,6 +4,20 @@ import { router, protectedProcedure, adminProcedure } from "../trpc";
 import { nextNumber } from "@/lib/utils";
 
 const ProposalStatusZ = z.enum(["draft", "ready", "sent", "viewed", "approved", "declined", "follow_up", "converted"]);
+const ProposalTemplateZ = z.enum([
+  "interior_painting",
+  "exterior_painting",
+  "cabinet_refinishing",
+  "deck_restoration",
+  "pergola_restoration",
+  "trim_restoration",
+  "wallpaper_removal",
+  "drywall_repair",
+  "commercial_painting",
+  "new_construction",
+  "property_maintenance",
+]);
+const ProposalTypeZ = z.enum(["residential", "commercial", "restoration", "maintenance", "new_construction", "custom"]);
 
 const proposalOptionInput = z.object({
   title: z.string().min(1),
@@ -22,6 +36,15 @@ const proposalAttachmentInput = z.object({
   sortOrder: z.number().int().default(0),
 });
 
+const proposalPaintColorInput = z.object({
+  area: z.string().min(1),
+  colorName: z.string().min(1),
+  brand: z.string().optional(),
+  finish: z.string().optional(),
+  notes: z.string().optional(),
+  sortOrder: z.number().int().default(0),
+});
+
 const proposalInput = z.object({
   customerId: z.number(),
   projectName: z.string().min(1),
@@ -30,11 +53,15 @@ const proposalInput = z.object({
   state: z.string().optional(),
   zipCode: z.string().optional(),
   status: ProposalStatusZ.default("draft"),
+  proposalTemplate: ProposalTemplateZ.nullable().optional(),
+  proposalType: ProposalTypeZ.nullable().optional(),
+  projectSummary: z.string().optional(),
   scopeOfWork: z.string().optional(),
   includedWork: z.string().optional(),
   exclusions: z.string().optional(),
   importantNotes: z.string().optional(),
   recommendations: z.string().optional(),
+  closingText: z.string().optional(),
   proposalBody: z.string().optional(),
   aiAssistantNotes: z.string().optional(),
   notes: z.string().optional(),
@@ -50,6 +77,7 @@ const proposalInput = z.object({
   expectedEndDate: z.date().nullable().optional(),
   options: z.array(proposalOptionInput).default([]),
   attachments: z.array(proposalAttachmentInput).default([]),
+  paintColors: z.array(proposalPaintColorInput).default([]),
 });
 
 export const proposalsRouter = router({
@@ -61,6 +89,7 @@ export const proposalsRouter = router({
           select: {
             options: true,
             attachments: true,
+            paintColors: true,
           },
         },
       },
@@ -76,6 +105,7 @@ export const proposalsRouter = router({
         customer: true,
         options: { orderBy: { sortOrder: "asc" } },
         attachments: { orderBy: { sortOrder: "asc" } },
+        paintColors: { orderBy: { sortOrder: "asc" } },
       },
     })
   ),
@@ -98,11 +128,15 @@ export const proposalsRouter = router({
         state: input.state,
         zipCode: input.zipCode,
         status: input.status,
+        proposalTemplate: input.proposalTemplate ?? null,
+        proposalType: input.proposalType ?? null,
+        projectSummary: input.projectSummary,
         scopeOfWork: input.scopeOfWork,
         includedWork: input.includedWork,
         exclusions: input.exclusions,
         importantNotes: input.importantNotes,
         recommendations: input.recommendations,
+        closingText: input.closingText,
         proposalBody: input.proposalBody,
         aiAssistantNotes: input.aiAssistantNotes,
         notes: input.notes,
@@ -142,11 +176,24 @@ export const proposalsRouter = router({
               })),
             }
           : undefined,
+        paintColors: input.paintColors.length
+          ? {
+              create: input.paintColors.map((p, index) => ({
+                area: p.area,
+                colorName: p.colorName,
+                brand: p.brand,
+                finish: p.finish,
+                notes: p.notes,
+                sortOrder: p.sortOrder ?? index,
+              })),
+            }
+          : undefined,
       },
       include: {
         customer: true,
         options: { orderBy: { sortOrder: "asc" } },
         attachments: { orderBy: { sortOrder: "asc" } },
+        paintColors: { orderBy: { sortOrder: "asc" } },
       },
     });
   }),
@@ -187,11 +234,15 @@ export const proposalsRouter = router({
           state: input.data.state,
           zipCode: input.data.zipCode,
           status: input.data.status,
+          proposalTemplate: input.data.proposalTemplate ?? null,
+          proposalType: input.data.proposalType ?? null,
+          projectSummary: input.data.projectSummary,
           scopeOfWork: input.data.scopeOfWork,
           includedWork: input.data.includedWork,
           exclusions: input.data.exclusions,
           importantNotes: input.data.importantNotes,
           recommendations: input.data.recommendations,
+          closingText: input.data.closingText,
           proposalBody: input.data.proposalBody,
           aiAssistantNotes: input.data.aiAssistantNotes,
           notes: input.data.notes,
@@ -228,11 +279,23 @@ export const proposalsRouter = router({
               sortOrder: a.sortOrder ?? index,
             })),
           },
+          paintColors: {
+            deleteMany: {},
+            create: input.data.paintColors.map((p, index) => ({
+              area: p.area,
+              colorName: p.colorName,
+              brand: p.brand,
+              finish: p.finish,
+              notes: p.notes,
+              sortOrder: p.sortOrder ?? index,
+            })),
+          },
         },
         include: {
           customer: true,
           options: { orderBy: { sortOrder: "asc" } },
           attachments: { orderBy: { sortOrder: "asc" } },
+          paintColors: { orderBy: { sortOrder: "asc" } },
         },
       });
     }),
