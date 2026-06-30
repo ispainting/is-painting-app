@@ -217,10 +217,6 @@ model Job {
 
   scopeOfWork String? @db.Text
   notes       String? @db.Text
-  internalNotes   String? @db.Text
-  customerNotes   String? @db.Text
-  crewInstructions String? @db.Text
-  completionNotes String? @db.Text
 
   materialsBudget      Decimal @default(0) @db.Decimal(12, 2)
   laborBudget          Decimal @default(0) @db.Decimal(12, 2)

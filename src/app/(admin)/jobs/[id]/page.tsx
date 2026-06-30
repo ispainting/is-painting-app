@@ -38,10 +38,7 @@ export default function JobDetailPage() {
     name: "",
     status: "estimate" as (typeof STATUSES)[number],
     scopeOfWork: "",
-    internalNotes: "",
-    customerNotes: "",
-    crewInstructions: "",
-    completionNotes: "",
+    jobNotes: "",
     materialsBudget: 0,
     laborBudget: 0,
     subcontractorBudget: 0,
@@ -119,10 +116,7 @@ export default function JobDetailPage() {
       name: job.name,
       status: job.status,
       scopeOfWork: job.scopeOfWork || "",
-      internalNotes: job.internalNotes || job.notes || "",
-      customerNotes: job.customerNotes || "",
-      crewInstructions: job.crewInstructions || "",
-      completionNotes: job.completionNotes || "",
+      jobNotes: job.notes || "",
       materialsBudget: Number(job.materialsBudget),
       laborBudget: Number(job.laborBudget),
       subcontractorBudget: Number(job.subcontractorBudget || 0),
@@ -141,11 +135,7 @@ export default function JobDetailPage() {
         customerId: editForm.customerId,
         name: editForm.name,
         scopeOfWork: editForm.scopeOfWork,
-        notes: editForm.internalNotes,
-        internalNotes: editForm.internalNotes,
-        customerNotes: editForm.customerNotes,
-        crewInstructions: editForm.crewInstructions,
-        completionNotes: editForm.completionNotes,
+        notes: editForm.jobNotes,
         materialsBudget: editForm.materialsBudget,
         laborBudget: editForm.laborBudget,
         subcontractorBudget: editForm.subcontractorBudget,
@@ -309,6 +299,11 @@ export default function JobDetailPage() {
             </div>
 
             <div className="mt-4 border-t border-slate-200 pt-4">
+              <div className="text-xs text-slate-500 uppercase tracking-wide">Job Notes</div>
+              <p className="text-sm text-slate-700 whitespace-pre-wrap mt-1">{job.notes || "Pending"}</p>
+            </div>
+
+            <div className="mt-4 border-t border-slate-200 pt-4">
               <div className="text-xs text-slate-500 uppercase tracking-wide">Address Actions</div>
               <div className="flex flex-wrap gap-2 mt-2">
                 <button
@@ -395,14 +390,6 @@ export default function JobDetailPage() {
           <div className="card p-5">
             <h2 className="text-base font-semibold mb-2">Scope of Work</h2>
             <p className="text-sm text-slate-700 whitespace-pre-wrap">{job.scopeOfWork || "Pending"}</p>
-            <h3 className="text-sm font-semibold mt-5 mb-1">Internal Notes</h3>
-            <p className="text-sm text-slate-600 whitespace-pre-wrap">{job.internalNotes || job.notes || "Pending"}</p>
-            <h3 className="text-sm font-semibold mt-5 mb-1">Customer Notes</h3>
-            <p className="text-sm text-slate-600 whitespace-pre-wrap">{job.customerNotes || "Pending"}</p>
-            <h3 className="text-sm font-semibold mt-5 mb-1">Crew Instructions</h3>
-            <p className="text-sm text-slate-600 whitespace-pre-wrap">{job.crewInstructions || "Pending"}</p>
-            <h3 className="text-sm font-semibold mt-5 mb-1">Completion Notes</h3>
-            <p className="text-sm text-slate-600 whitespace-pre-wrap">{job.completionNotes || "Pending"}</p>
           </div>
 
           <div className="card p-5">
@@ -862,35 +849,11 @@ export default function JobDetailPage() {
               </div>
 
               <div className="col-span-2">
-                <label className="label">Internal Notes</label>
+                <label className="label">Job Notes</label>
                 <textarea
-                  className="input min-h-20"
-                  value={editForm.internalNotes}
-                  onChange={(e) => setEditForm((f) => ({ ...f, internalNotes: e.target.value }))}
-                />
-              </div>
-              <div className="col-span-2">
-                <label className="label">Customer Notes</label>
-                <textarea
-                  className="input min-h-20"
-                  value={editForm.customerNotes}
-                  onChange={(e) => setEditForm((f) => ({ ...f, customerNotes: e.target.value }))}
-                />
-              </div>
-              <div className="col-span-2">
-                <label className="label">Crew Instructions</label>
-                <textarea
-                  className="input min-h-20"
-                  value={editForm.crewInstructions}
-                  onChange={(e) => setEditForm((f) => ({ ...f, crewInstructions: e.target.value }))}
-                />
-              </div>
-              <div className="col-span-2">
-                <label className="label">Completion Notes</label>
-                <textarea
-                  className="input min-h-20"
-                  value={editForm.completionNotes}
-                  onChange={(e) => setEditForm((f) => ({ ...f, completionNotes: e.target.value }))}
+                  className="input min-h-24"
+                  value={editForm.jobNotes}
+                  onChange={(e) => setEditForm((f) => ({ ...f, jobNotes: e.target.value }))}
                 />
               </div>
 
