@@ -24,15 +24,24 @@ export default function JobDetailPage() {
   const id = Number(params.id);
   const utils = api.useUtils();
   const { data: job, isLoading } = api.jobs.byId.useQuery({ id });
-  const customers = api.customers.list.useQuery();
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [showCustomerResults, setShowCustomerResults] = useState(false);
+  const customers = api.customers.list.useQuery(
+    { search: customerSearch.trim() || undefined },
+    { enabled: isEditOpen }
+  );
 
   const [activeTab, setActiveTab] = useState<WorkspaceTab>("overview");
-  const [isEditOpen, setIsEditOpen] = useState(false);
   const [editForm, setEditForm] = useState({
     customerId: 0,
     name: "",
     status: "estimate" as (typeof STATUSES)[number],
     scopeOfWork: "",
+    internalNotes: "",
+    customerNotes: "",
+    crewInstructions: "",
+    completionNotes: "",
     materialsBudget: 0,
     laborBudget: 0,
     subcontractorBudget: 0,
@@ -110,12 +119,18 @@ export default function JobDetailPage() {
       name: job.name,
       status: job.status,
       scopeOfWork: job.scopeOfWork || "",
+      internalNotes: job.internalNotes || job.notes || "",
+      customerNotes: job.customerNotes || "",
+      crewInstructions: job.crewInstructions || "",
+      completionNotes: job.completionNotes || "",
       materialsBudget: Number(job.materialsBudget),
       laborBudget: Number(job.laborBudget),
       subcontractorBudget: Number(job.subcontractorBudget || 0),
       totalEstimate: Number(job.totalEstimate),
       contractAmount: Number(job.contractAmount),
     });
+    setCustomerSearch(job.customer.name);
+    setShowCustomerResults(false);
     setIsEditOpen(true);
   };
 
@@ -126,6 +141,11 @@ export default function JobDetailPage() {
         customerId: editForm.customerId,
         name: editForm.name,
         scopeOfWork: editForm.scopeOfWork,
+        notes: editForm.internalNotes,
+        internalNotes: editForm.internalNotes,
+        customerNotes: editForm.customerNotes,
+        crewInstructions: editForm.crewInstructions,
+        completionNotes: editForm.completionNotes,
         materialsBudget: editForm.materialsBudget,
         laborBudget: editForm.laborBudget,
         subcontractorBudget: editForm.subcontractorBudget,
@@ -210,6 +230,25 @@ export default function JobDetailPage() {
       .map((p) => ({ id: `payment-${p.id}`, name: `Payment ${formatDateTime(p.dateReceived)}`, url: p.attachmentUrl! })),
   ];
 
+  const street = job.address || "Pending";
+  const city = job.city || "Pending";
+  const state = job.state || "Pending";
+  const zipCode = job.zipCode || "Pending";
+  const addressPieces = [job.address, job.city, job.state, job.zipCode].filter(Boolean);
+  const fullAddress = addressPieces.join(", ");
+  const googleMapsUrl = fullAddress ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullAddress)}` : "";
+
+  const selectCustomer = (customer: {
+    id: number;
+    name: string;
+    address: string | null;
+    phone: string | null;
+  }) => {
+    setEditForm((f) => ({ ...f, customerId: customer.id }));
+    setCustomerSearch(customer.name);
+    setShowCustomerResults(false);
+  };
+
   return (
     <>
       <PageHeader
@@ -257,13 +296,42 @@ export default function JobDetailPage() {
             <h2 className="text-base font-semibold mb-3">Overview</h2>
             <div className="grid grid-cols-2 gap-4 text-sm">
               <Stat label="Customer" value={job.customer.name} />
-              <Stat label="Address" value={job.address || "Pending"} />
+              <Stat label="Street" value={street} />
+              <Stat label="City" value={city} />
+              <Stat label="State" value={state} />
+              <Stat label="Zip Code" value={zipCode} />
               <Stat label="Status" value={job.status} />
               <Stat label="Contract" value={formatCurrency(contractOrTotalAmount)} />
               <Stat label="Estimated total cost" value={formatCurrency(estimatedTotalCost)} />
               <Stat label="Estimated margin" value={`${estimatedMarginPct.toFixed(1)}%`} />
               <Stat label="Actual total cost" value={formatCurrency(actualTotalCost)} />
               <Stat label="Actual margin" value={`${actualMarginPct.toFixed(1)}%`} />
+            </div>
+
+            <div className="mt-4 border-t border-slate-200 pt-4">
+              <div className="text-xs text-slate-500 uppercase tracking-wide">Address Actions</div>
+              <div className="flex flex-wrap gap-2 mt-2">
+                <button
+                  className="btn btn-secondary"
+                  type="button"
+                  disabled={!fullAddress}
+                  onClick={() => window.open(googleMapsUrl, "_blank", "noopener,noreferrer")}
+                >
+                  Open in Google Maps
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  type="button"
+                  disabled={!fullAddress}
+                  onClick={async () => {
+                    if (!fullAddress) return;
+                    await navigator.clipboard.writeText(fullAddress);
+                    toast.success("Address copied");
+                  }}
+                >
+                  Copy Address
+                </button>
+              </div>
             </div>
           </div>
 
@@ -327,8 +395,14 @@ export default function JobDetailPage() {
           <div className="card p-5">
             <h2 className="text-base font-semibold mb-2">Scope of Work</h2>
             <p className="text-sm text-slate-700 whitespace-pre-wrap">{job.scopeOfWork || "Pending"}</p>
-            <h3 className="text-sm font-semibold mt-5 mb-1">Notes</h3>
-            <p className="text-sm text-slate-600 whitespace-pre-wrap">{job.notes || "Pending"}</p>
+            <h3 className="text-sm font-semibold mt-5 mb-1">Internal Notes</h3>
+            <p className="text-sm text-slate-600 whitespace-pre-wrap">{job.internalNotes || job.notes || "Pending"}</p>
+            <h3 className="text-sm font-semibold mt-5 mb-1">Customer Notes</h3>
+            <p className="text-sm text-slate-600 whitespace-pre-wrap">{job.customerNotes || "Pending"}</p>
+            <h3 className="text-sm font-semibold mt-5 mb-1">Crew Instructions</h3>
+            <p className="text-sm text-slate-600 whitespace-pre-wrap">{job.crewInstructions || "Pending"}</p>
+            <h3 className="text-sm font-semibold mt-5 mb-1">Completion Notes</h3>
+            <p className="text-sm text-slate-600 whitespace-pre-wrap">{job.completionNotes || "Pending"}</p>
           </div>
 
           <div className="card p-5">
@@ -739,15 +813,43 @@ export default function JobDetailPage() {
 
               <div>
                 <label className="label">Customer</label>
-                <select
-                  className="input"
-                  value={editForm.customerId}
-                  onChange={(e) => setEditForm((f) => ({ ...f, customerId: Number(e.target.value) }))}
-                >
-                  {customers.data?.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
+                <div className="relative">
+                  <input
+                    className="input"
+                    value={customerSearch}
+                    onFocus={() => setShowCustomerResults(true)}
+                    onChange={(e) => {
+                      setCustomerSearch(e.target.value);
+                      setShowCustomerResults(true);
+                    }}
+                    placeholder="Search customer by name, phone, email, or address"
+                  />
+                  {showCustomerResults && customerSearch.trim().length > 0 && (
+                    <div className="absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-md border border-slate-200 bg-white shadow-sm">
+                      {customers.isLoading ? (
+                        <div className="px-3 py-2 text-sm text-slate-500">Searching…</div>
+                      ) : customers.data && customers.data.length > 0 ? (
+                        customers.data.map((c) => (
+                          <button
+                            key={c.id}
+                            type="button"
+                            className="w-full text-left px-3 py-2 hover:bg-slate-50 border-b border-slate-100 last:border-b-0"
+                            onClick={() => selectCustomer(c)}
+                          >
+                            <div className="text-sm font-medium text-slate-900">{c.name}</div>
+                            <div className="text-xs text-slate-600">{c.address || "No address on file"}</div>
+                            <div className="text-xs text-slate-600">{c.phone || c.email || "No contact on file"}</div>
+                          </button>
+                        ))
+                      ) : (
+                        <div className="px-3 py-2 text-sm text-slate-500">No matching customers.</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">
+                  Selected: {customers.data?.find((c) => c.id === editForm.customerId)?.name || job.customer.name}
+                </div>
               </div>
 
               <div className="col-span-2">
@@ -756,6 +858,39 @@ export default function JobDetailPage() {
                   className="input min-h-24"
                   value={editForm.scopeOfWork}
                   onChange={(e) => setEditForm((f) => ({ ...f, scopeOfWork: e.target.value }))}
+                />
+              </div>
+
+              <div className="col-span-2">
+                <label className="label">Internal Notes</label>
+                <textarea
+                  className="input min-h-20"
+                  value={editForm.internalNotes}
+                  onChange={(e) => setEditForm((f) => ({ ...f, internalNotes: e.target.value }))}
+                />
+              </div>
+              <div className="col-span-2">
+                <label className="label">Customer Notes</label>
+                <textarea
+                  className="input min-h-20"
+                  value={editForm.customerNotes}
+                  onChange={(e) => setEditForm((f) => ({ ...f, customerNotes: e.target.value }))}
+                />
+              </div>
+              <div className="col-span-2">
+                <label className="label">Crew Instructions</label>
+                <textarea
+                  className="input min-h-20"
+                  value={editForm.crewInstructions}
+                  onChange={(e) => setEditForm((f) => ({ ...f, crewInstructions: e.target.value }))}
+                />
+              </div>
+              <div className="col-span-2">
+                <label className="label">Completion Notes</label>
+                <textarea
+                  className="input min-h-20"
+                  value={editForm.completionNotes}
+                  onChange={(e) => setEditForm((f) => ({ ...f, completionNotes: e.target.value }))}
                 />
               </div>
 
