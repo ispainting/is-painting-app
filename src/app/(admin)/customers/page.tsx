@@ -10,20 +10,61 @@ export default function CustomersPage() {
   const utils = api.useUtils();
   const [search, setSearch] = useState("");
   const { data, isLoading } = api.customers.list.useQuery({ search });
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
   const create = api.customers.create.useMutation({
     onSuccess: () => {
       toast.success("Customer added");
       utils.customers.list.invalidate();
       setOpen(false);
-      setForm({ name: "", email: "", phone: "", city: "", state: "", source: "", tags: [] });
+      setForm({ name: "", email: "", phone: "", address: "", city: "", state: "", zipCode: "", source: "", tags: [] });
     },
+  });
+  const update = api.customers.update.useMutation({
+    onSuccess: () => {
+      toast.success("Customer updated");
+      utils.customers.list.invalidate();
+      setEditOpen(false);
+      setEditingId(null);
+    },
+    onError: (e) => toast.error(e.message),
   });
 
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({
-    name: "", email: "", phone: "", city: "", state: "", source: "",
+    name: "", email: "", phone: "", address: "", city: "", state: "", zipCode: "", source: "",
     tags: [] as string[],
   });
+  const [editForm, setEditForm] = useState({
+    name: "", email: "", phone: "", address: "", city: "", state: "", zipCode: "", source: "",
+    tags: [] as string[],
+  });
+
+  const openEdit = (customer: {
+    id: number;
+    name: string;
+    email: string | null;
+    phone: string | null;
+    address: string | null;
+    city: string | null;
+    state: string | null;
+    zipCode: string | null;
+    source: string | null;
+  }) => {
+    setEditingId(customer.id);
+    setEditForm({
+      name: customer.name,
+      email: customer.email || "",
+      phone: customer.phone || "",
+      address: customer.address || "",
+      city: customer.city || "",
+      state: customer.state || "",
+      zipCode: customer.zipCode || "",
+      source: customer.source || "",
+      tags: [],
+    });
+    setEditOpen(true);
+  };
 
   return (
     <>
@@ -54,21 +95,25 @@ export default function CustomersPage() {
               <th className="px-4 py-2 font-medium">Phone</th>
               <th className="px-4 py-2 font-medium">City</th>
               <th className="px-4 py-2 font-medium">Source</th>
+              <th className="px-4 py-2 font-medium text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
             {isLoading ? (
-              <tr><td colSpan={5} className="px-4 py-6 text-slate-500">Loading…</td></tr>
+              <tr><td colSpan={6} className="px-4 py-6 text-slate-500">Loading…</td></tr>
             ) : data?.length === 0 ? (
-              <tr><td colSpan={5} className="px-4 py-6 text-slate-500">No customers found.</td></tr>
+              <tr><td colSpan={6} className="px-4 py-6 text-slate-500">No customers found.</td></tr>
             ) : (
               data?.map((c) => (
                 <tr key={c.id} className="border-t border-slate-100">
                   <td className="px-4 py-2 font-medium">{c.name}</td>
                   <td className="px-4 py-2">{c.email || "—"}</td>
                   <td className="px-4 py-2">{c.phone || "—"}</td>
-                  <td className="px-4 py-2">{[c.city, c.state].filter(Boolean).join(", ") || "—"}</td>
+                  <td className="px-4 py-2">{[c.city, c.state, c.zipCode].filter(Boolean).join(", ") || "—"}</td>
                   <td className="px-4 py-2">{c.source || "—"}</td>
+                  <td className="px-4 py-2 text-right">
+                    <button className="btn btn-secondary text-xs" onClick={() => openEdit(c)}>Edit</button>
+                  </td>
                 </tr>
               ))
             )}
@@ -84,10 +129,12 @@ export default function CustomersPage() {
               <Input label="Name" value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v }))} />
               <Input label="Email" value={form.email} onChange={(v) => setForm((f) => ({ ...f, email: v }))} />
               <Input label="Phone" value={form.phone} onChange={(v) => setForm((f) => ({ ...f, phone: v }))} />
+              <Input label="Street / Address" value={form.address} onChange={(v) => setForm((f) => ({ ...f, address: v }))} />
               <div className="grid grid-cols-2 gap-3">
                 <Input label="City" value={form.city} onChange={(v) => setForm((f) => ({ ...f, city: v }))} />
                 <Input label="State" value={form.state} onChange={(v) => setForm((f) => ({ ...f, state: v }))} />
               </div>
+              <Input label="Zip Code" value={form.zipCode} onChange={(v) => setForm((f) => ({ ...f, zipCode: v }))} />
               <Input label="Source" value={form.source} onChange={(v) => setForm((f) => ({ ...f, source: v }))} />
             </div>
             <div className="flex justify-end gap-2 mt-5">
@@ -98,6 +145,51 @@ export default function CustomersPage() {
                 onClick={() => create.mutate(form)}
               >
                 {create.isPending ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editOpen && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
+          <div className="card w-full max-w-md p-6">
+            <div className="text-lg font-semibold mb-3">Edit customer</div>
+            <div className="space-y-3">
+              <Input label="Name" value={editForm.name} onChange={(v) => setEditForm((f) => ({ ...f, name: v }))} />
+              <Input label="Email" value={editForm.email} onChange={(v) => setEditForm((f) => ({ ...f, email: v }))} />
+              <Input label="Phone" value={editForm.phone} onChange={(v) => setEditForm((f) => ({ ...f, phone: v }))} />
+              <Input label="Street / Address" value={editForm.address} onChange={(v) => setEditForm((f) => ({ ...f, address: v }))} />
+              <div className="grid grid-cols-2 gap-3">
+                <Input label="City" value={editForm.city} onChange={(v) => setEditForm((f) => ({ ...f, city: v }))} />
+                <Input label="State" value={editForm.state} onChange={(v) => setEditForm((f) => ({ ...f, state: v }))} />
+              </div>
+              <Input label="Zip Code" value={editForm.zipCode} onChange={(v) => setEditForm((f) => ({ ...f, zipCode: v }))} />
+              <Input label="Source" value={editForm.source} onChange={(v) => setEditForm((f) => ({ ...f, source: v }))} />
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button className="btn btn-secondary" onClick={() => setEditOpen(false)}>Cancel</button>
+              <button
+                className="btn btn-primary"
+                disabled={!editForm.name || update.isPending || !editingId}
+                onClick={() => {
+                  if (!editingId) return;
+                  update.mutate({
+                    id: editingId,
+                    data: {
+                      name: editForm.name,
+                      email: editForm.email,
+                      phone: editForm.phone,
+                      address: editForm.address,
+                      city: editForm.city,
+                      state: editForm.state,
+                      zipCode: editForm.zipCode,
+                      source: editForm.source,
+                    },
+                  });
+                }}
+              >
+                {update.isPending ? "Saving…" : "Save"}
               </button>
             </div>
           </div>

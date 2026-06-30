@@ -13,8 +13,13 @@ const STATUSES = ["draft", "sent", "approved", "declined", "follow_up"] as const
 export default function ProposalsPage() {
   const utils = api.useUtils();
   const { data, isLoading } = api.proposals.list.useQuery();
-  const customers = api.customers.list.useQuery();
   const [open, setOpen] = useState(false);
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [showCustomerResults, setShowCustomerResults] = useState(false);
+  const customers = api.customers.list.useQuery(
+    { search: customerSearch.trim() || undefined },
+    { enabled: open }
+  );
   const [form, setForm] = useState({
     customerId: 0,
     projectName: "",
@@ -51,9 +56,17 @@ export default function ProposalsPage() {
         subcontractorBudget: 0,
         totalAmount: 0,
       });
+      setCustomerSearch("");
+      setShowCustomerResults(false);
     },
     onError: (e) => toast.error(e.message),
   });
+
+  const selectCustomer = (customer: { id: number; name: string }) => {
+    setForm((f) => ({ ...f, customerId: customer.id }));
+    setCustomerSearch(customer.name);
+    setShowCustomerResults(false);
+  };
 
   return (
     <>
@@ -111,12 +124,40 @@ export default function ProposalsPage() {
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2">
                 <label className="label">Customer</label>
-                <select className="input" value={form.customerId} onChange={(e) => setForm((f) => ({ ...f, customerId: Number(e.target.value) }))}>
-                  <option value={0}>Select…</option>
-                  {customers.data?.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
+                <div className="relative">
+                  <input
+                    className="input"
+                    value={customerSearch}
+                    onFocus={() => setShowCustomerResults(true)}
+                    onChange={(e) => {
+                      setCustomerSearch(e.target.value);
+                      setShowCustomerResults(true);
+                    }}
+                    placeholder="Search customer by name, phone, email, or address"
+                  />
+                  {showCustomerResults && customerSearch.trim().length > 0 && (
+                    <div className="absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-md border border-slate-200 bg-white shadow-sm">
+                      {customers.isLoading ? (
+                        <div className="px-3 py-2 text-sm text-slate-500">Searching…</div>
+                      ) : customers.data && customers.data.length > 0 ? (
+                        customers.data.map((c) => (
+                          <button
+                            key={c.id}
+                            type="button"
+                            className="w-full text-left px-3 py-2 hover:bg-slate-50 border-b border-slate-100 last:border-b-0"
+                            onClick={() => selectCustomer(c)}
+                          >
+                            <div className="text-sm font-medium text-slate-900">{c.name}</div>
+                            <div className="text-xs text-slate-600">{c.address || "No address on file"}</div>
+                            <div className="text-xs text-slate-600">{c.phone || c.email || "No contact on file"}</div>
+                          </button>
+                        ))
+                      ) : (
+                        <div className="px-3 py-2 text-sm text-slate-500">No matching customers.</div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="col-span-2">
