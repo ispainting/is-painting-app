@@ -23,6 +23,7 @@ export default function JobDetailPage() {
     scopeOfWork: "",
     materialsBudget: 0,
     laborBudget: 0,
+    subcontractorBudget: 0,
     totalEstimate: 0,
     contractAmount: 0,
   });
@@ -98,6 +99,7 @@ export default function JobDetailPage() {
       scopeOfWork: job.scopeOfWork || "",
       materialsBudget: Number(job.materialsBudget),
       laborBudget: Number(job.laborBudget),
+      subcontractorBudget: Number(job.subcontractorBudget || 0),
       totalEstimate: Number(job.totalEstimate),
       contractAmount: Number(job.contractAmount),
     });
@@ -113,6 +115,7 @@ export default function JobDetailPage() {
         scopeOfWork: editForm.scopeOfWork,
         materialsBudget: editForm.materialsBudget,
         laborBudget: editForm.laborBudget,
+        subcontractorBudget: editForm.subcontractorBudget,
         totalEstimate: editForm.totalEstimate,
         contractAmount: editForm.contractAmount,
       },
@@ -122,6 +125,64 @@ export default function JobDetailPage() {
       await setStatus.mutateAsync({ id, status: editForm.status });
     }
   };
+
+  const contractOrTotalAmount = Number(job.contractAmount) > 0
+    ? Number(job.contractAmount)
+    : Number(job.totalEstimate);
+  const estimatedMaterials = Number(job.materialsBudget);
+  const estimatedLabor = Number(job.laborBudget);
+  const estimatedSubcontractor = Number(job.subcontractorBudget || 0);
+  const estimatedSubcontractorPending = job.subcontractorBudget == null;
+  const estimatedTotalCost = estimatedMaterials + estimatedLabor + estimatedSubcontractor;
+  const estimatedGrossProfit = contractOrTotalAmount - estimatedTotalCost;
+  const estimatedMarginPct = contractOrTotalAmount > 0
+    ? (estimatedGrossProfit / contractOrTotalAmount) * 100
+    : 0;
+
+  const nonRejectedExpenses = job.expenses.filter((e) => e.status !== "rejected");
+  const subcontractorExpenses = nonRejectedExpenses.filter((e) => e.category === "subcontractor");
+  const nonSubcontractorExpenses = nonRejectedExpenses.filter((e) => e.category !== "subcontractor" && e.category !== "labor");
+
+  const actualSubcontractorCost = subcontractorExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
+  const actualExpensesTotal = nonSubcontractorExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
+
+  const actualLaborResult = job.timeEntries.reduce(
+    (acc, t) => {
+      const hours = t.paidHours != null
+        ? Number(t.paidHours)
+        : t.hoursWorked != null
+          ? Number(t.hoursWorked)
+          : t.grossHours != null
+            ? Number(t.grossHours)
+            : t.clockOut
+              ? (new Date(t.clockOut).getTime() - new Date(t.clockIn).getTime()) / 3_600_000
+              : null;
+
+      if (hours == null || !Number.isFinite(hours) || hours <= 0) {
+        return acc;
+      }
+
+      acc.hasHours = true;
+      const hourlyRate = Number(t.user.hourlyRate || 0);
+      if (hourlyRate <= 0) {
+        acc.pending = true;
+        return acc;
+      }
+
+      acc.cost += hours * hourlyRate;
+      return acc;
+    },
+    { cost: 0, pending: false, hasHours: false }
+  );
+
+  const actualLaborCost = actualLaborResult.cost;
+  const actualLaborPending = job.timeEntries.length === 0 || (actualLaborResult.hasHours && actualLaborResult.pending);
+  const actualExpensesPending = nonSubcontractorExpenses.length === 0;
+  const actualSubcontractorPending = subcontractorExpenses.length === 0;
+
+  const actualTotalCost = actualLaborCost + actualExpensesTotal + actualSubcontractorCost;
+  const actualProfit = contractOrTotalAmount - actualTotalCost;
+  const actualMarginPct = contractOrTotalAmount > 0 ? (actualProfit / contractOrTotalAmount) * 100 : 0;
 
   return (
     <>
@@ -208,6 +269,52 @@ export default function JobDetailPage() {
               ))}
             </ul>
           )}
+        </div>
+      </div>
+
+      <div className="card p-5 mt-4">
+        <h2 className="text-base font-semibold mb-1">Budget &amp; ROI</h2>
+        <p className="text-xs text-slate-500 mb-4">Quick cost and profitability foundation for this job.</p>
+
+        <div className="grid md:grid-cols-2 gap-6">
+          <div>
+            <div className="text-sm font-semibold mb-2">Estimated</div>
+            <div className="grid grid-cols-2 gap-4">
+              <Stat label="Contract / total amount" value={formatCurrency(contractOrTotalAmount)} />
+              <Stat label="Estimated materials budget" value={formatCurrency(estimatedMaterials)} />
+              <Stat label="Estimated labor budget" value={formatCurrency(estimatedLabor)} />
+              <Stat
+                label="Estimated subcontractor budget"
+                value={estimatedSubcontractorPending ? `${formatCurrency(estimatedSubcontractor)} (Pending)` : formatCurrency(estimatedSubcontractor)}
+              />
+              <Stat label="Estimated total cost" value={formatCurrency(estimatedTotalCost)} />
+              <Stat label="Estimated gross profit" value={formatCurrency(estimatedGrossProfit)} />
+              <Stat label="Estimated margin %" value={`${estimatedMarginPct.toFixed(1)}%`} />
+              <RoiFlag profit={estimatedGrossProfit} />
+            </div>
+          </div>
+
+          <div>
+            <div className="text-sm font-semibold mb-2">Actual</div>
+            <div className="grid grid-cols-2 gap-4">
+              <Stat
+                label="Actual labor cost"
+                value={actualLaborPending ? `${formatCurrency(actualLaborCost)} (Pending)` : formatCurrency(actualLaborCost)}
+              />
+              <Stat
+                label="Actual expenses total"
+                value={actualExpensesPending ? `${formatCurrency(actualExpensesTotal)} (Pending)` : formatCurrency(actualExpensesTotal)}
+              />
+              <Stat
+                label="Actual subcontractor cost"
+                value={actualSubcontractorPending ? `${formatCurrency(actualSubcontractorCost)} (Pending)` : formatCurrency(actualSubcontractorCost)}
+              />
+              <Stat label="Actual total cost" value={formatCurrency(actualTotalCost)} />
+              <Stat label="Actual profit" value={formatCurrency(actualProfit)} />
+              <Stat label="Actual margin %" value={`${actualMarginPct.toFixed(1)}%`} />
+              <RoiFlag profit={actualProfit} />
+            </div>
+          </div>
         </div>
       </div>
 
@@ -453,6 +560,7 @@ export default function JobDetailPage() {
 
               <Field label="Materials budget" value={editForm.materialsBudget} onChange={(v) => setEditForm((f) => ({ ...f, materialsBudget: v }))} />
               <Field label="Labor budget" value={editForm.laborBudget} onChange={(v) => setEditForm((f) => ({ ...f, laborBudget: v }))} />
+              <Field label="Subcontractor budget" value={editForm.subcontractorBudget} onChange={(v) => setEditForm((f) => ({ ...f, subcontractorBudget: v }))} />
               <Field label="Total amount" value={editForm.totalEstimate} onChange={(v) => setEditForm((f) => ({ ...f, totalEstimate: v }))} />
               <Field label="Contract amount" value={editForm.contractAmount} onChange={(v) => setEditForm((f) => ({ ...f, contractAmount: v }))} />
             </div>
@@ -479,6 +587,18 @@ function Stat({ label, value }: { label: string; value: string }) {
     <div>
       <div className="text-xs text-slate-500 uppercase tracking-wide">{label}</div>
       <div className="text-base font-medium mt-0.5">{value}</div>
+    </div>
+  );
+}
+
+function RoiFlag({ profit }: { profit: number }) {
+  const profitable = profit >= 0;
+  return (
+    <div>
+      <div className="text-xs text-slate-500 uppercase tracking-wide">ROI Status</div>
+      <div className={`text-sm font-semibold mt-1 ${profitable ? "text-emerald-700" : "text-rose-700"}`}>
+        {profitable ? "Profitable" : "Losing Money"}
+      </div>
     </div>
   );
 }

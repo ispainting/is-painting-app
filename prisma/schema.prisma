@@ -220,6 +220,7 @@ model Job {
 
   materialsBudget      Decimal @default(0) @db.Decimal(12, 2)
   laborBudget          Decimal @default(0) @db.Decimal(12, 2)
+  subcontractorBudget  Decimal? @db.Decimal(10, 2)
   wcPercent            Decimal @default(0) @db.Decimal(5, 2)
   glPercent            Decimal @default(0) @db.Decimal(5, 2)
   overheadPercent      Decimal @default(0) @db.Decimal(5, 2)

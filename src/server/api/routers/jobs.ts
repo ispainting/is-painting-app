@@ -20,6 +20,7 @@ const jobInput = z.object({
   notes: z.string().optional(),
   materialsBudget: z.number().min(0).default(0),
   laborBudget: z.number().min(0).default(0),
+  subcontractorBudget: z.number().min(0).optional(),
   wcPercent: z.number().min(0).default(0),
   glPercent: z.number().min(0).default(0),
   overheadPercent: z.number().min(0).default(0),
@@ -93,6 +94,7 @@ export const jobsRouter = router({
         assignments: { include: { user: true } },
         invoices: true,
         payments: true,
+        expenses: true,
         timeEntries: { include: { user: true }, orderBy: { clockIn: "desc" }, take: 50 },
       },
     });
