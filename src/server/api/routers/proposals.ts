@@ -40,7 +40,18 @@ const proposalPaintColorInput = z.object({
   area: z.string().min(1),
   colorName: z.string().min(1),
   brand: z.string().optional(),
+  product: z.string().optional(),
+  colorCode: z.string().optional(),
   finish: z.string().optional(),
+  notes: z.string().optional(),
+  sortOrder: z.number().int().default(0),
+});
+
+const proposalSectionInput = z.object({
+  templateKey: z.string().optional(),
+  title: z.string().min(1),
+  description: z.string().optional(),
+  bulletItems: z.array(z.string()).default([]),
   notes: z.string().optional(),
   sortOrder: z.number().int().default(0),
 });
@@ -75,10 +86,30 @@ const proposalInput = z.object({
   totalAmount: z.number().min(0).optional(),
   expectedStartDate: z.date().nullable().optional(),
   expectedEndDate: z.date().nullable().optional(),
+  sections: z.array(proposalSectionInput).default([]),
   options: z.array(proposalOptionInput).default([]),
   attachments: z.array(proposalAttachmentInput).default([]),
   paintColors: z.array(proposalPaintColorInput).default([]),
 });
+
+function sanitizeSections(sections: z.infer<typeof proposalSectionInput>[]) {
+  const rows = sections.filter((s) => {
+    const title = s.title.trim();
+    const description = (s.description || "").trim();
+    const notes = (s.notes || "").trim();
+    const bullets = s.bulletItems.filter((item) => item.trim().length > 0);
+    return title.length > 0 || description.length > 0 || notes.length > 0 || bullets.length > 0;
+  });
+
+  return rows.map((s, index) => ({
+    templateKey: s.templateKey?.trim() || undefined,
+    title: s.title.trim() || `Section ${index + 1}`,
+    description: (s.description || "").trim() || undefined,
+    bulletItems: s.bulletItems.map((item) => item.trim()).filter(Boolean),
+    notes: (s.notes || "").trim() || undefined,
+    sortOrder: s.sortOrder ?? index,
+  }));
+}
 
 function sanitizeOptions(options: z.infer<typeof proposalOptionInput>[]) {
   const rows = options.filter((o) => {
@@ -130,6 +161,8 @@ function sanitizePaintColors(colors: z.infer<typeof proposalPaintColorInput>[]) 
     area: p.area.trim() || "General",
     colorName: p.colorName.trim() || "Unspecified",
     brand: (p.brand || "").trim() || undefined,
+    product: (p.product || "").trim() || undefined,
+    colorCode: (p.colorCode || "").trim() || undefined,
     finish: (p.finish || "").trim() || undefined,
     notes: (p.notes || "").trim() || undefined,
     sortOrder: p.sortOrder ?? index,
@@ -146,6 +179,7 @@ export const proposalsRouter = router({
             options: true,
             attachments: true,
             paintColors: true,
+            sections: true,
           },
         },
       },
@@ -159,6 +193,7 @@ export const proposalsRouter = router({
       where: { id: input.id },
       include: {
         customer: true,
+        sections: { orderBy: { sortOrder: "asc" } },
         options: { orderBy: { sortOrder: "asc" } },
         attachments: { orderBy: { sortOrder: "asc" } },
         paintColors: { orderBy: { sortOrder: "asc" } },
@@ -174,6 +209,7 @@ export const proposalsRouter = router({
 
     const proposalNumber = nextNumber("PROP", last?.proposalNumber);
     const budgetTotal = input.materialsBudget + input.laborBudget + input.subcontractorBudget;
+    const sanitizedSections = sanitizeSections(input.sections);
     const sanitizedOptions = sanitizeOptions(input.options);
     const sanitizedAttachments = sanitizeAttachments(input.attachments);
     const sanitizedPaintColors = sanitizePaintColors(input.paintColors);
@@ -212,6 +248,18 @@ export const proposalsRouter = router({
         expectedEndDate: input.expectedEndDate ?? null,
         sentAt: input.status === "sent" ? new Date() : null,
         approvedAt: input.status === "approved" ? new Date() : null,
+        sections: sanitizedSections.length
+          ? {
+              create: sanitizedSections.map((s, index) => ({
+                templateKey: s.templateKey,
+                title: s.title,
+                description: s.description,
+                bulletItems: s.bulletItems,
+                notes: s.notes,
+                sortOrder: s.sortOrder ?? index,
+              })),
+            }
+          : undefined,
         options: sanitizedOptions.length
           ? {
               create: sanitizedOptions.map((o, index) => ({
@@ -241,6 +289,8 @@ export const proposalsRouter = router({
                 area: p.area,
                 colorName: p.colorName,
                 brand: p.brand,
+                product: p.product,
+                colorCode: p.colorCode,
                 finish: p.finish,
                 notes: p.notes,
                 sortOrder: p.sortOrder ?? index,
@@ -250,6 +300,7 @@ export const proposalsRouter = router({
       },
       include: {
         customer: true,
+        sections: { orderBy: { sortOrder: "asc" } },
         options: { orderBy: { sortOrder: "asc" } },
         attachments: { orderBy: { sortOrder: "asc" } },
         paintColors: { orderBy: { sortOrder: "asc" } },
@@ -282,6 +333,7 @@ export const proposalsRouter = router({
       }
 
       const budgetTotal = input.data.materialsBudget + input.data.laborBudget + input.data.subcontractorBudget;
+      const sanitizedSections = sanitizeSections(input.data.sections);
       const sanitizedOptions = sanitizeOptions(input.data.options);
       const sanitizedAttachments = sanitizeAttachments(input.data.attachments);
       const sanitizedPaintColors = sanitizePaintColors(input.data.paintColors);
@@ -320,6 +372,17 @@ export const proposalsRouter = router({
           expectedEndDate: input.data.expectedEndDate ?? null,
           sentAt: input.data.status === "sent" && !current.sentAt ? new Date() : current.sentAt,
           approvedAt: input.data.status === "approved" && !current.approvedAt ? new Date() : current.approvedAt,
+          sections: {
+            deleteMany: {},
+            create: sanitizedSections.map((s, index) => ({
+              templateKey: s.templateKey,
+              title: s.title,
+              description: s.description,
+              bulletItems: s.bulletItems,
+              notes: s.notes,
+              sortOrder: s.sortOrder ?? index,
+            })),
+          },
           options: {
             deleteMany: {},
             create: sanitizedOptions.map((o, index) => ({
@@ -347,6 +410,8 @@ export const proposalsRouter = router({
               area: p.area,
               colorName: p.colorName,
               brand: p.brand,
+              product: p.product,
+              colorCode: p.colorCode,
               finish: p.finish,
               notes: p.notes,
               sortOrder: p.sortOrder ?? index,
@@ -355,6 +420,7 @@ export const proposalsRouter = router({
         },
         include: {
           customer: true,
+          sections: { orderBy: { sortOrder: "asc" } },
           options: { orderBy: { sortOrder: "asc" } },
           attachments: { orderBy: { sortOrder: "asc" } },
           paintColors: { orderBy: { sortOrder: "asc" } },

@@ -452,6 +452,7 @@ model Proposal {
   updatedAt           DateTime       @updatedAt
 
   customer    Customer             @relation(fields: [customerId], references: [id])
+  sections    ProposalSection[]
   options     ProposalOption[]
   attachments ProposalAttachment[]
   paintColors ProposalPaintColor[]
@@ -466,11 +467,31 @@ model ProposalPaintColor {
   area       String   @db.VarChar(100)
   colorName  String   @db.VarChar(150)
   brand      String?  @db.VarChar(100)
+  product    String?  @db.VarChar(150)
+  colorCode  String?  @db.VarChar(100)
   finish     String?  @db.VarChar(100)
   notes      String?  @db.Text
   sortOrder  Int      @default(0)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+
+  proposal Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+
+  @@index([proposalId])
+  @@index([proposalId, sortOrder])
+}
+
+model ProposalSection {
+  id          Int      @id @default(autoincrement())
+  proposalId  Int
+  templateKey String?  @db.VarChar(100)
+  title       String
+  description String?  @db.Text
+  bulletItems String[]
+  notes       String?  @db.Text
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   proposal Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
 
