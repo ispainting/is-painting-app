@@ -250,6 +250,7 @@ externalId String? @db.VarChar(100)
   invoices    Invoice[]
   payments    Payment[]
   assignments EmployeeJobAssignment[]
+  paintColors JobPaintColor[]
 
   @@index([customerId])
   @@index([status])
@@ -306,6 +307,22 @@ model EmployeeJobAssignment {
 
   @@unique([userId, jobId])
   @@index([userId])
+  @@index([jobId])
+}
+
+model JobPaintColor {
+  id        Int      @id @default(autoincrement())
+  jobId     Int
+  area      String   @db.VarChar(100)
+  colorName String   @db.VarChar(150)
+  brand     String?  @db.VarChar(100)
+  finish    String?  @db.VarChar(100)
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
   @@index([jobId])
 }
 

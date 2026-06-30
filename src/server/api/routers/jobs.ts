@@ -27,6 +27,20 @@ const jobInput = z.object({
   taxPercent: z.number().min(0).default(0),
 });
 
+const jobUpdateInput = jobInput.partial().extend({
+  contractAmount: z.number().min(0).optional(),
+  totalEstimate: z.number().min(0).optional(),
+});
+
+const paintColorInput = z.object({
+  jobId: z.number(),
+  area: z.string().min(1),
+  colorName: z.string().min(1),
+  brand: z.string().optional(),
+  finish: z.string().optional(),
+  notes: z.string().optional(),
+});
+
 export const jobsRouter = router({
   list: protectedProcedure
     .input(z.object({ status: JobStatusZ.optional() }).optional())
@@ -75,6 +89,7 @@ export const jobsRouter = router({
         customer: true,
         materials: true,
         labor: true,
+        paintColors: { orderBy: { createdAt: "asc" } },
         assignments: { include: { user: true } },
         invoices: true,
         payments: true,
@@ -117,7 +132,7 @@ export const jobsRouter = router({
   }),
 
   update: adminProcedure
-    .input(z.object({ id: z.number(), data: jobInput.partial() }))
+    .input(z.object({ id: z.number(), data: jobUpdateInput }))
     .mutation(async ({ ctx, input }) => {
       const existing = await ctx.prisma.job.findUnique({ where: { id: input.id } });
       if (!existing) throw new TRPCError({ code: "NOT_FOUND" });
@@ -132,11 +147,13 @@ export const jobsRouter = router({
         markup: Number(merged.markupPercent),
         tax: Number(merged.taxPercent),
       });
+
+      const shouldRecomputeTotal = !existing.budgetLocked && input.data.totalEstimate === undefined;
       return ctx.prisma.job.update({
         where: { id: input.id },
-        data: existing.budgetLocked
-          ? input.data
-          : { ...input.data, subtotalBeforeMarkup: calc.subtotalBeforeMarkup, totalEstimate: calc.totalEstimate },
+        data: shouldRecomputeTotal
+          ? { ...input.data, subtotalBeforeMarkup: calc.subtotalBeforeMarkup, totalEstimate: calc.totalEstimate }
+          : input.data,
       });
     }),
 
@@ -223,6 +240,45 @@ export const jobsRouter = router({
   removeLabor: adminProcedure
     .input(z.object({ id: z.number() }))
     .mutation(({ ctx, input }) => ctx.prisma.jobLabor.delete({ where: { id: input.id } })),
+
+  // Paint Colors
+  addPaintColor: adminProcedure
+    .input(paintColorInput)
+    .mutation(({ ctx, input }) =>
+      ctx.prisma.jobPaintColor.create({
+        data: {
+          jobId: input.jobId,
+          area: input.area,
+          colorName: input.colorName,
+          brand: input.brand || null,
+          finish: input.finish || null,
+          notes: input.notes || null,
+        },
+      })
+    ),
+
+  updatePaintColor: adminProcedure
+    .input(
+      z.object({
+        id: z.number(),
+        data: paintColorInput.omit({ jobId: true }).partial(),
+      })
+    )
+    .mutation(({ ctx, input }) =>
+      ctx.prisma.jobPaintColor.update({
+        where: { id: input.id },
+        data: {
+          ...input.data,
+          brand: input.data.brand === undefined ? undefined : input.data.brand || null,
+          finish: input.data.finish === undefined ? undefined : input.data.finish || null,
+          notes: input.data.notes === undefined ? undefined : input.data.notes || null,
+        },
+      })
+    ),
+
+  deletePaintColor: adminProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(({ ctx, input }) => ctx.prisma.jobPaintColor.delete({ where: { id: input.id } })),
 
   softDelete: adminProcedure.input(z.object({ id: z.number() })).mutation(({ ctx, input }) =>
     ctx.prisma.job.update({ where: { id: input.id }, data: { deletedAt: new Date() } })
