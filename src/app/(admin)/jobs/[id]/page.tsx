@@ -39,10 +39,11 @@ export default function JobDetailPage() {
     status: "estimate" as (typeof STATUSES)[number],
     scopeOfWork: "",
     jobNotes: "",
-    isIslandJob: false,
+    specialPayEnabled: false,
+    hourlyRateAdjustment: 0,
     travelPayEnabled: false,
     defaultTravelHours: 0,
-    travelRateType: "regular" as "regular" | "island" | "custom",
+    travelRateType: "regular" as "regular" | "special" | "custom",
     customTravelRate: 0,
     materialsBudget: 0,
     laborBudget: 0,
@@ -122,10 +123,11 @@ export default function JobDetailPage() {
     invoices: Array<{ id: number; total: string | number; invoiceNumber: string | null; title: string | null }>;
     payments: Array<{ id: number; amount: string | number; dateReceived: string; attachmentUrl: string | null; method: string | null }>;
     paintColors: Array<{ id: number; area: string; colorName: string; brand: string | null; finish: string | null; notes: string | null }>;
-    isIslandJob: boolean;
+    specialPayEnabled: boolean;
+    hourlyRateAdjustment: number | string | null;
     travelPayEnabled: boolean;
     defaultTravelHours: number | string | null;
-    travelRateType: "regular" | "island" | "custom" | null;
+    travelRateType: "regular" | "special" | "custom" | null;
     customTravelRate: number | string | null;
   };
 
@@ -137,10 +139,11 @@ export default function JobDetailPage() {
       status: job.status,
       scopeOfWork: job.scopeOfWork || "",
       jobNotes: job.notes || "",
-      isIslandJob: Boolean((job as any).isIslandJob),
+      specialPayEnabled: Boolean((job as any).specialPayEnabled),
+      hourlyRateAdjustment: Number((job as any).hourlyRateAdjustment || 0),
       travelPayEnabled: Boolean((job as any).travelPayEnabled),
       defaultTravelHours: Number((job as any).defaultTravelHours || 0),
-      travelRateType: ((job as any).travelRateType || "regular") as "regular" | "island" | "custom",
+      travelRateType: ((job as any).travelRateType || "regular") as "regular" | "special" | "custom",
       customTravelRate: Number((job as any).customTravelRate || 0),
       materialsBudget: Number(job.materialsBudget),
       laborBudget: Number(job.laborBudget),
@@ -161,7 +164,8 @@ export default function JobDetailPage() {
         name: editForm.name,
         scopeOfWork: editForm.scopeOfWork,
         notes: editForm.jobNotes,
-        isIslandJob: editForm.isIslandJob,
+        specialPayEnabled: editForm.specialPayEnabled,
+        hourlyRateAdjustment: editForm.hourlyRateAdjustment,
         travelPayEnabled: editForm.travelPayEnabled,
         defaultTravelHours: editForm.defaultTravelHours,
         travelRateType: editForm.travelRateType,
@@ -293,7 +297,11 @@ export default function JobDetailPage() {
       />
 
       <div className="mb-4 flex flex-wrap gap-2">
-        {jobData.isIslandJob ? <span className="badge bg-emerald-100 text-emerald-700">Island Job</span> : null}
+        {jobData.specialPayEnabled ? (
+          <span className="badge bg-emerald-100 text-emerald-700">
+            SPECIAL PAY {Number(jobData.hourlyRateAdjustment || 0) > 0 ? `+$${Number(jobData.hourlyRateAdjustment || 0).toFixed(2)}/hr` : "+$0.00/hr"}
+          </span>
+        ) : null}
         {jobData.travelPayEnabled ? <span className="badge bg-blue-100 text-blue-700">Travel Paid</span> : null}
         {jobData.travelPayEnabled ? <span className="badge bg-slate-100 text-slate-700">Travel Hours {Number(jobData.defaultTravelHours || 0).toFixed(2)}</span> : null}
       </div>
@@ -895,19 +903,22 @@ export default function JobDetailPage() {
 
               <div className="col-span-2 grid grid-cols-2 gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                  <input type="checkbox" checked={editForm.isIslandJob} onChange={(e) => setEditForm((f) => ({ ...f, isIslandJob: e.target.checked }))} />
-                  Island Job
+                  <input type="checkbox" checked={editForm.specialPayEnabled} onChange={(e) => setEditForm((f) => ({ ...f, specialPayEnabled: e.target.checked }))} />
+                  Special Pay Job
                 </label>
                 <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
                   <input type="checkbox" checked={editForm.travelPayEnabled} onChange={(e) => setEditForm((f) => ({ ...f, travelPayEnabled: e.target.checked }))} />
-                  Travel Pay
+                  Paid Travel
                 </label>
+                {editForm.specialPayEnabled ? (
+                  <Field label="Hourly rate adjustment" value={editForm.hourlyRateAdjustment} onChange={(v) => setEditForm((f) => ({ ...f, hourlyRateAdjustment: v }))} prefix="+" />
+                ) : <div />}
                 <Field label="Default travel hours" value={editForm.defaultTravelHours} onChange={(v) => setEditForm((f) => ({ ...f, defaultTravelHours: v }))} />
                 <div>
                   <label className="label">Travel rate type</label>
-                  <select className="input" value={editForm.travelRateType} onChange={(e) => setEditForm((f) => ({ ...f, travelRateType: e.target.value as "regular" | "island" | "custom" }))}>
+                  <select className="input" value={editForm.travelRateType} onChange={(e) => setEditForm((f) => ({ ...f, travelRateType: e.target.value as "regular" | "special" | "custom" }))}>
                     <option value="regular">Regular rate</option>
-                    <option value="island">Island rate</option>
+                    <option value="special">Special rate (includes the job adjustment)</option>
                     <option value="custom">Custom rate</option>
                   </select>
                 </div>
@@ -971,17 +982,20 @@ function ComingSoonCard({ title, description }: { title: string; description: st
   );
 }
 
-function Field({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+function Field({ label, value, onChange, prefix }: { label: string; value: number; onChange: (v: number) => void; prefix?: string }) {
   return (
     <div>
       <label className="label">{label}</label>
-      <input
-        type="number"
-        step="0.01"
-        className="input"
-        value={value}
-        onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
-      />
+      <div className="relative">
+        {prefix ? <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">{prefix}</span> : null}
+        <input
+          type="number"
+          step="0.01"
+          className={["input", prefix ? "pl-7" : ""].join(" ")}
+          value={value}
+          onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+        />
+      </div>
     </div>
   );
 }

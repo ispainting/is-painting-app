@@ -7,7 +7,7 @@ const JobStatusZ = z.enum([
   "estimate", "sent", "approved", "active", "completed", "on_hold", "cancelled",
 ]);
 const JobTypeZ = z.enum(["interior", "exterior", "both", "commercial", "other"]);
-const JobTravelRateTypeZ = z.enum(["regular", "island", "custom"]);
+const JobTravelRateTypeZ = z.enum(["regular", "special", "custom"]);
 
 const jobInput = z.object({
   customerId: z.number(),
@@ -19,7 +19,8 @@ const jobInput = z.object({
   zipCode: z.string().optional(),
   scopeOfWork: z.string().optional(),
   notes: z.string().optional(),
-  isIslandJob: z.boolean().default(false),
+  specialPayEnabled: z.boolean().default(false),
+  hourlyRateAdjustment: z.number().min(0).default(0),
   travelPayEnabled: z.boolean().default(false),
   defaultTravelHours: z.number().min(0).default(0),
   travelRateType: JobTravelRateTypeZ.default("regular"),
@@ -77,7 +78,8 @@ export const jobsRouter = router({
         id: true,
         name: true,
         status: true,
-          isIslandJob: true,
+        specialPayEnabled: true,
+        hourlyRateAdjustment: true,
           travelPayEnabled: true,
           defaultTravelHours: true,
           travelRateType: true,

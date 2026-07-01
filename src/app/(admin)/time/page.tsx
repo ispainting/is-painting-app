@@ -19,15 +19,16 @@ type TimeEntryRecord = {
   hoursWorked: number | string | null;
   grossHours: number | string | null;
   paidHours: number | string | null;
-  rateType?: "regular" | "island" | "travel" | "overtime" | null;
+  rateType?: "regular" | "special" | "travel" | "overtime" | null;
   travelHours?: number | string | null;
   isManual: boolean;
-  isIslandJob: boolean;
+  specialPayEnabled: boolean;
+  hourlyRateAdjustment?: number | string | null;
   notes: string | null;
   reviewStatus: ReviewStatus;
   workType: string | null;
-  user?: { id: number; name: string; hourlyRate: number | string | null; regularRate?: number | string | null; islandRate?: number | string | null; overtimeRate?: number | string | null };
-  job?: { id: number; name: string; address: string | null; isIslandJob?: boolean; travelPayEnabled?: boolean; defaultTravelHours?: number | string | null; travelRateType?: "regular" | "island" | "custom" | null; customTravelRate?: number | string | null } | null;
+  user?: { id: number; name: string; hourlyRate: number | string | null };
+  job?: { id: number; name: string; address: string | null; specialPayEnabled?: boolean; hourlyRateAdjustment?: number | string | null; travelPayEnabled?: boolean; defaultTravelHours?: number | string | null; travelRateType?: "regular" | "special" | "custom" | null; customTravelRate?: number | string | null } | null;
 };
 
 type EntryEditorState = {
@@ -41,7 +42,7 @@ type EntryEditorState = {
   travelHours: string;
   notes: string;
   managerNotes: string;
-  rateType: "regular" | "island" | "travel" | "overtime";
+  rateType: "regular" | "special" | "travel" | "overtime";
 };
 
 function toDateInput(date: Date) {
@@ -86,16 +87,25 @@ function travelEntryHours(entry: TimeEntryRecord) {
   return toNumber(entry.travelHours ?? entry.job?.defaultTravelHours ?? 0);
 }
 
+function hasSpecialPay(entry: TimeEntryRecord) {
+  return Boolean(entry.specialPayEnabled || entry.job?.specialPayEnabled);
+}
+
 function getRates(entry: TimeEntryRecord, fallbackRate: number) {
-  const regularRate = toNumber(entry.user?.regularRate ?? entry.user?.hourlyRate ?? fallbackRate);
-  const islandRate = toNumber(entry.user?.islandRate ?? regularRate);
-  const overtimeRate = toNumber(entry.user?.overtimeRate ?? regularRate * 1.5);
-  return { regularRate, islandRate, overtimeRate };
+  const regularRate = toNumber(entry.user?.hourlyRate ?? fallbackRate);
+  const adjustment = hasSpecialPay(entry)
+    ? toNumber(entry.hourlyRateAdjustment ?? entry.job?.hourlyRateAdjustment ?? 0)
+    : 0;
+  const effectiveRate = regularRate + adjustment;
+  const overtimeRate = effectiveRate * 1.5;
+  return { regularRate, adjustment, effectiveRate, overtimeRate };
 }
 
 function getRateType(entry: TimeEntryRecord) {
-  if (entry.rateType) return entry.rateType;
-  if (entry.isIslandJob || entry.job?.isIslandJob) return "island";
+  if (entry.rateType === "travel" || entry.workType === "travel") return "travel";
+  if (entry.rateType === "overtime") return "overtime";
+  if (entry.rateType === "special") return "special";
+  if (hasSpecialPay(entry)) return "special";
   if (entry.workType === "travel" || entry.job?.travelPayEnabled) return "travel";
   return "regular";
 }
@@ -110,17 +120,18 @@ function getPayableHours(entry: TimeEntryRecord) {
 }
 
 function getTravelRate(entry: TimeEntryRecord, fallbackRate: number) {
+  const { regularRate, effectiveRate } = getRates(entry, fallbackRate);
   const travelRateType = entry.job?.travelRateType || "regular";
-  if (travelRateType === "island") return toNumber(entry.user?.islandRate ?? entry.user?.hourlyRate ?? fallbackRate);
-  if (travelRateType === "custom") return toNumber(entry.job?.customTravelRate ?? entry.user?.hourlyRate ?? fallbackRate);
-  return toNumber(entry.user?.hourlyRate ?? fallbackRate);
+  if (travelRateType === "special") return effectiveRate;
+  if (travelRateType === "custom") return toNumber(entry.job?.customTravelRate ?? regularRate);
+  return regularRate;
 }
 
-function rateLabelForType(rateType: TimeEntryRecord["rateType"], rates: { regularRate: number; islandRate: number; overtimeRate: number }) {
-  if (rateType === "island") return `Island ${rates.islandRate.toFixed(2)}`;
+function rateLabelForType(rateType: TimeEntryRecord["rateType"], rates: { regularRate: number; effectiveRate: number; overtimeRate: number }) {
+  if (rateType === "special") return `Special $${rates.effectiveRate.toFixed(2)}`;
   if (rateType === "overtime") return `Overtime ${rates.overtimeRate.toFixed(2)}`;
   if (rateType === "travel") return `Travel`;
-  return `Regular ${rates.regularRate.toFixed(2)}`;
+  return `Regular $${rates.regularRate.toFixed(2)}`;
 }
 
 function weekKey(date: Date) {
@@ -159,7 +170,7 @@ function buildEditor(entry?: TimeEntryRecord | null): EntryEditorState {
     travelHours: String(toNumber(entry.travelHours ?? entry.job?.defaultTravelHours ?? 0)),
     notes: entry.notes || "",
     managerNotes: "",
-    rateType: entry.rateType || (entry.isIslandJob || entry.job?.isIslandJob ? "island" : "regular"),
+    rateType: entry.rateType || (entry.specialPayEnabled || entry.job?.specialPayEnabled ? "special" : "regular"),
   };
 }
 
@@ -177,10 +188,11 @@ export default function TimePage() {
   const employees = api.employees.list.useQuery();
   const jobs = api.jobs.list.useQuery();
   const selectedJob = useMemo(() => jobs.data?.find((job) => job.id === editor.jobId) || null, [editor.jobId, jobs.data]) as (null | {
-    isIslandJob: boolean;
+    specialPayEnabled: boolean;
+    hourlyRateAdjustment: number | string | null;
     travelPayEnabled: boolean;
     defaultTravelHours: number | string | null;
-    travelRateType?: "regular" | "island" | "custom" | null;
+    travelRateType?: "regular" | "special" | "custom" | null;
   });
 
   useEffect(() => {
@@ -191,8 +203,8 @@ export default function TimePage() {
         travelHours: String(toNumber(selectedJob.defaultTravelHours ?? 0)),
       }));
     }
-    if (selectedJob.isIslandJob && editor.rateType === "regular") {
-      setEditor((current) => ({ ...current, rateType: "island" }));
+    if (selectedJob.specialPayEnabled && editor.rateType === "regular") {
+      setEditor((current) => ({ ...current, rateType: "special" }));
     }
   }, [editor.rateType, editorTouchedTravelHours, selectedJob]);
 
@@ -229,7 +241,7 @@ export default function TimePage() {
     onError: (error) => toast.error(error.message),
   });
 
-  const rows = (listQuery.data || []) as TimeEntryRecord[];
+  const rows = (listQuery.data || []) as unknown as TimeEntryRecord[];
 
   const employeeSummaries = useMemo(() => {
     const byEmployee = new Map<number, TimeEntryRecord[]>();
@@ -243,16 +255,13 @@ export default function TimePage() {
       .map(([id, entries]) => {
         const sorted = [...entries].sort((a, b) => new Date(a.clockIn).getTime() - new Date(b.clockIn).getTime());
         const name = sorted[0]?.user?.name || employees.data?.find((e) => e.id === id)?.name || "Employee";
-        const hourlyRate = toNumber(sorted[0]?.user?.regularRate ?? sorted[0]?.user?.hourlyRate ?? employees.data?.find((e) => e.id === id)?.hourlyRate ?? 0);
-        const { islandRate, overtimeRate } = getRates(sorted[0] || {}, hourlyRate);
-        const travelRate = getTravelRate(sorted[0] || {}, hourlyRate);
+        const hourlyRate = toNumber(sorted[0]?.user?.hourlyRate ?? employees.data?.find((e) => e.id === id)?.hourlyRate ?? 0);
         let regularHours = 0;
         let overtimeHours = 0;
-        let islandHours = 0;
+        let specialHours = 0;
         let travelHours = 0;
         let totalHours = 0;
         let regularPay = 0;
-        let islandPay = 0;
         let travelPay = 0;
         let overtimePay = 0;
         let estimatedCheck = 0;
@@ -264,49 +273,49 @@ export default function TimePage() {
           const wk = weekKey(new Date(entry.clockIn));
           const prior = weekTotals.get(wk) || 0;
           const rateType = getRateType(entry);
+          const rates = getRates(entry, hourlyRate);
+          const travelRate = getTravelRate(entry, hourlyRate);
           const overtimePart = Math.max(0, prior + workHours - 40);
           const boundedOvertime = rateType === "overtime" ? workHours : Math.min(workHours, overtimePart);
-          const regularPart = Math.max(0, workHours - boundedOvertime);
+          const baseHours = Math.max(0, workHours - boundedOvertime);
+          const specialEligible = rateType === "special" || hasSpecialPay(entry);
+          const specialPart = specialEligible ? baseHours : 0;
+          const regularPart = specialEligible ? 0 : baseHours;
           weekTotals.set(wk, prior + workHours);
 
-          const islandPart = rateType === "island" ? workHours : 0;
           const travelPart = travelPayHours;
-          const detailRegularPay = regularPart * hourlyRate;
-          const detailIslandPay = islandPart * islandRate;
+          const detailRegularPay = regularPart * rates.regularRate;
+          const detailSpecialPay = specialPart * rates.effectiveRate;
           const detailTravelPay = travelPart * travelRate;
-          const detailOvertimePay = boundedOvertime * overtimeRate;
-          const amount = detailRegularPay + detailIslandPay + detailTravelPay + detailOvertimePay;
+          const detailOvertimePay = boundedOvertime * rates.overtimeRate;
+          const amount = detailRegularPay + detailSpecialPay + detailTravelPay + detailOvertimePay;
 
           regularHours += regularPart;
           overtimeHours += boundedOvertime;
-          islandHours += islandPart;
+          specialHours += specialPart;
           travelHours += travelPart;
           totalHours += workHours + travelPart;
           regularPay += detailRegularPay;
-          islandPay += detailIslandPay;
           travelPay += detailTravelPay;
           overtimePay += detailOvertimePay;
           estimatedCheck += amount;
 
-          const rateLabel = rateLabelForType(rateType, { regularRate: hourlyRate, islandRate, overtimeRate });
+          const displayRateType = rateType === "regular" && specialEligible ? "special" : rateType;
+          const rateLabel = rateLabelForType(displayRateType, { regularRate: rates.regularRate, effectiveRate: rates.effectiveRate, overtimeRate: rates.overtimeRate });
 
           return {
             id: entry.id,
             date: toDateInput(new Date(entry.clockIn)),
-            project: entry.job?.name || "No project",
             clockIn: entry.clockIn,
-            clockOut: entry.clockOut,
-            breakMinutes: entry.breakMinutes || 0,
-            workHours,
+            project: entry.job?.name || "No project",
+            hours: workHours,
             travelHours: travelPart,
             rateLabel,
-            regularPay: detailRegularPay,
-            islandPay: detailIslandPay,
-            travelPay: detailTravelPay,
-            overtimePay: detailOvertimePay,
-            amount,
+            adjustment: rates.adjustment,
+            effectiveRate: rates.effectiveRate,
+            travelLabel: travelPart > 0 ? `${travelPart.toFixed(2)}h @ $${travelRate.toFixed(2)}` : "—",
+            dailyTotal: amount,
             notes: entry.notes || "",
-            entry,
           };
         });
 
@@ -315,17 +324,10 @@ export default function TimePage() {
           name,
           regularHours,
           overtimeHours,
-          islandHours,
+          specialHours,
           travelHours,
           totalHours,
           hourlyRate,
-          islandRate,
-          overtimeRate,
-          travelRate,
-          regularPay,
-          islandPay,
-          travelPay,
-          overtimePay,
           estimatedCheck,
           details,
         };
@@ -346,7 +348,7 @@ export default function TimePage() {
       const byDay = new Map<number, number>();
       for (const detail of summary.details) {
         const day = new Date(detail.clockIn).getDay();
-        byDay.set(day, (byDay.get(day) || 0) + detail.workHours + detail.travelHours);
+        byDay.set(day, (byDay.get(day) || 0) + detail.hours + detail.travelHours);
       }
       return {
         employee: summary.name,
@@ -417,7 +419,6 @@ export default function TimePage() {
         managerNotes: editor.managerNotes || undefined,
         notAtJobsiteReason: undefined,
         isManual: true,
-        isIslandJob: false,
         overtimeOverride: false,
         reviewStatus: "pending",
         workType: "job_site",
@@ -476,34 +477,31 @@ export default function TimePage() {
                 <tr>
                   <th className="px-3 py-2 font-medium">Employee</th>
                   <th className="px-3 py-2 font-medium text-right">Regular Hours</th>
-                  <th className="px-3 py-2 font-medium text-right">Island Hours</th>
+                  <th className="px-3 py-2 font-medium text-right">Special Hours</th>
                   <th className="px-3 py-2 font-medium text-right">Travel Hours</th>
-                  <th className="px-3 py-2 font-medium text-right">Overtime Hours</th>
-                  <th className="px-3 py-2 font-medium text-right">Regular Pay</th>
-                  <th className="px-3 py-2 font-medium text-right">Island Pay</th>
-                  <th className="px-3 py-2 font-medium text-right">Travel Pay</th>
-                  <th className="px-3 py-2 font-medium text-right">Overtime Pay</th>
-                  <th className="px-3 py-2 font-medium text-right">Total Check Amount</th>
+                  <th className="px-3 py-2 font-medium text-right">Overtime</th>
+                  <th className="px-3 py-2 font-medium text-right">Total Hours</th>
+                  <th className="px-3 py-2 font-medium text-right">Hourly Rate</th>
+                  <th className="px-3 py-2 font-medium text-right">Estimated Check</th>
                 </tr>
               </thead>
               <tbody>
                 {listQuery.isLoading ? (
-                  <tr><td colSpan={10} className="px-4 py-8 text-center text-slate-500">Loading payroll preview…</td></tr>
+                  <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-500">Loading payroll preview…</td></tr>
                 ) : employeeSummaries.length === 0 ? (
-                  <tr><td colSpan={10} className="px-4 py-8 text-center text-slate-500">No entries in selected range.</td></tr>
+                  <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-500">No entries in selected range.</td></tr>
                 ) : employeeSummaries.map((row) => (
                   <tr key={row.id} className="border-t border-slate-100 align-top">
-                    <td colSpan={10} className="p-0">
+                    <td colSpan={8} className="p-0">
                       <details>
-                        <summary className="grid cursor-pointer grid-cols-10 gap-2 px-3 py-3 text-sm hover:bg-slate-50">
+                        <summary className="grid cursor-pointer grid-cols-8 gap-2 px-3 py-3 text-sm hover:bg-slate-50">
                           <span className="font-medium">{row.name}</span>
-                          <span className="text-right">{row.islandHours.toFixed(2)}</span>
+                          <span className="text-right">{row.regularHours.toFixed(2)}</span>
+                          <span className="text-right">{row.specialHours.toFixed(2)}</span>
                           <span className="text-right">{row.travelHours.toFixed(2)}</span>
                           <span className="text-right">{row.overtimeHours.toFixed(2)}</span>
-                          <span className="text-right">${row.regularPay.toFixed(2)}</span>
-                          <span className="text-right">${row.islandPay.toFixed(2)}</span>
-                          <span className="text-right">${row.travelPay.toFixed(2)}</span>
-                          <span className="text-right">${row.overtimePay.toFixed(2)}</span>
+                          <span className="text-right">{row.totalHours.toFixed(2)}</span>
+                          <span className="text-right">${row.hourlyRate.toFixed(2)}</span>
                           <span className="text-right font-semibold">${row.estimatedCheck.toFixed(2)}</span>
                         </summary>
                         <div className="border-t border-slate-200 bg-white p-3">
@@ -512,14 +510,12 @@ export default function TimePage() {
                               <tr>
                                 <th className="px-2 py-2">Date</th>
                                 <th className="px-2 py-2">Project</th>
-                                <th className="px-2 py-2">Clock in</th>
-                                <th className="px-2 py-2">Clock out</th>
-                                <th className="px-2 py-2 text-right">Break</th>
-                                <th className="px-2 py-2 text-right">Work Hours</th>
-                                <th className="px-2 py-2 text-right">Travel Hours</th>
+                                <th className="px-2 py-2 text-right">Hours</th>
                                 <th className="px-2 py-2">Rate used</th>
-                                <th className="px-2 py-2 text-right">Daily amount</th>
-                                <th className="px-2 py-2">Notes</th>
+                                <th className="px-2 py-2 text-right">Adjustment</th>
+                                <th className="px-2 py-2 text-right">Effective Rate</th>
+                                <th className="px-2 py-2">Travel</th>
+                                <th className="px-2 py-2 text-right">Daily Total</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -527,14 +523,12 @@ export default function TimePage() {
                                 <tr key={detail.id} className="border-t border-slate-100">
                                   <td className="px-2 py-2">{detail.date}</td>
                                   <td className="px-2 py-2">{detail.project}</td>
-                                  <td className="px-2 py-2">{formatDateTime(detail.clockIn)}</td>
-                                  <td className="px-2 py-2">{detail.clockOut ? formatDateTime(detail.clockOut) : "—"}</td>
-                                  <td className="px-2 py-2 text-right">{detail.breakMinutes}m</td>
-                                  <td className="px-2 py-2 text-right">{detail.workHours.toFixed(2)}</td>
-                                  <td className="px-2 py-2 text-right">{detail.travelHours.toFixed(2)}</td>
+                                  <td className="px-2 py-2 text-right">{detail.hours.toFixed(2)}</td>
                                   <td className="px-2 py-2">{detail.rateLabel}</td>
-                                  <td className="px-2 py-2 text-right">${detail.amount.toFixed(2)}</td>
-                                  <td className="px-2 py-2">{detail.notes || "—"}</td>
+                                  <td className="px-2 py-2 text-right">+${detail.adjustment.toFixed(2)}</td>
+                                  <td className="px-2 py-2 text-right">${detail.effectiveRate.toFixed(2)}</td>
+                                  <td className="px-2 py-2">{detail.travelLabel}</td>
+                                  <td className="px-2 py-2 text-right">${detail.dailyTotal.toFixed(2)}</td>
                                 </tr>
                               ))}
                             </tbody>
@@ -671,7 +665,7 @@ export default function TimePage() {
                 onChange={(value) => setEditor((s) => ({ ...s, rateType: value as EntryEditorState["rateType"] }))}
                 options={[
                   { value: "regular", label: "Regular" },
-                  { value: "island", label: "Island" },
+                  { value: "special", label: "Special" },
                   { value: "travel", label: "Travel" },
                   { value: "overtime", label: "Overtime" },
                 ]}
@@ -690,9 +684,9 @@ export default function TimePage() {
                   Travel pay is enabled for this job. Default travel hours: {toNumber(selectedJob.defaultTravelHours ?? 0).toFixed(2)}. Rate source: {selectedJob.travelRateType || "regular"}.
                 </div>
               ) : null}
-              {selectedJob?.isIslandJob ? (
+              {selectedJob?.specialPayEnabled ? (
                 <div className="md:col-span-2 rounded-lg border border-slate-200 bg-emerald-50 p-3 text-sm text-emerald-800">
-                  This job is marked as an island job, so the payroll preview uses island rates where applicable.
+                  This job uses special pay. The payroll preview adds +${toNumber(selectedJob.hourlyRateAdjustment ?? 0).toFixed(2)}/hr to the employee regular rate for worked hours on this job.
                 </div>
               ) : null}
               <FieldTextArea label="Notes" value={editor.notes} onChange={(value) => setEditor((s) => ({ ...s, notes: value }))} />

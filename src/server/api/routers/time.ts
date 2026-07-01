@@ -47,17 +47,19 @@ const WorkTypeInputZ = z.enum(["job_site", "shop", "office", "travel", "meeting"
 const timeEntryFiltersInput = z
   .object({
     days: z.number().default(30),
+    weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-    weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     employeeId: z.number().int().positive().optional(),
     projectId: z.number().int().positive().optional(),
     reviewStatus: TimeReviewStatusZ.optional(),
     manualEntries: z.boolean().optional(),
-    islandJobs: z.boolean().optional(),
+    specialPayJobs: z.boolean().optional(),
     search: z.string().optional(),
   })
   .optional();
+
+const TimeRateTypeInputZ = z.enum(["regular", "special", "travel", "overtime"]);
 
 const timeEntryUpsertInput = z.object({
   userId: z.number().int().positive(),
@@ -65,14 +67,13 @@ const timeEntryUpsertInput = z.object({
   clockIn: z.string().min(1),
   clockOut: z.string().nullable().optional(),
   totalHours: z.number().min(0).nullable().optional(),
-  rateType: z.enum(["regular", "island", "travel", "overtime"]).default("regular"),
-  travelHours: z.number().min(0).nullable().optional(),
   breakMinutes: z.number().min(0).default(0),
+  rateType: TimeRateTypeInputZ.default("regular"),
+  travelHours: z.number().min(0).nullable().optional(),
   notes: z.string().optional(),
   managerNotes: z.string().optional(),
   notAtJobsiteReason: z.string().optional(),
   isManual: z.boolean().default(true),
-  isIslandJob: z.boolean().default(false),
   overtimeOverride: z.boolean().default(false),
   workType: WorkTypeInputZ.nullable().optional(),
   reviewStatus: TimeReviewStatusZ.default("pending"),
@@ -92,19 +93,12 @@ const timeBulkReviewInput = z.object({
   weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   search: z.string().optional(),
   manualEntries: z.boolean().optional(),
-  islandJobs: z.boolean().optional(),
+  specialPayJobs: z.boolean().optional(),
   managerNotes: z.string().optional(),
-});
-
-const timeBulkToolsInput = z.object({
-  ids: z.array(z.number().int().positive()).min(1),
-  action: z.enum(["assign_note", "move_project", "duplicate", "delete"]),
-  managerNotes: z.string().optional(),
-  projectId: z.number().int().positive().optional(),
 });
 
 function getDateRange(input?: { days?: number; weekStart?: string; startDate?: string; endDate?: string }) {
-  if (input?.startDate && input?.endDate) {
+  if (input?.startDate && input.endDate) {
     const start = new Date(`${input.startDate}T00:00:00`);
     const end = new Date(`${input.endDate}T00:00:00`);
     end.setDate(end.getDate() + 1);
@@ -124,14 +118,14 @@ function getDateRange(input?: { days?: number; weekStart?: string; startDate?: s
 
 type TimeEntryWhereFilters = {
   days?: number;
+  weekStart?: string;
   startDate?: string;
   endDate?: string;
-  weekStart?: string;
   employeeId?: number;
   projectId?: number;
   reviewStatus?: z.infer<typeof TimeReviewStatusZ>;
   manualEntries?: boolean;
-  islandJobs?: boolean;
+  specialPayJobs?: boolean;
   search?: string;
 };
 
@@ -143,7 +137,7 @@ function buildTimeEntryWhere(filters?: TimeEntryWhereFilters) {
   if (filters?.projectId) and.push({ jobId: filters.projectId });
   if (filters?.reviewStatus) and.push({ reviewStatus: filters.reviewStatus });
   if (filters?.manualEntries !== undefined) and.push({ isManual: filters.manualEntries });
-  if (filters?.islandJobs !== undefined) and.push({ isIslandJob: filters.islandJobs });
+  if (filters?.specialPayJobs !== undefined) and.push({ specialPayEnabled: filters.specialPayJobs });
 
   if (filters?.search?.trim()) {
     const search = filters.search.trim();
@@ -258,7 +252,13 @@ export const timeRouter = router({
       if (selectedJobId) {
         const job = await ctx.prisma.job.findUnique({
           where: { id: selectedJobId },
-          select: { id: true, status: true, deletedAt: true },
+          select: {
+            id: true,
+            status: true,
+            deletedAt: true,
+            specialPayEnabled: true,
+            hourlyRateAdjustment: true,
+          },
         });
         if (!job || job.deletedAt) {
           throw new TRPCError({ code: "NOT_FOUND", message: "Job not found" });
@@ -272,6 +272,15 @@ export const timeRouter = router({
       }
 
       const clockIn = new Date();
+      const selectedJob = selectedJobId
+        ? await ctx.prisma.job.findUnique({
+            where: { id: selectedJobId },
+            select: {
+              specialPayEnabled: true,
+              hourlyRateAdjustment: true,
+            },
+          })
+        : null;
       const payroll = buildPayrollPayload({
         clockIn,
         clockOut: null,
@@ -290,7 +299,10 @@ export const timeRouter = router({
           clockInLatitude: input.lat,
           clockInLongitude: input.lng,
           clockInAccuracy: input.accuracy,
-          isIslandJob: false,
+          specialPayEnabled: Boolean(selectedJob?.specialPayEnabled),
+          hourlyRateAdjustment: Number(selectedJob?.hourlyRateAdjustment || 0),
+          rateType: selectedJob?.specialPayEnabled ? "special" : "regular",
+          travelHours: null,
           overtimeOverride: false,
           reviewStatus: "pending",
           approvedById: null,
@@ -424,6 +436,15 @@ export const timeRouter = router({
     const clockIn = parseDate(input.data.clockIn);
     const explicitClockOut = input.data.clockOut ? parseDate(input.data.clockOut) : null;
     const clockOut = explicitClockOut ?? (input.data.totalHours != null ? new Date(clockIn.getTime() + input.data.totalHours * 3_600_000) : null);
+    const selectedJob = input.data.jobId
+      ? await ctx.prisma.job.findUnique({
+          where: { id: input.data.jobId },
+          select: {
+            specialPayEnabled: true,
+            hourlyRateAdjustment: true,
+          },
+        })
+      : null;
     const payroll = buildManualPayroll({
       clockIn,
       clockOut,
@@ -440,8 +461,6 @@ export const timeRouter = router({
     const baseData = {
       userId: input.data.userId,
       jobId: input.data.jobId ?? null,
-      rateType: input.data.rateType,
-      travelHours: input.data.travelHours ?? null,
       workType: input.data.workType ?? null,
       clockIn,
       clockOut,
@@ -456,7 +475,10 @@ export const timeRouter = router({
       clockInAccuracy: input.data.clockInAccuracy ?? null,
       clockOutAccuracy: input.data.clockOutAccuracy ?? null,
       isManual: input.data.isManual,
-      isIslandJob: input.data.isIslandJob,
+      specialPayEnabled: Boolean(selectedJob?.specialPayEnabled),
+      hourlyRateAdjustment: Number(selectedJob?.hourlyRateAdjustment || 0),
+      rateType: input.data.rateType,
+      travelHours: input.data.travelHours ?? null,
       overtimeOverride: input.data.overtimeOverride,
       ...payroll,
     };
@@ -492,8 +514,6 @@ export const timeRouter = router({
       data: {
         userId: existing.userId,
         jobId: existing.jobId,
-        rateType: existing.rateType,
-        travelHours: existing.travelHours,
         workType: existing.workType,
         clockIn: existing.clockIn,
         clockOut: existing.clockOut,
@@ -507,7 +527,10 @@ export const timeRouter = router({
         clockInAccuracy: existing.clockInAccuracy,
         clockOutAccuracy: existing.clockOutAccuracy,
         isManual: true,
-        isIslandJob: existing.isIslandJob,
+        specialPayEnabled: existing.specialPayEnabled,
+        hourlyRateAdjustment: existing.hourlyRateAdjustment,
+        rateType: existing.rateType,
+        travelHours: existing.travelHours,
         overtimeOverride: existing.overtimeOverride,
         ...buildManualPayroll({
           clockIn: existing.clockIn,
@@ -570,80 +593,6 @@ export const timeRouter = router({
     });
 
     return { count: targets.length };
-  }),
-
-  bulkTools: adminProcedure.input(timeBulkToolsInput).mutation(async ({ ctx, input }) => {
-    if (input.action === "assign_note") {
-      const note = input.managerNotes?.trim() || null;
-      await ctx.prisma.timeEntry.updateMany({
-        where: { id: { in: input.ids } },
-        data: { managerNotes: note },
-      });
-      return { count: input.ids.length };
-    }
-
-    if (input.action === "move_project") {
-      if (!input.projectId) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "Project is required" });
-      }
-
-      await ctx.prisma.timeEntry.updateMany({
-        where: { id: { in: input.ids } },
-        data: {
-          jobId: input.projectId,
-          reviewStatus: "pending",
-          approvedById: null,
-        },
-      });
-      return { count: input.ids.length };
-    }
-
-    if (input.action === "duplicate") {
-      const rows = await ctx.prisma.timeEntry.findMany({ where: { id: { in: input.ids } } });
-      if (!rows.length) return { count: 0 };
-
-      await Promise.all(
-        rows.map((existing) =>
-          ctx.prisma.timeEntry.create({
-            data: {
-              userId: existing.userId,
-              jobId: existing.jobId,
-              workType: existing.workType,
-              clockIn: existing.clockIn,
-              clockOut: existing.clockOut,
-              breakMinutes: existing.breakMinutes,
-              notes: existing.notes,
-              notAtJobsiteReason: existing.notAtJobsiteReason,
-              clockInLatitude: existing.clockInLatitude,
-              clockInLongitude: existing.clockInLongitude,
-              clockOutLatitude: existing.clockOutLatitude,
-              clockOutLongitude: existing.clockOutLongitude,
-              clockInAccuracy: existing.clockInAccuracy,
-              clockOutAccuracy: existing.clockOutAccuracy,
-              isManual: true,
-              isIslandJob: existing.isIslandJob,
-              overtimeOverride: existing.overtimeOverride,
-              ...buildManualPayroll({
-                clockIn: existing.clockIn,
-                clockOut: existing.clockOut,
-                breakMinutes: existing.breakMinutes,
-                isManual: true,
-                clockInLatitude: existing.clockInLatitude?.toNumber() ?? null,
-                clockInLongitude: existing.clockInLongitude?.toNumber() ?? null,
-                clockOutLatitude: existing.clockOutLatitude?.toNumber() ?? null,
-                clockOutLongitude: existing.clockOutLongitude?.toNumber() ?? null,
-              }),
-              ...applyReviewState("pending", ctx.session!.userId),
-            },
-          })
-        )
-      );
-
-      return { count: rows.length };
-    }
-
-    await ctx.prisma.timeEntry.deleteMany({ where: { id: { in: input.ids } } });
-    return { count: input.ids.length };
   }),
 
   remove: adminProcedure.input(z.object({ id: z.number() })).mutation(({ ctx, input }) =>

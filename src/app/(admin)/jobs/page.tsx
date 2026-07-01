@@ -35,10 +35,11 @@ export default function JobsPage() {
     city: "",
     state: "",
     zipCode: "",
-    isIslandJob: false,
+    specialPayEnabled: false,
+    hourlyRateAdjustment: 0,
     travelPayEnabled: false,
     defaultTravelHours: 0,
-    travelRateType: "regular" as "regular" | "island" | "custom",
+    travelRateType: "regular" as "regular" | "special" | "custom",
     customTravelRate: 0,
     materialsBudget: 0,
     laborBudget: 0,
@@ -185,20 +186,23 @@ export default function JobsPage() {
               <FieldText label="Zip" value={form.zipCode} onChange={(v) => setForm((f) => ({ ...f, zipCode: v }))} />
               <div className="col-span-2 grid grid-cols-2 gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                  <input type="checkbox" checked={form.isIslandJob} onChange={(e) => setForm((f) => ({ ...f, isIslandJob: e.target.checked }))} />
-                  Island Job
+                  <input type="checkbox" checked={form.specialPayEnabled} onChange={(e) => setForm((f) => ({ ...f, specialPayEnabled: e.target.checked }))} />
+                  Special Pay Job
                 </label>
                 <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
                   <input type="checkbox" checked={form.travelPayEnabled} onChange={(e) => setForm((f) => ({ ...f, travelPayEnabled: e.target.checked }))} />
-                  Travel Pay
+                  Paid Travel
                 </label>
+                {form.specialPayEnabled ? (
+                  <Field label="Hourly Rate Adjustment" value={form.hourlyRateAdjustment} onChange={(v) => setForm((f) => ({ ...f, hourlyRateAdjustment: v }))} prefix="+" />
+                ) : <div />}
                 <Field label="Default Travel Hours" value={form.defaultTravelHours} onChange={(v) => setForm((f) => ({ ...f, defaultTravelHours: v }))} />
                 <div>
                   <label className="label">Travel Rate Type</label>
-                  <select className="input" value={form.travelRateType} onChange={(e) => setForm((f) => ({ ...f, travelRateType: e.target.value as "regular" | "island" | "custom" }))}>
-                    <option value="regular">Regular rate</option>
-                    <option value="island">Island rate</option>
-                    <option value="custom">Custom rate</option>
+                  <select className="input" value={form.travelRateType} onChange={(e) => setForm((f) => ({ ...f, travelRateType: e.target.value as "regular" | "special" | "custom" }))}>
+                    <option value="regular">Regular Rate</option>
+                    <option value="special">Special Rate (includes the job adjustment)</option>
+                    <option value="custom">Custom Rate</option>
                   </select>
                 </div>
                 {form.travelRateType === "custom" ? (
@@ -230,17 +234,20 @@ export default function JobsPage() {
   );
 }
 
-function Field({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+function Field({ label, value, onChange, prefix }: { label: string; value: number; onChange: (v: number) => void; prefix?: string }) {
   return (
     <div>
       <label className="label">{label}</label>
-      <input
-        type="number"
-        step="0.01"
-        className="input"
-        value={value}
-        onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
-      />
+      <div className="relative">
+        {prefix ? <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">{prefix}</span> : null}
+        <input
+          type="number"
+          step="0.01"
+          className={["input", prefix ? "pl-7" : ""].join(" ")}
+          value={value}
+          onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+        />
+      </div>
     </div>
   );
 }
