@@ -216,26 +216,6 @@ const TEMPLATE_WRITING_GUIDE: Record<z.infer<typeof ProposalTemplateZ>, { summar
   },
 };
 
-const ROOM_PATTERNS: Array<{ title: string; pattern: RegExp }> = [
-  { title: "Living Room", pattern: /\b(living room|family room|great room)\b/i },
-  { title: "Kitchen", pattern: /\bkitchen\b/i },
-  { title: "Dining Room", pattern: /\bdining\b/i },
-  { title: "Primary Bedroom", pattern: /\b(master|primary bedroom|main bedroom)\b/i },
-  { title: "Bedroom", pattern: /\bbedroom\b/i },
-  { title: "Bathroom", pattern: /\bbath(room)?\b/i },
-  { title: "Hallway", pattern: /\bhall(way)?\b/i },
-  { title: "Stairwell", pattern: /\bstair(s|well)?\b/i },
-  { title: "Entry", pattern: /\b(entry|foyer)\b/i },
-  { title: "Office", pattern: /\boffice\b/i },
-  { title: "Trim", pattern: /\b(trim|baseboard|casing|moulding|molding)\b/i },
-  { title: "Doors", pattern: /\bdoor(s)?\b/i },
-  { title: "Ceilings", pattern: /\bceiling(s)?\b/i },
-  { title: "Exterior", pattern: /\b(exterior|outside|facade|siding)\b/i },
-  { title: "Deck", pattern: /\bdeck\b/i },
-  { title: "Pergola", pattern: /\bpergola\b/i },
-  { title: "Cabinets", pattern: /\bcabinet(s)?\b/i },
-];
-
 function normalizeText(value: string) {
   return value.trim().replace(/\s+/g, " ");
 }
@@ -262,13 +242,6 @@ function splitDraftNotes(notes: string) {
     .filter(Boolean);
 }
 
-function detectRoomTitle(line: string) {
-  for (const room of ROOM_PATTERNS) {
-    if (room.pattern.test(line)) return room.title;
-  }
-  return null;
-}
-
 function parsePaymentSchedule(line: string) {
   const match = line.match(/\b(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(\d{1,2})\b/);
   if (!match) return null;
@@ -290,84 +263,21 @@ function parseStandaloneAmount(line: string) {
   return amount >= 1000 ? amount : null;
 }
 
-function toSentence(text: string) {
-  const clean = normalizeText(text);
-  if (!clean) return "";
-  const withCapital = clean.charAt(0).toUpperCase() + clean.slice(1);
-  return /[.!?]$/.test(withCapital) ? withCapital : `${withCapital}.`;
+function hasToken(line: string, pattern: RegExp) {
+  return pattern.test(line);
 }
 
-function rewriteScopeLine(rawLine: string) {
-  const line = normalizeText(rawLine);
+function extractProductName(line: string) {
   const lower = line.toLowerCase();
-  if (!line) return "";
-
-  const surfaces: Array<[RegExp, string]> = [
-    [/\bwalls?\b/, "walls"],
-    [/\bceilings?\b/, "ceilings"],
-    [/\btrim\b|\bbaseboards?\b|\bcasing\b|\bmoulding\b|\bmolding\b/, "trim"],
-    [/\bdoors?\b/, "doors"],
-    [/\bbaseboards?\b/, "baseboards"],
-    [/\bcabinets?\b/, "cabinet surfaces"],
-  ];
-
-  if (/\bpaint\b|\brepaint\b/.test(lower)) {
-    const mentioned = surfaces.filter(([pattern]) => pattern.test(lower)).map(([, label]) => label);
-    if (mentioned.length) {
-      return `Our scope includes preparing and painting ${mentioned.join(", ")} as noted for this project.`;
-    }
-    return "Our scope includes thorough preparation and application of the selected finish system for the noted areas.";
-  }
-
-  if (/\bnail holes?\b|\bimperfection(s)?\b|\bcrack(s)?\b/.test(lower)) {
-    return "Minor drywall repairs, including nail holes and surface imperfections, will be completed before primer and finish coats.";
-  }
-
-  if (/\bpatch\b/.test(lower) && /\bbacksplash\b/.test(lower)) {
-    return "Drywall areas around the backsplash will be patched, sanded smooth, and prepared for finish painting.";
-  }
-
-  if (/\bpatch\b|\brepair\b/.test(lower)) {
-    return "Surface repairs will be completed as needed to create a consistent paint-ready substrate.";
-  }
-
-  if (/\bprotect\b|\bmask\b|\bcover\b/.test(lower)) {
-    const subject = line.replace(/^(protect|mask|cover)\s+/i, "").trim();
-    if (subject) {
-      return `Adjacent ${subject} will be carefully protected before preparation and painting begin.`;
-    }
-    return "Adjacent finishes and fixtures will be carefully protected throughout production.";
-  }
-
-  if (/\bstain\b/.test(lower) && /\bceiling\b/.test(lower)) {
-    return "Any visible ceiling staining will be sealed with an appropriate stain-blocking primer before finish coats are applied.";
-  }
-
-  if (/\bcaulk\b/.test(lower)) {
-    return "Open gaps at trim and transitions will be caulked where needed to improve finish lines and durability.";
-  }
-
-  if (/\bsand\b/.test(lower)) {
-    return "Surfaces will be sanded as needed to ensure proper adhesion and a uniform final finish.";
-  }
-
-  if (/\bprime\b/.test(lower)) {
-    return "Primer will be applied where required to support adhesion, uniformity, and coverage.";
-  }
-
-  if (/\bbm\s*regal\b|\bregal\b/.test(lower)) {
-    return "Benjamin Moore Regal is noted for designated wall and ceiling finish coats.";
-  }
-
-  if (/\badvance\b/.test(lower) && /\btrim\b/.test(lower)) {
-    return "Benjamin Moore Advance is noted for designated trim and millwork surfaces.";
-  }
-
-  if (/\bworks? from home\b/.test(lower)) {
-    return "Project sequencing will be coordinated to reduce disruption during working hours.";
-  }
-
-  return `Work includes ${line.toLowerCase()}.`;
+  if (/\bbm\s*regal\b|\bregal\b/.test(lower)) return "Benjamin Moore Regal";
+  if (/\bbm\s*ceiling\b|\bceiling paint\b|\bbm\s*ceiling paint\b/.test(lower)) return "Benjamin Moore Ceiling Paint";
+  if (/\badvance\b/.test(lower)) return "Benjamin Moore Advance";
+  if (/\baura\s*bath\b/.test(lower)) return "Benjamin Moore Aura Bath & Spa";
+  if (/\bscuff\s*-?\s*x\b/.test(lower)) return "Benjamin Moore Scuff-X";
+  if (/\bbin\b/.test(lower)) return "Zinsser BIN primer";
+  if (/\bfresh\s*start\b/.test(lower)) return "Benjamin Moore Fresh Start primer";
+  if (/\boil\s*prime\b|\boil\s*based primer\b/.test(lower)) return "oil-based primer";
+  return null;
 }
 
 export const proposalsRouter = router({
@@ -687,10 +597,21 @@ export const proposalsRouter = router({
       let totalAmount: number | null = null;
       let paymentSchedule: string | null = null;
       let worksFromHome = false;
-      const importantNotesList: string[] = [];
-      const recommendationsList: string[] = [];
-      const roomTasks = new Map<string, string[]>();
-      const generalTasks: string[] = [];
+      let needsDailyCleanup = false;
+      let mentionsDarkColors = false;
+
+      const mentionedSurfaces = new Set<string>();
+      const roomMentions = new Set<string>();
+      const productBySurface: Partial<Record<"walls" | "ceilings" | "trimDoors", string>> = {};
+
+      let hasGeneralRepairs = false;
+      let hasKitchenBacksplashPatch = false;
+      let hasPrimaryCeilingStain = false;
+      let hasKidsWindowCrack = false;
+      let hasTrimPrep = false;
+      let hasDoorPrep = false;
+      let hasSpotPrime = false;
+      let hasTwoCoats = false;
 
       for (const line of lines) {
         const lower = line.toLowerCase();
@@ -710,76 +631,164 @@ export const proposalsRouter = router({
 
         if (/\bworks? from home\b/.test(lower)) {
           worksFromHome = true;
-          continue;
         }
 
-        if (/\bbm\s*regal\b|\bregal\b/.test(lower) || /\badvance\b/.test(lower)) {
-          const sentence = rewriteScopeLine(line);
-          if (sentence) recommendationsList.push(sentence);
-          continue;
+        if (/\bdaily\s*cleanup\b|\bdaily\s*clean\s*up\b/.test(lower)) {
+          needsDailyCleanup = true;
         }
 
-        if (parsePaymentSchedule(line) || parseSqft(line) || parseStandaloneAmount(line)) {
-          continue;
+        if (/\bdark colors?\b|\bextra coat\b/.test(lower)) {
+          mentionsDarkColors = true;
         }
 
-        const sentence = rewriteScopeLine(line);
-        if (!sentence) continue;
-        const room = detectRoomTitle(line);
-        if (room) {
-          const bucket = roomTasks.get(room) || [];
-          bucket.push(sentence);
-          roomTasks.set(room, bucket);
-        } else {
-          generalTasks.push(sentence);
+        if (hasToken(lower, /\bwalls?\b/)) mentionedSurfaces.add("walls");
+        if (hasToken(lower, /\bceilings?\b/)) mentionedSurfaces.add("ceilings");
+        if (hasToken(lower, /\btrim\b|\bbaseboards?\b|\bcasing\b|\bmoulding\b|\bmolding\b/)) mentionedSurfaces.add("trim");
+        if (hasToken(lower, /\bdoors?\b/)) mentionedSurfaces.add("doors");
+
+        if (hasToken(lower, /\bliving room\b/)) roomMentions.add("living room");
+        if (hasToken(lower, /\bhall(way)?\b/)) roomMentions.add("hallway");
+        if (hasToken(lower, /\bkids? bedroom\b|\bchildren'?s bedroom\b/)) roomMentions.add("bedrooms");
+
+        if (hasToken(lower, /\bnail holes?\b|\bcrack(s)?\b|\bdent(s)?\b|\bimperfection(s)?\b/)) {
+          hasGeneralRepairs = true;
         }
+        if (hasToken(lower, /\bkitchen\b/) && hasToken(lower, /\bpatch\b/) && hasToken(lower, /\bbacksplash\b/)) {
+          hasKitchenBacksplashPatch = true;
+        }
+        if (hasToken(lower, /\b(master|primary bedroom)\b/) && hasToken(lower, /\bstain\b/) && hasToken(lower, /\bceiling\b/)) {
+          hasPrimaryCeilingStain = true;
+        }
+        if (hasToken(lower, /\b(kids? bedroom|children'?s bedroom)\b/) && hasToken(lower, /\bcrack\b/) && hasToken(lower, /\bwindow\b/)) {
+          hasKidsWindowCrack = true;
+        }
+        if (hasToken(lower, /\btrim\b/) && hasToken(lower, /\bfill\b|\bcaulk\b|\bsand\b/)) {
+          hasTrimPrep = true;
+        }
+        if (hasToken(lower, /\bdoors?\b/) && hasToken(lower, /\bsand\b|\brepaint\b/)) {
+          hasDoorPrep = true;
+        }
+        if (hasToken(lower, /\bspot\s*prime\b/)) {
+          hasSpotPrime = true;
+        }
+        if (hasToken(lower, /\b2\s*coats?\b|\btwo\s*coats?\b/)) {
+          hasTwoCoats = true;
+        }
+
+        const product = extractProductName(lower);
+        if (product) {
+          if (hasToken(lower, /\bwalls?\b/)) productBySurface.walls = product;
+          if (hasToken(lower, /\bceilings?\b/)) productBySurface.ceilings = product;
+          if (hasToken(lower, /\btrim\b|\bdoors?\b|\bbaseboards?\b/)) productBySurface.trimDoors = product;
+        }
+      }
+
+      if (!productBySurface.walls && lines.some((line) => /\bbm\s*regal\b|\bregal\b/i.test(line))) {
+        productBySurface.walls = "Benjamin Moore Regal";
+      }
+      if (!productBySurface.ceilings && lines.some((line) => /\bbm\s*ceiling\b|\bceiling paint\b/i.test(line))) {
+        productBySurface.ceilings = "Benjamin Moore Ceiling Paint";
+      }
+      if (!productBySurface.trimDoors && lines.some((line) => /\badvance\b/i.test(line))) {
+        productBySurface.trimDoors = "Benjamin Moore Advance";
+      }
+
+      const scopeBullets: string[] = [];
+
+      if (lines.some((line) => /\bprotect\b|\bmask\b|\bcover\b/i.test(line))) {
+        const includeCabinets = lines.some((line) => /\bcabinets?\b/i.test(line));
+        scopeBullets.push(
+          includeCabinets
+            ? "Protect floors, furniture, cabinetry, and adjacent finishes before preparation and painting begin."
+            : "Protect floors, furniture, and adjacent finishes before preparation and painting begin."
+        );
+      }
+
+      if (hasGeneralRepairs) {
+        const roomText = roomMentions.size
+          ? `, including localized repairs in the ${Array.from(roomMentions).join(", ")}`
+          : "";
+        scopeBullets.push(`Repair nail holes, drywall cracks, dents, and surface imperfections throughout the home${roomText}.`);
+      }
+
+      if (hasKitchenBacksplashPatch) {
+        scopeBullets.push("Patch and prepare damaged drywall near the kitchen backsplash before primer and finish coats.");
+      }
+
+      if (hasPrimaryCeilingStain) {
+        scopeBullets.push("Spot-prime the ceiling stain in the primary bedroom with an appropriate stain-blocking primer.");
+      }
+
+      if (hasKidsWindowCrack) {
+        scopeBullets.push("Repair drywall cracking above the children's bedroom window and prepare the area for finish painting.");
+      }
+
+      if (hasTrimPrep || mentionedSurfaces.has("trim")) {
+        if (hasTrimPrep && hasSpotPrime) {
+          scopeBullets.push("Fill, caulk, sand, and spot-prime trim surfaces as needed to achieve clean, durable finish lines.");
+        } else if (hasTrimPrep) {
+          scopeBullets.push("Fill, caulk, and sand trim surfaces as needed to prepare for finish coats.");
+        }
+      }
+
+      if (hasDoorPrep || mentionedSurfaces.has("doors")) {
+        if (hasDoorPrep) {
+          scopeBullets.push("Sand and repaint doors as needed for proper adhesion and a consistent final appearance.");
+        }
+      }
+
+      if (mentionedSurfaces.has("walls")) {
+        scopeBullets.push(`Apply ${productBySurface.walls || "the selected coating system"} to wall surfaces.`);
+      }
+      if (mentionedSurfaces.has("ceilings")) {
+        scopeBullets.push(`Apply ${productBySurface.ceilings || "the selected ceiling coating system"} to ceiling surfaces.`);
+      }
+
+      if (mentionedSurfaces.has("trim") || mentionedSurfaces.has("doors")) {
+        if (hasTwoCoats && productBySurface.trimDoors) {
+          const targets = [mentionedSurfaces.has("trim") ? "trim" : "", mentionedSurfaces.has("doors") ? "doors" : ""]
+            .filter(Boolean)
+            .join(" and ");
+          scopeBullets.push(`Apply two finish coats of ${productBySurface.trimDoors} to ${targets}.`);
+        } else if (productBySurface.trimDoors) {
+          scopeBullets.push(`Apply ${productBySurface.trimDoors} to trim and door surfaces as noted.`);
+        }
+      }
+
+      if (needsDailyCleanup) {
+        scopeBullets.push("Maintain a clean work area and perform daily cleanup throughout production.");
       }
 
       if (worksFromHome) {
-        importantNotesList.push("We will coordinate daily sequencing and access with your work-from-home schedule.");
+        
       }
 
-      if (paymentSchedule) {
-        importantNotesList.push(`Requested payment schedule: ${paymentSchedule}.`);
-      }
+      const importantNotesList = [
+        worksFromHome ? "Since the homeowner works from home, work areas will be coordinated daily to minimize disruption." : "",
+        mentionsDarkColors ? "Additional coats may be required where dark color transitions affect hide and uniformity." : "",
+      ].filter(Boolean);
 
-      if (input.options.some((option) => (option.title || "").trim().length > 0)) {
-        recommendationsList.push("Optional scope items are listed separately so final selections can be confirmed before scheduling.");
-      }
+      const recommendationsList = [
+        input.options.some((option) => (option.title || "").trim().length > 0)
+          ? "Optional scope items can be confirmed before scheduling so the final production plan aligns with your selections."
+          : "",
+      ].filter(Boolean);
 
-      if (!recommendationsList.length) {
-        recommendationsList.push("Please review the organized scope below and let us know if any area needs to be adjusted before scheduling.");
-      }
-
-      const uniqueGeneralTasks = uniqueSentences(generalTasks);
-      const uniqueRoomEntries = Array.from(roomTasks.entries()).map(([room, tasks]) => [room, uniqueSentences(tasks)] as const).filter(([, tasks]) => tasks.length > 0);
       const scopeSections = [
-        ...uniqueRoomEntries.map(([room, tasks], index) => ({
-          templateKey: `scope_${room.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`,
-          title: room,
+        {
+          templateKey: "scope_of_work",
+          title: "Scope of Work",
           description: "",
-          bulletItems: tasks,
+          bulletItems: uniqueSentences(scopeBullets),
           notes: "",
-          sortOrder: index,
-        })),
-        ...(uniqueGeneralTasks.length
-          ? [
-              {
-                templateKey: "scope_general",
-                title: uniqueRoomEntries.length ? "General Scope" : "Scope of Work",
-                description: "",
-                bulletItems: uniqueGeneralTasks,
-                notes: "",
-                sortOrder: uniqueRoomEntries.length,
-              },
-            ]
-          : []),
+          sortOrder: 0,
+        },
       ];
 
       const areaText = sqft ? ` for approximately ${sqft.toLocaleString("en-US")} sq ft` : "";
       const summaryNoun = writingGuide?.summaryNoun || "painting proposal";
-      const projectSummary = `Thank you for the opportunity to provide this ${summaryNoun} for ${projectName}${areaText}. Our goal is a clean, well-planned execution with clear expectations from start to finish.`;
-      const scopeOfWork = writingGuide?.scopeLead || "Scope is organized below by area based on your field notes.";
+      const projectSummary = `This ${summaryNoun} covers the preparation and painting scope for ${projectName}${areaText}, organized for clear execution and finish quality.`;
+      const scopeOfWork = writingGuide?.scopeLead || "The scope below groups related work activities into a clear production plan.";
       const importantNotes = uniqueSentences(importantNotesList).join("\n");
       const recommendations = uniqueSentences(recommendationsList).join("\n");
       const referencesText = "References and relevant project examples are available upon request.";
