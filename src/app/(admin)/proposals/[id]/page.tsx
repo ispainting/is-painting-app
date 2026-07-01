@@ -925,6 +925,7 @@ export default function ProposalDetailPage() {
                   generateProposalDraft.mutate({
                     aiDraftNotes: form.aiAssistantNotes,
                     proposalTemplate: form.proposalTemplate,
+                    proposalType: form.proposalType,
                     customerName: customerSearch,
                     projectName: form.projectName,
                     options: form.options.map((option) => ({

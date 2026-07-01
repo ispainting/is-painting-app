@@ -280,6 +280,58 @@ function extractProductName(line: string) {
   return null;
 }
 
+type ProposalArchetype = z.infer<typeof ProposalTemplateZ>;
+
+function detectProposalArchetype(input: {
+  proposalTemplate?: z.infer<typeof ProposalTemplateZ> | null;
+  proposalType?: z.infer<typeof ProposalTypeZ> | null;
+  lines: string[];
+}): ProposalArchetype {
+  if (input.proposalTemplate) return input.proposalTemplate;
+
+  const noteText = input.lines.join(" ").toLowerCase();
+  const keywordMap: Array<{ archetype: ProposalArchetype; pattern: RegExp }> = [
+    { archetype: "deck_restoration", pattern: /\bdeck\b/ },
+    { archetype: "pergola_restoration", pattern: /\bpergola\b/ },
+    { archetype: "cabinet_refinishing", pattern: /\bcabinet(s)?\b|\brefinish\b/ },
+    { archetype: "trim_restoration", pattern: /\btrim\b|\bbaseboard\b|\bcasing\b|\bmolding\b|\bmoulding\b/ },
+    { archetype: "wallpaper_removal", pattern: /\bwallpaper\b/ },
+    { archetype: "drywall_repair", pattern: /\bdrywall\b|\bpatch\b|\bcrack\b|\bnail holes?\b/ },
+    { archetype: "exterior_painting", pattern: /\bexterior\b|\bsiding\b|\bfacade\b|\boutside\b/ },
+    { archetype: "commercial_painting", pattern: /\bcommercial\b|\boffice\b|\btenant\b|\bstorefront\b/ },
+    { archetype: "new_construction", pattern: /\bnew construction\b|\bnew build\b|\bspec\b/ },
+    { archetype: "property_maintenance", pattern: /\bmaintenance\b|\btouch\s*up\b|\bservice\b/ },
+  ];
+
+  for (const rule of keywordMap) {
+    if (rule.pattern.test(noteText)) return rule.archetype;
+  }
+
+  if (input.proposalType === "commercial") return "commercial_painting";
+  if (input.proposalType === "new_construction") return "new_construction";
+  if (input.proposalType === "maintenance") return "property_maintenance";
+  if (input.proposalType === "restoration") return "trim_restoration";
+
+  return "interior_painting";
+}
+
+function createSection(
+  templateKey: string,
+  title: string,
+  description: string,
+  bulletItems: string[],
+  sortOrder: number
+) {
+  return {
+    templateKey,
+    title,
+    description,
+    bulletItems: uniqueSentences(bulletItems),
+    notes: "",
+    sortOrder,
+  };
+}
+
 export const proposalsRouter = router({
   list: protectedProcedure.query(({ ctx }) =>
     ctx.prisma.proposal.findMany({
@@ -573,6 +625,7 @@ export const proposalsRouter = router({
       z.object({
         aiDraftNotes: z.string().min(1),
         proposalTemplate: ProposalTemplateZ.nullable().optional(),
+        proposalType: ProposalTypeZ.nullable().optional(),
         customerName: z.string().optional(),
         projectName: z.string().optional(),
         options: z
@@ -591,7 +644,12 @@ export const proposalsRouter = router({
       const customerName = normalizeText(input.customerName || "") || "Valued Customer";
       const projectName = normalizeText(input.projectName || "") || "your project";
       const lines = splitDraftNotes(input.aiDraftNotes);
-      const writingGuide = input.proposalTemplate ? TEMPLATE_WRITING_GUIDE[input.proposalTemplate] : null;
+      const archetype = detectProposalArchetype({
+        proposalTemplate: input.proposalTemplate,
+        proposalType: input.proposalType,
+        lines,
+      });
+      const writingGuide = TEMPLATE_WRITING_GUIDE[archetype];
 
       let sqft: number | null = null;
       let totalAmount: number | null = null;
@@ -612,6 +670,10 @@ export const proposalsRouter = router({
       let hasDoorPrep = false;
       let hasSpotPrime = false;
       let hasTwoCoats = false;
+      let hasRespectfulCrew = false;
+      let hasFinalWalkthrough = false;
+
+      const explicitOptionPrices: number[] = [];
 
       for (const line of lines) {
         const lower = line.toLowerCase();
@@ -627,7 +689,10 @@ export const proposalsRouter = router({
         }
 
         const parsedAmount = parseStandaloneAmount(line);
-        if (parsedAmount) totalAmount = parsedAmount;
+        if (parsedAmount) {
+          explicitOptionPrices.push(parsedAmount);
+          totalAmount = parsedAmount;
+        }
 
         if (/\bworks? from home\b/.test(lower)) {
           worksFromHome = true;
@@ -635,6 +700,14 @@ export const proposalsRouter = router({
 
         if (/\bdaily\s*cleanup\b|\bdaily\s*clean\s*up\b/.test(lower)) {
           needsDailyCleanup = true;
+        }
+
+        if (/\brespectful crew\b|\bprofessional crew\b/.test(lower)) {
+          hasRespectfulCrew = true;
+        }
+
+        if (/\bfinal walkthrough\b|\bwalkthrough\b/.test(lower)) {
+          hasFinalWalkthrough = true;
         }
 
         if (/\bdark colors?\b|\bextra coat\b/.test(lower)) {
@@ -759,10 +832,6 @@ export const proposalsRouter = router({
         scopeBullets.push("Maintain a clean work area and perform daily cleanup throughout production.");
       }
 
-      if (worksFromHome) {
-        
-      }
-
       const importantNotesList = [
         worksFromHome ? "Since the homeowner works from home, work areas will be coordinated daily to minimize disruption." : "",
         mentionsDarkColors ? "Additional coats may be required where dark color transitions affect hide and uniformity." : "",
@@ -774,16 +843,208 @@ export const proposalsRouter = router({
           : "",
       ].filter(Boolean);
 
-      const scopeSections = [
-        {
-          templateKey: "scope_of_work",
-          title: "Scope of Work",
-          description: "",
-          bulletItems: uniqueSentences(scopeBullets),
-          notes: "",
-          sortOrder: 0,
-        },
-      ];
+      const inferredOptionPrices = uniqueSentences(
+        explicitOptionPrices.map((price) => price.toString())
+      )
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value));
+
+      const structuredOptions =
+        input.options.filter((option) => (option.title || "").trim().length > 0 || (option.description || "").trim().length > 0 || option.price != null).length > 0
+          ? input.options
+              .filter((option) => (option.title || "").trim().length > 0 || (option.description || "").trim().length > 0 || option.price != null)
+              .map((option, index) => ({
+                title: normalizeText(option.title || "") || `Option ${index + 1}`,
+                description: normalizeText(option.description || ""),
+                price: option.price ?? null,
+              }))
+          : inferredOptionPrices.slice(0, 3).map((price, index) => ({
+              title:
+                index === 0
+                  ? "Maintenance Scope"
+                  : index === 1
+                    ? "Enhanced Scope"
+                    : "Comprehensive Scope",
+              description: "",
+              price,
+            }));
+
+      const scopeStandards = uniqueSentences([
+        "Protect floors, furniture, and adjacent finishes before and during production.",
+        needsDailyCleanup ? "Perform daily cleanup and maintain orderly work areas." : "",
+        hasRespectfulCrew ? "Maintain a respectful and professional on-site crew presence." : "A respectful and professional crew approach is maintained throughout the project.",
+        hasFinalWalkthrough ? "Complete a final walkthrough to confirm scope completion." : "Complete a final walkthrough at project closeout.",
+      ]);
+
+      const attachmentBullets = uniqueSentences([
+        "I.S Painting Booklet",
+        "Certificate of Insurance",
+        structuredOptions.length > 1 || input.options.length > 0 ? "Estimate Breakdown" : "",
+        "References",
+      ]);
+
+      const sections: Array<{
+        templateKey: string;
+        title: string;
+        description: string;
+        bulletItems: string[];
+        notes: string;
+        sortOrder: number;
+      }> = [];
+
+      let sortOrder = 0;
+      const pushSection = (templateKey: string, title: string, description: string, bullets: string[]) => {
+        sections.push(createSection(templateKey, title, description, bullets, sortOrder));
+        sortOrder += 1;
+      };
+
+      const archetypeFamilies: Record<ProposalArchetype, "interior" | "restoration" | "specialized"> = {
+        interior_painting: "interior",
+        exterior_painting: "interior",
+        commercial_painting: "interior",
+        new_construction: "interior",
+        property_maintenance: "interior",
+        trim_restoration: "restoration",
+        deck_restoration: "restoration",
+        pergola_restoration: "restoration",
+        cabinet_refinishing: "specialized",
+        wallpaper_removal: "specialized",
+        drywall_repair: "specialized",
+      };
+
+      const family = archetypeFamilies[archetype];
+
+      if (family === "interior") {
+        pushSection("scope_of_work", "Scope of Work", "", uniqueSentences(scopeBullets));
+        if (structuredOptions.length) {
+          pushSection(
+            "optional_upgrades",
+            "Optional Upgrades",
+            "",
+            structuredOptions.map((option, index) => {
+              const priceText = option.price == null ? "Investment TBD" : option.price.toLocaleString("en-US", { style: "currency", currency: "USD" });
+              return `${index + 1}. ${option.title} - ${priceText}${option.description ? ` (${option.description})` : ""}`;
+            })
+          );
+        }
+        pushSection(
+          "paint_specifications",
+          "Paint Specifications",
+          "",
+          uniqueSentences([
+            productBySurface.walls ? `Wall surfaces: ${productBySurface.walls}.` : "",
+            productBySurface.ceilings ? `Ceiling surfaces: ${productBySurface.ceilings}.` : "",
+            productBySurface.trimDoors ? `Trim and doors: ${productBySurface.trimDoors}.` : "",
+          ])
+        );
+        pushSection("scope_standards", "Scope Standards", "", scopeStandards);
+      }
+
+      if (family === "restoration") {
+        const restorationNames: Record<ProposalArchetype, [string, string, string]> = {
+          trim_restoration: ["Complete Restoration", "Localized Repairs", "Trim Replacement"],
+          deck_restoration: ["Maintenance Restoration", "Complete Sanding", "Targeted Board Repairs"],
+          pergola_restoration: ["Maintenance Restoration", "Complete Sanding", "Component Repairs"],
+          interior_painting: ["", "", ""],
+          exterior_painting: ["", "", ""],
+          cabinet_refinishing: ["", "", ""],
+          wallpaper_removal: ["", "", ""],
+          drywall_repair: ["", "", ""],
+          commercial_painting: ["", "", ""],
+          new_construction: ["", "", ""],
+          property_maintenance: ["", "", ""],
+        };
+
+        const names = restorationNames[archetype];
+        const sourceOptions =
+          structuredOptions.length > 0
+            ? structuredOptions
+            : names.map((name, index) => ({
+                title: name,
+                description: "",
+                price: inferredOptionPrices[index] ?? null,
+              }));
+
+        sourceOptions.slice(0, 3).forEach((option, index) => {
+          const bullets =
+            index === 0
+              ? uniqueSentences(scopeBullets)
+              : index === 1
+                ? uniqueSentences([
+                    "Expanded preparation and restoration scope in higher-wear and visibly aged areas.",
+                    ...scopeBullets.slice(0, 5),
+                  ])
+                : uniqueSentences([
+                    "Includes targeted replacement or advanced repair where restoration alone is not sufficient.",
+                    ...scopeBullets.slice(0, 4),
+                  ]);
+          const priceText = option.price == null ? "Investment TBD" : option.price.toLocaleString("en-US", { style: "currency", currency: "USD" });
+          pushSection(
+            `option_${index + 1}`,
+            `Option ${index + 1}: ${option.title}`,
+            priceText,
+            bullets
+          );
+        });
+
+        if (structuredOptions.length > 3) {
+          pushSection(
+            "additional_options",
+            "Additional Painting Options",
+            "",
+            structuredOptions.slice(3).map((option) => {
+              const priceText = option.price == null ? "Investment TBD" : option.price.toLocaleString("en-US", { style: "currency", currency: "USD" });
+              return `${option.title} - ${priceText}`;
+            })
+          );
+        }
+
+        pushSection("scope_standards", "Scope Standards", "", scopeStandards);
+      }
+
+      if (family === "specialized") {
+        pushSection("scope_of_work", "Scope of Work", "", uniqueSentences(scopeBullets));
+        pushSection(
+          "important_note",
+          "Important Note",
+          "",
+          uniqueSentences([
+            hasSpotPrime
+              ? "Stained or repaired areas will be spot-primed with an appropriate primer before finish coats to reduce bleed-through and improve uniformity."
+              : "Final preparation details are confirmed at mobilization to support finish quality and durability.",
+          ])
+        );
+        if (structuredOptions.length) {
+          pushSection(
+            "options",
+            "Options",
+            "",
+            structuredOptions.map((option, index) => {
+              const priceText = option.price == null ? "Investment TBD" : option.price.toLocaleString("en-US", { style: "currency", currency: "USD" });
+              return `${index + 1}. ${option.title} - ${priceText}${option.description ? ` (${option.description})` : ""}`;
+            })
+          );
+        }
+        pushSection("scope_standards", "Scope Standards", "", scopeStandards);
+      }
+
+      if (paymentSchedule) {
+        pushSection("payment_schedule", "Payment Schedule", paymentSchedule, []);
+      }
+
+      if (archetype === "deck_restoration" || archetype === "pergola_restoration") {
+        pushSection("attachments", "Attachments", "", attachmentBullets);
+      }
+
+      pushSection(
+        "price_validity",
+        "Price Validity",
+        "",
+        [
+          "This proposal is valid for 60 days from the proposal date.",
+          "Projects beginning more than six (6) months after the proposal date may require pricing adjustments due to labor and material cost changes.",
+        ]
+      );
 
       const areaText = sqft ? ` for approximately ${sqft.toLocaleString("en-US")} sq ft` : "";
       const summaryNoun = writingGuide?.summaryNoun || "painting proposal";
@@ -803,7 +1064,7 @@ export const proposalsRouter = router({
         closingText,
         paymentSchedule: paymentSchedule || undefined,
         totalAmount: totalAmount ?? undefined,
-        sections: scopeSections,
+        sections,
       };
     }),
 
