@@ -92,6 +92,13 @@ const timeBulkReviewInput = z.object({
   managerNotes: z.string().optional(),
 });
 
+const timeBulkToolsInput = z.object({
+  ids: z.array(z.number().int().positive()).min(1),
+  action: z.enum(["assign_note", "move_project", "duplicate", "delete"]),
+  managerNotes: z.string().optional(),
+  projectId: z.number().int().positive().optional(),
+});
+
 function getDateRange(input?: { days?: number; weekStart?: string }) {
   if (input?.weekStart) {
     const start = new Date(`${input.weekStart}T00:00:00`);
@@ -546,6 +553,80 @@ export const timeRouter = router({
     });
 
     return { count: targets.length };
+  }),
+
+  bulkTools: adminProcedure.input(timeBulkToolsInput).mutation(async ({ ctx, input }) => {
+    if (input.action === "assign_note") {
+      const note = input.managerNotes?.trim() || null;
+      await ctx.prisma.timeEntry.updateMany({
+        where: { id: { in: input.ids } },
+        data: { managerNotes: note },
+      });
+      return { count: input.ids.length };
+    }
+
+    if (input.action === "move_project") {
+      if (!input.projectId) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Project is required" });
+      }
+
+      await ctx.prisma.timeEntry.updateMany({
+        where: { id: { in: input.ids } },
+        data: {
+          jobId: input.projectId,
+          reviewStatus: "pending",
+          approvedById: null,
+        },
+      });
+      return { count: input.ids.length };
+    }
+
+    if (input.action === "duplicate") {
+      const rows = await ctx.prisma.timeEntry.findMany({ where: { id: { in: input.ids } } });
+      if (!rows.length) return { count: 0 };
+
+      await Promise.all(
+        rows.map((existing) =>
+          ctx.prisma.timeEntry.create({
+            data: {
+              userId: existing.userId,
+              jobId: existing.jobId,
+              workType: existing.workType,
+              clockIn: existing.clockIn,
+              clockOut: existing.clockOut,
+              breakMinutes: existing.breakMinutes,
+              notes: existing.notes,
+              notAtJobsiteReason: existing.notAtJobsiteReason,
+              clockInLatitude: existing.clockInLatitude,
+              clockInLongitude: existing.clockInLongitude,
+              clockOutLatitude: existing.clockOutLatitude,
+              clockOutLongitude: existing.clockOutLongitude,
+              clockInAccuracy: existing.clockInAccuracy,
+              clockOutAccuracy: existing.clockOutAccuracy,
+              isManual: true,
+              isIslandJob: existing.isIslandJob,
+              overtimeOverride: existing.overtimeOverride,
+              ...buildManualPayroll({
+                clockIn: existing.clockIn,
+                clockOut: existing.clockOut,
+                breakMinutes: existing.breakMinutes,
+                isManual: true,
+                clockInLatitude: existing.clockInLatitude?.toNumber() ?? null,
+                clockInLongitude: existing.clockInLongitude?.toNumber() ?? null,
+                clockOutLatitude: existing.clockOutLatitude?.toNumber() ?? null,
+                clockOutLongitude: existing.clockOutLongitude?.toNumber() ?? null,
+              }),
+              ...applyReviewState("pending", ctx.session!.userId),
+            },
+          })
+        )
+      );
+
+      return { count: rows.length };
+    }
+
+    await ctx.prisma.timeEntry.deleteMany({ where: { id: { in: input.ids } } });
+    return { count: input.ids.length };
   }),
 
   remove: adminProcedure.input(z.object({ id: z.number() })).mutation(({ ctx, input }) =>
