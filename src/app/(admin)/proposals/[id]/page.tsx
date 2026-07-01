@@ -946,7 +946,7 @@ export default function ProposalDetailPage() {
               </button>
               {selectedExamples.length > 0 ? (
                 <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
-                  <div className="text-xs uppercase tracking-wide text-slate-500 mb-2">Using Examples</div>
+                  <div className="text-xs uppercase tracking-wide text-slate-500 mb-2">Proposal generated using</div>
                   <div className="space-y-1">
                     {selectedExamples.map((example) => (
                       <div key={example.id} className="text-slate-700">

@@ -46,6 +46,37 @@ function parseSearchTerms(search?: string) {
     .slice(0, 8);
 }
 
+function scoreExample(example: {
+  title: string;
+  description: string | null;
+  fullProposalContent: string;
+  tags: string[];
+  proposalCategory: string;
+  proposalType: string | null;
+}, search: string, terms: string[], category?: string) {
+  const content = `${example.title}\n${example.description || ""}\n${example.fullProposalContent}\n${example.tags.join(" ")}`.toLowerCase();
+  let score = 0;
+
+  if (category && example.proposalCategory === category) score += 8;
+  if (example.proposalType) score += 1;
+  if (search) {
+    if (content.includes(search.toLowerCase())) score += 4;
+  }
+
+  for (const term of terms) {
+    const lower = term.toLowerCase();
+    if (content.includes(lower)) score += 2;
+    if (example.tags.some((tag) => tag.toLowerCase().includes(lower))) score += 3;
+    if (example.title.toLowerCase().includes(lower)) score += 3;
+  }
+
+  if (content.includes("scope of work")) score += 1;
+  if (content.includes("closing")) score += 1;
+  if (content.includes("payment schedule")) score += 1;
+
+  return score;
+}
+
 function buildExampleData(input: z.infer<typeof exampleInput>) {
   return {
     title: input.title.trim(),
@@ -64,7 +95,7 @@ export const proposalExamplesRouter = router({
     const category = input?.proposalCategory;
     const terms = parseSearchTerms(search);
 
-    return ctx.prisma.proposalExample.findMany({
+    const examples = await ctx.prisma.proposalExample.findMany({
       where: {
         ...(category ? { proposalCategory: category } : {}),
         ...(search
@@ -81,6 +112,14 @@ export const proposalExamplesRouter = router({
       orderBy: { updatedAt: "desc" },
       take: 200,
     });
+
+    return examples
+      .map((example) => ({
+        ...example,
+        _score: scoreExample(example, search, terms, category),
+      }))
+      .sort((a, b) => b._score - a._score || b.updatedAt.getTime() - a.updatedAt.getTime())
+      .map(({ _score, ...example }) => example);
   }),
 
   byId: adminProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {

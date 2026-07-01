@@ -294,6 +294,108 @@ function extractProductName(line: string) {
   return null;
 }
 
+function extractExampleHeadings(content: string) {
+  return content
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .filter((line) => {
+      if (/^[•\-]/.test(line)) return false;
+      if (/^\d+[.)]/.test(line)) return false;
+      if (line.length > 80) return false;
+      return /[A-Za-z]/.test(line) && /^[A-Z][A-Za-z0-9 &/:-]+$/.test(line);
+    });
+}
+
+function extractSearchTerms(lines: string[]) {
+  const stopWords = new Set([
+    "the",
+    "and",
+    "for",
+    "with",
+    "this",
+    "that",
+    "from",
+    "into",
+    "about",
+    "will",
+    "are",
+    "been",
+    "be",
+    "our",
+    "your",
+    "their",
+    "home",
+    "project",
+    "proposal",
+    "paint",
+    "painting",
+    "work",
+    "room",
+  ]);
+
+  const words = new Set<string>();
+  for (const line of lines) {
+    for (const word of line.toLowerCase().split(/[^a-z0-9]+/)) {
+      if (!word || word.length < 3 || stopWords.has(word)) continue;
+      words.add(word);
+    }
+  }
+  return Array.from(words).slice(0, 12);
+}
+
+function buildExampleBlueprint(examples: Array<{ title: string; fullProposalContent: string }>) {
+  const headings = new Map<string, number>();
+  const stylePhrases = new Map<string, number>();
+
+  for (const example of examples) {
+    const exampleHeadings = extractExampleHeadings(example.fullProposalContent);
+    for (const heading of exampleHeadings) {
+      headings.set(heading, (headings.get(heading) || 0) + 1);
+    }
+
+    const content = example.fullProposalContent.toLowerCase();
+    ["daily cleanup", "protect floors", "final walkthrough", "price validity", "important note", "payment schedule"].forEach((phrase) => {
+      if (content.includes(phrase)) {
+        stylePhrases.set(phrase, (stylePhrases.get(phrase) || 0) + 1);
+      }
+    });
+  }
+
+  return {
+    headings: Array.from(headings.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([heading]) => heading),
+    hasImportantNotes: stylePhrases.has("important note"),
+    hasPriceValidity: stylePhrases.has("price validity"),
+    hasPaymentSchedule: stylePhrases.has("payment schedule"),
+    hasScopeStandards: stylePhrases.has("protect floors") || stylePhrases.has("daily cleanup") || stylePhrases.has("final walkthrough"),
+  };
+}
+
+function scoreExampleRelevance(example: {
+  title: string;
+  description: string | null;
+  fullProposalContent: string;
+  tags: string[];
+  proposalCategory: string;
+  proposalType: string | null;
+}, terms: string[], category: string) {
+  const content = `${example.title}\n${example.description || ""}\n${example.fullProposalContent}\n${example.tags.join(" ")}`.toLowerCase();
+  let score = 0;
+  if (example.proposalCategory === category) score += 8;
+  if (example.proposalType) score += 1;
+  for (const term of terms) {
+    if (!term) continue;
+    if (content.includes(term.toLowerCase())) score += 2;
+    if (example.tags.some((tag) => tag.toLowerCase().includes(term.toLowerCase()))) score += 3;
+  }
+  if (content.includes("scope of work")) score += 1;
+  if (content.includes("option")) score += 1;
+  if (content.includes("closing")) score += 1;
+  return score;
+}
+
 function detectProposalCategory(input: {
   proposalTemplate?: z.infer<typeof ProposalTemplateZ> | null;
   proposalType?: z.infer<typeof ProposalTypeZ> | null;
@@ -700,20 +802,26 @@ export const proposalsRouter = router({
       });
       const archetype = proposalCategory === "custom" ? "interior_painting" : proposalCategory;
       const writingGuide = proposalCategory === "custom" ? null : TEMPLATE_WRITING_GUIDE[proposalCategory];
+      const searchTerms = extractSearchTerms([...lines, customerName, projectName]);
 
       const selectedExamples = input.selectedExampleIds.length
         ? await ctx.prisma.proposalExample.findMany({
             where: { id: { in: input.selectedExampleIds } },
             orderBy: { updatedAt: "desc" },
           })
-        : await ctx.prisma.proposalExample.findMany({
-            where: { proposalCategory },
-            orderBy: [
-              { proposalType: input.proposalType ? "desc" : "asc" },
-              { updatedAt: "desc" },
-            ],
-            take: 3,
-          });
+        : ((await ctx.prisma.proposalExample.findMany({
+            take: 200,
+            orderBy: { updatedAt: "desc" },
+          }))
+            .map((example) => ({
+              ...example,
+              _score: scoreExampleRelevance(example, searchTerms, proposalCategory),
+            }))
+            .sort((a, b) => b._score - a._score || b.updatedAt.getTime() - a.updatedAt.getTime())
+            .slice(0, 3)
+            .map(({ _score, ...example }) => example));
+
+      const exampleBlueprint = buildExampleBlueprint(selectedExamples);
 
       let sqft: number | null = null;
       let totalAmount: number | null = null;
@@ -934,7 +1042,7 @@ export const proposalsRouter = router({
             }));
 
       const scopeStandards = uniqueSentences([
-        "Protect floors, furniture, and adjacent finishes before and during production.",
+        exampleBlueprint.hasScopeStandards ? "Protection of floors, furniture, and adjacent finishes is maintained throughout production." : "",
         needsDailyCleanup ? "Perform daily cleanup and maintain orderly work areas." : "",
         hasRespectfulCrew ? "Maintain a respectful and professional on-site crew presence." : "A respectful and professional crew approach is maintained throughout the project.",
         hasFinalWalkthrough ? "Complete a final walkthrough to confirm scope completion." : "Complete a final walkthrough at project closeout.",
@@ -979,11 +1087,14 @@ export const proposalsRouter = router({
       const family = archetypeFamilies[archetype];
 
       if (family === "interior") {
-        pushSection("scope_of_work", "Scope of Work", "", uniqueSentences(scopeBullets));
+        const sectionOrder = exampleBlueprint.headings;
+        const sectionTitle = (candidates: string[], fallback: string) => sectionOrder.find((heading) => candidates.some((candidate) => heading.toLowerCase() === candidate.toLowerCase())) || fallback;
+
+        pushSection("scope_of_work", sectionTitle(["scope of work", "scope"], "Scope of Work"), "", uniqueSentences(scopeBullets));
         if (structuredOptions.length) {
           pushSection(
             "optional_upgrades",
-            "Optional Upgrades",
+            sectionTitle(["optional upgrades", "options", "option"], "Optional Upgrades"),
             "",
             structuredOptions.map((option, index) => {
               const priceText = option.price == null ? "Investment TBD" : option.price.toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -993,7 +1104,7 @@ export const proposalsRouter = router({
         }
         pushSection(
           "paint_specifications",
-          "Paint Specifications",
+          sectionTitle(["paint specifications", "paint products", "materials"], "Paint Specifications"),
           "",
           uniqueSentences([
             productBySurface.walls ? `Wall surfaces: ${productBySurface.walls}.` : "",
@@ -1001,7 +1112,9 @@ export const proposalsRouter = router({
             productBySurface.trimDoors ? `Trim and doors: ${productBySurface.trimDoors}.` : "",
           ])
         );
-        pushSection("scope_standards", "Scope Standards", "", scopeStandards);
+        if (exampleBlueprint.hasScopeStandards || scopeStandards.length) {
+          pushSection("scope_standards", sectionTitle(["scope standards", "standards"], "Scope Standards"), "", scopeStandards);
+        }
       }
 
       if (family === "restoration") {
@@ -1063,7 +1176,9 @@ export const proposalsRouter = router({
           );
         }
 
-        pushSection("scope_standards", "Scope Standards", "", scopeStandards);
+        if (exampleBlueprint.hasScopeStandards || scopeStandards.length) {
+          pushSection("scope_standards", "Scope Standards", "", scopeStandards);
+        }
       }
 
       if (family === "specialized") {
@@ -1089,26 +1204,30 @@ export const proposalsRouter = router({
             })
           );
         }
-        pushSection("scope_standards", "Scope Standards", "", scopeStandards);
+        if (exampleBlueprint.hasScopeStandards || scopeStandards.length) {
+          pushSection("scope_standards", "Scope Standards", "", scopeStandards);
+        }
       }
 
-      if (paymentSchedule) {
-        pushSection("payment_schedule", "Payment Schedule", paymentSchedule, []);
+      if (paymentSchedule || exampleBlueprint.hasPaymentSchedule) {
+        pushSection("payment_schedule", "Payment Schedule", paymentSchedule || "", []);
       }
 
       if (archetype === "deck_restoration" || archetype === "pergola_restoration") {
         pushSection("attachments", "Attachments", "", attachmentBullets);
       }
 
-      pushSection(
-        "price_validity",
-        "Price Validity",
-        "",
-        [
-          "This proposal is valid for 60 days from the proposal date.",
-          "Projects beginning more than six (6) months after the proposal date may require pricing adjustments due to labor and material cost changes.",
-        ]
-      );
+      if (exampleBlueprint.hasPriceValidity) {
+        pushSection(
+          "price_validity",
+          "Price Validity",
+          "",
+          [
+            "This proposal is valid for 60 days from the proposal date.",
+            "Projects beginning more than six (6) months after the proposal date may require pricing adjustments due to labor and material cost changes.",
+          ]
+        );
+      }
 
       const areaText = sqft ? ` for approximately ${sqft.toLocaleString("en-US")} sq ft` : "";
       const summaryNoun = writingGuide?.summaryNoun || "painting proposal";

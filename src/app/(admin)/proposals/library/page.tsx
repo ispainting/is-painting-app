@@ -399,7 +399,7 @@ function TextArea({
   return (
     <div>
       <label className="label">{label}</label>
-      <textarea className="input min-h-32" value={value} onChange={(e) => onChange(e.target.value)} />
+      <textarea className="input min-h-80" value={value} onChange={(e) => onChange(e.target.value)} />
       {helperText ? <div className="text-xs text-slate-500 mt-1">{helperText}</div> : null}
     </div>
   );
