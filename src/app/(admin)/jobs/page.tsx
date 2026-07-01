@@ -35,6 +35,11 @@ export default function JobsPage() {
     city: "",
     state: "",
     zipCode: "",
+    isIslandJob: false,
+    travelPayEnabled: false,
+    defaultTravelHours: 0,
+    travelRateType: "regular" as "regular" | "island" | "custom",
+    customTravelRate: 0,
     materialsBudget: 0,
     laborBudget: 0,
     wcPercent: 17.5,
@@ -178,6 +183,28 @@ export default function JobsPage() {
               <FieldText label="City" value={form.city} onChange={(v) => setForm((f) => ({ ...f, city: v }))} />
               <FieldText label="State" value={form.state} onChange={(v) => setForm((f) => ({ ...f, state: v }))} />
               <FieldText label="Zip" value={form.zipCode} onChange={(v) => setForm((f) => ({ ...f, zipCode: v }))} />
+              <div className="col-span-2 grid grid-cols-2 gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                  <input type="checkbox" checked={form.isIslandJob} onChange={(e) => setForm((f) => ({ ...f, isIslandJob: e.target.checked }))} />
+                  Island Job
+                </label>
+                <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                  <input type="checkbox" checked={form.travelPayEnabled} onChange={(e) => setForm((f) => ({ ...f, travelPayEnabled: e.target.checked }))} />
+                  Travel Pay
+                </label>
+                <Field label="Default Travel Hours" value={form.defaultTravelHours} onChange={(v) => setForm((f) => ({ ...f, defaultTravelHours: v }))} />
+                <div>
+                  <label className="label">Travel Rate Type</label>
+                  <select className="input" value={form.travelRateType} onChange={(e) => setForm((f) => ({ ...f, travelRateType: e.target.value as "regular" | "island" | "custom" }))}>
+                    <option value="regular">Regular rate</option>
+                    <option value="island">Island rate</option>
+                    <option value="custom">Custom rate</option>
+                  </select>
+                </div>
+                {form.travelRateType === "custom" ? (
+                  <Field label="Custom Travel Rate" value={form.customTravelRate} onChange={(v) => setForm((f) => ({ ...f, customTravelRate: v }))} />
+                ) : null}
+              </div>
               <Field label="Materials" value={form.materialsBudget} onChange={(v) => setForm((f) => ({ ...f, materialsBudget: v }))} />
               <Field label="Labor" value={form.laborBudget} onChange={(v) => setForm((f) => ({ ...f, laborBudget: v }))} />
               <Field label="WC %" value={form.wcPercent} onChange={(v) => setForm((f) => ({ ...f, wcPercent: v }))} />

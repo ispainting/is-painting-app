@@ -65,6 +65,8 @@ const timeEntryUpsertInput = z.object({
   clockIn: z.string().min(1),
   clockOut: z.string().nullable().optional(),
   totalHours: z.number().min(0).nullable().optional(),
+  rateType: z.enum(["regular", "island", "travel", "overtime"]).default("regular"),
+  travelHours: z.number().min(0).nullable().optional(),
   breakMinutes: z.number().min(0).default(0),
   notes: z.string().optional(),
   managerNotes: z.string().optional(),
@@ -438,6 +440,8 @@ export const timeRouter = router({
     const baseData = {
       userId: input.data.userId,
       jobId: input.data.jobId ?? null,
+      rateType: input.data.rateType,
+      travelHours: input.data.travelHours ?? null,
       workType: input.data.workType ?? null,
       clockIn,
       clockOut,
@@ -488,6 +492,8 @@ export const timeRouter = router({
       data: {
         userId: existing.userId,
         jobId: existing.jobId,
+        rateType: existing.rateType,
+        travelHours: existing.travelHours,
         workType: existing.workType,
         clockIn: existing.clockIn,
         clockOut: existing.clockOut,

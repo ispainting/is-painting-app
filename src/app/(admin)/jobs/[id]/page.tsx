@@ -39,6 +39,11 @@ export default function JobDetailPage() {
     status: "estimate" as (typeof STATUSES)[number],
     scopeOfWork: "",
     jobNotes: "",
+    isIslandJob: false,
+    travelPayEnabled: false,
+    defaultTravelHours: 0,
+    travelRateType: "regular" as "regular" | "island" | "custom",
+    customTravelRate: 0,
     materialsBudget: 0,
     laborBudget: 0,
     subcontractorBudget: 0,
@@ -109,21 +114,41 @@ export default function JobDetailPage() {
   });
 
   if (isLoading || !job) return <div className="text-slate-500">Loading…</div>;
+  const jobData = job as typeof job & {
+    customer: { name: string };
+    assignments: Array<{ id: number; user: { name: string }; userId: number }>;
+    expenses: Array<{ id: number; status: string; category: string; amount: string | number; receiptUrl: string | null; vendor: string | null }>;
+    timeEntries: Array<{ id: number; paidHours: string | number | null; hoursWorked: string | number | null; grossHours: string | number | null; clockOut: string | null; clockIn: string; user: { name: string; hourlyRate: string | number | null } }>;
+    invoices: Array<{ id: number; total: string | number; invoiceNumber: string | null; title: string | null }>;
+    payments: Array<{ id: number; amount: string | number; dateReceived: string; attachmentUrl: string | null; method: string | null }>;
+    paintColors: Array<{ id: number; area: string; colorName: string; brand: string | null; finish: string | null; notes: string | null }>;
+    isIslandJob: boolean;
+    travelPayEnabled: boolean;
+    defaultTravelHours: number | string | null;
+    travelRateType: "regular" | "island" | "custom" | null;
+    customTravelRate: number | string | null;
+  };
 
   const openEditModal = () => {
+    const customerName = jobData.customer?.name || "";
     setEditForm({
       customerId: job.customerId,
       name: job.name,
       status: job.status,
       scopeOfWork: job.scopeOfWork || "",
       jobNotes: job.notes || "",
+      isIslandJob: Boolean((job as any).isIslandJob),
+      travelPayEnabled: Boolean((job as any).travelPayEnabled),
+      defaultTravelHours: Number((job as any).defaultTravelHours || 0),
+      travelRateType: ((job as any).travelRateType || "regular") as "regular" | "island" | "custom",
+      customTravelRate: Number((job as any).customTravelRate || 0),
       materialsBudget: Number(job.materialsBudget),
       laborBudget: Number(job.laborBudget),
       subcontractorBudget: Number(job.subcontractorBudget || 0),
       totalEstimate: Number(job.totalEstimate),
       contractAmount: Number(job.contractAmount),
     });
-    setCustomerSearch(job.customer.name);
+    setCustomerSearch(customerName);
     setShowCustomerResults(false);
     setIsEditOpen(true);
   };
@@ -136,6 +161,11 @@ export default function JobDetailPage() {
         name: editForm.name,
         scopeOfWork: editForm.scopeOfWork,
         notes: editForm.jobNotes,
+        isIslandJob: editForm.isIslandJob,
+        travelPayEnabled: editForm.travelPayEnabled,
+        defaultTravelHours: editForm.defaultTravelHours,
+        travelRateType: editForm.travelRateType,
+        customTravelRate: editForm.travelRateType === "custom" ? editForm.customTravelRate : undefined,
         materialsBudget: editForm.materialsBudget,
         laborBudget: editForm.laborBudget,
         subcontractorBudget: editForm.subcontractorBudget,
@@ -162,14 +192,14 @@ export default function JobDetailPage() {
     ? (estimatedGrossProfit / contractOrTotalAmount) * 100
     : 0;
 
-  const nonRejectedExpenses = job.expenses.filter((e) => e.status !== "rejected");
+  const nonRejectedExpenses = jobData.expenses.filter((e) => e.status !== "rejected");
   const subcontractorExpenses = nonRejectedExpenses.filter((e) => e.category === "subcontractor");
   const nonSubcontractorExpenses = nonRejectedExpenses.filter((e) => e.category !== "subcontractor" && e.category !== "labor");
 
   const actualSubcontractorCost = subcontractorExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
   const actualExpensesTotal = nonSubcontractorExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
 
-  const actualLaborResult = job.timeEntries.reduce(
+  const actualLaborResult = jobData.timeEntries.reduce(
     (acc, t) => {
       const hours = t.paidHours != null
         ? Number(t.paidHours)
@@ -199,7 +229,7 @@ export default function JobDetailPage() {
   );
 
   const actualLaborCost = actualLaborResult.cost;
-  const actualLaborPending = job.timeEntries.length === 0 || (actualLaborResult.hasHours && actualLaborResult.pending);
+  const actualLaborPending = jobData.timeEntries.length === 0 || (actualLaborResult.hasHours && actualLaborResult.pending);
   const actualExpensesPending = nonSubcontractorExpenses.length === 0;
   const actualSubcontractorPending = subcontractorExpenses.length === 0;
 
@@ -207,15 +237,15 @@ export default function JobDetailPage() {
   const actualProfit = contractOrTotalAmount - actualTotalCost;
   const actualMarginPct = contractOrTotalAmount > 0 ? (actualProfit / contractOrTotalAmount) * 100 : 0;
 
-  const invoiceTotal = job.invoices.reduce((sum, i) => sum + Number(i.total), 0);
-  const paymentsTotal = job.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+  const invoiceTotal = jobData.invoices.reduce((sum, i) => sum + Number(i.total), 0);
+  const paymentsTotal = jobData.payments.reduce((sum, p) => sum + Number(p.amount), 0);
   const balanceDue = contractOrTotalAmount - paymentsTotal;
 
   const knownAttachments = [
-    ...job.expenses
+    ...jobData.expenses
       .filter((e) => !!e.receiptUrl)
       .map((e) => ({ id: `expense-${e.id}`, name: e.vendor || "Expense receipt", url: e.receiptUrl! })),
-    ...job.payments
+    ...jobData.payments
       .filter((p) => !!p.attachmentUrl)
       .map((p) => ({ id: `payment-${p.id}`, name: `Payment ${formatDateTime(p.dateReceived)}`, url: p.attachmentUrl! })),
   ];
@@ -243,7 +273,7 @@ export default function JobDetailPage() {
     <>
       <PageHeader
         title={job.name}
-        description={`${job.estimateNumber} · ${job.customer.name}`}
+        description={`${job.estimateNumber} · ${jobData.customer.name}`}
         actions={
           <div className="flex items-center gap-2">
             <button className="btn btn-secondary" type="button" onClick={openEditModal}>
@@ -261,6 +291,12 @@ export default function JobDetailPage() {
           </div>
         }
       />
+
+      <div className="mb-4 flex flex-wrap gap-2">
+        {jobData.isIslandJob ? <span className="badge bg-emerald-100 text-emerald-700">Island Job</span> : null}
+        {jobData.travelPayEnabled ? <span className="badge bg-blue-100 text-blue-700">Travel Paid</span> : null}
+        {jobData.travelPayEnabled ? <span className="badge bg-slate-100 text-slate-700">Travel Hours {Number(jobData.defaultTravelHours || 0).toFixed(2)}</span> : null}
+      </div>
 
       <div className="card p-2 mb-4">
         <div className="flex flex-wrap gap-2">
@@ -285,7 +321,7 @@ export default function JobDetailPage() {
           <div className="card p-5 md:col-span-2">
             <h2 className="text-base font-semibold mb-3">Overview</h2>
             <div className="grid grid-cols-2 gap-4 text-sm">
-              <Stat label="Customer" value={job.customer.name} />
+              <Stat label="Customer" value={jobData.customer.name} />
               <Stat label="Street" value={street} />
               <Stat label="City" value={city} />
               <Stat label="State" value={state} />
@@ -332,11 +368,11 @@ export default function JobDetailPage() {
 
           <div className="card p-5">
             <h2 className="text-base font-semibold mb-2">Assigned Crew</h2>
-            {job.assignments.length === 0 ? (
+            {jobData.assignments.length === 0 ? (
               <p className="text-sm text-slate-500">Nobody assigned yet.</p>
             ) : (
               <ul className="text-sm space-y-1">
-                {job.assignments.map((a) => (
+                {jobData.assignments.map((a) => (
                   <li key={a.id}>{a.user.name}</li>
                 ))}
               </ul>
@@ -439,7 +475,7 @@ export default function JobDetailPage() {
               onChange={(e) => setPaintForm((f) => ({ ...f, notes: e.target.value }))}
             />
 
-            {job.paintColors.length === 0 ? (
+            {jobData.paintColors.length === 0 ? (
               <p className="text-sm text-slate-500 mt-4">No paint colors added yet.</p>
             ) : (
               <div className="overflow-x-auto mt-4">
@@ -455,7 +491,7 @@ export default function JobDetailPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {job.paintColors.map((color) => {
+                    {jobData.paintColors.map((color) => {
                       const isEditing = editingPaintColorId === color.id;
                       return (
                         <tr key={color.id} className="border-t border-slate-100 align-top">
@@ -604,11 +640,11 @@ export default function JobDetailPage() {
           <div className="grid md:grid-cols-2 gap-4">
             <div className="card p-5">
               <h2 className="text-base font-semibold mb-3">Time Entries</h2>
-              {job.timeEntries.length === 0 ? (
+              {jobData.timeEntries.length === 0 ? (
                 <p className="text-sm text-slate-500">No time logged.</p>
               ) : (
                 <ul className="text-sm divide-y">
-                  {job.timeEntries.slice(0, 12).map((t) => (
+                  {jobData.timeEntries.slice(0, 12).map((t) => (
                     <li key={t.id} className="py-2 flex justify-between">
                       <span>{t.user.name}</span>
                       <span className="text-slate-500">
@@ -628,7 +664,7 @@ export default function JobDetailPage() {
               <h2 className="text-base font-semibold mb-3">Labor Cost</h2>
               <div className="grid grid-cols-2 gap-4">
                 <Stat label="Actual labor cost" value={actualLaborPending ? `${formatCurrency(actualLaborCost)} (Pending)` : formatCurrency(actualLaborCost)} />
-                <Stat label="Tracked entries" value={String(job.timeEntries.length)} />
+                <Stat label="Tracked entries" value={String(jobData.timeEntries.length)} />
               </div>
             </div>
           </div>
@@ -652,11 +688,11 @@ export default function JobDetailPage() {
 
             <div className="card p-5">
               <h2 className="text-base font-semibold mb-3">Receipts</h2>
-              {job.expenses.filter((e) => !!e.receiptUrl).length === 0 ? (
+              {jobData.expenses.filter((e) => !!e.receiptUrl).length === 0 ? (
                 <p className="text-sm text-slate-500">No receipts uploaded yet.</p>
               ) : (
                 <ul className="text-sm divide-y">
-                  {job.expenses.filter((e) => !!e.receiptUrl).slice(0, 12).map((e) => (
+                  {jobData.expenses.filter((e) => !!e.receiptUrl).slice(0, 12).map((e) => (
                     <li key={e.id} className="py-2 flex items-start justify-between gap-3">
                       <span>{e.vendor || "Receipt"}</span>
                       <a className="text-brand-700 hover:underline" href={e.receiptUrl!} target="_blank" rel="noreferrer">Open</a>
@@ -711,11 +747,11 @@ export default function JobDetailPage() {
           <div className="grid md:grid-cols-2 gap-4">
             <div className="card p-5">
               <h2 className="text-base font-semibold mb-3">Invoices</h2>
-              {job.invoices.length === 0 ? (
+              {jobData.invoices.length === 0 ? (
                 <p className="text-sm text-slate-500">No invoices yet.</p>
               ) : (
                 <ul className="text-sm divide-y">
-                  {job.invoices.map((i) => (
+                  {jobData.invoices.map((i) => (
                     <li key={i.id} className="py-2 flex justify-between">
                       <span>{i.invoiceNumber} · {i.title}</span>
                       <span>{formatCurrency(Number(i.total))}</span>
@@ -727,11 +763,11 @@ export default function JobDetailPage() {
 
             <div className="card p-5">
               <h2 className="text-base font-semibold mb-3">Payments</h2>
-              {job.payments.length === 0 ? (
+              {jobData.payments.length === 0 ? (
                 <p className="text-sm text-slate-500">No payments recorded yet.</p>
               ) : (
                 <ul className="text-sm divide-y">
-                  {job.payments.map((p) => (
+                  {jobData.payments.map((p) => (
                     <li key={p.id} className="py-2 flex justify-between">
                       <span>{p.method} · {formatDateTime(p.dateReceived)}</span>
                       <span>{formatCurrency(Number(p.amount))}</span>
@@ -834,9 +870,9 @@ export default function JobDetailPage() {
                     </div>
                   )}
                 </div>
-                <div className="text-xs text-slate-500 mt-1">
-                  Selected: {customers.data?.find((c) => c.id === editForm.customerId)?.name || job.customer.name}
-                </div>
+                  <div className="text-xs text-slate-500 mt-1">
+                    Selected: {customers.data?.find((c) => c.id === editForm.customerId)?.name || jobData.customer.name}
+                  </div>
               </div>
 
               <div className="col-span-2">
@@ -855,6 +891,29 @@ export default function JobDetailPage() {
                   value={editForm.jobNotes}
                   onChange={(e) => setEditForm((f) => ({ ...f, jobNotes: e.target.value }))}
                 />
+              </div>
+
+              <div className="col-span-2 grid grid-cols-2 gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                  <input type="checkbox" checked={editForm.isIslandJob} onChange={(e) => setEditForm((f) => ({ ...f, isIslandJob: e.target.checked }))} />
+                  Island Job
+                </label>
+                <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                  <input type="checkbox" checked={editForm.travelPayEnabled} onChange={(e) => setEditForm((f) => ({ ...f, travelPayEnabled: e.target.checked }))} />
+                  Travel Pay
+                </label>
+                <Field label="Default travel hours" value={editForm.defaultTravelHours} onChange={(v) => setEditForm((f) => ({ ...f, defaultTravelHours: v }))} />
+                <div>
+                  <label className="label">Travel rate type</label>
+                  <select className="input" value={editForm.travelRateType} onChange={(e) => setEditForm((f) => ({ ...f, travelRateType: e.target.value as "regular" | "island" | "custom" }))}>
+                    <option value="regular">Regular rate</option>
+                    <option value="island">Island rate</option>
+                    <option value="custom">Custom rate</option>
+                  </select>
+                </div>
+                {editForm.travelRateType === "custom" ? (
+                  <Field label="Custom travel rate" value={editForm.customTravelRate} onChange={(v) => setEditForm((f) => ({ ...f, customTravelRate: v }))} />
+                ) : null}
               </div>
 
               <Field label="Materials budget" value={editForm.materialsBudget} onChange={(v) => setEditForm((f) => ({ ...f, materialsBudget: v }))} />

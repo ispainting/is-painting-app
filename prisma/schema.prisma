@@ -195,6 +195,12 @@ enum TimeRateType {
   overtime
 }
 
+enum JobTravelRateType {
+  regular
+  island
+  custom
+}
+
 enum TimeReviewStatus {
   pending
   approved
@@ -276,6 +282,8 @@ model Job {
   isIslandJob    Boolean   @default(false)
   travelPayEnabled Boolean @default(false)
   defaultTravelHours Decimal @default(0) @db.Decimal(8, 2)
+  travelRateType JobTravelRateType @default(regular)
+  customTravelRate Decimal? @db.Decimal(10, 2)
 
   address        String?
   city           String?  @db.VarChar(100)
