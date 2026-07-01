@@ -88,9 +88,14 @@ export default function ProposalsPage() {
         title="Proposals"
         description="Lead / Customer -> Proposal -> Sent / Approved -> Job"
         actions={
-          <button onClick={() => setOpen(true)} className="btn btn-primary">
-            <Plus className="w-4 h-4 mr-1" /> New Proposal
-          </button>
+          <div className="flex gap-2">
+            <Link href="/proposals/library" className="btn btn-secondary">
+              Proposal Library
+            </Link>
+            <button onClick={() => setOpen(true)} className="btn btn-primary">
+              <Plus className="w-4 h-4 mr-1" /> New Proposal
+            </button>
+          </div>
         }
       />
 

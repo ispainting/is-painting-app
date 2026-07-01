@@ -327,6 +327,7 @@ export default function ProposalDetailPage() {
   const [collapsedSections, setCollapsedSections] = useState<Record<number, boolean>>({});
   const [selectedSectionTemplate, setSelectedSectionTemplate] = useState<(typeof SECTION_TEMPLATES)[number]>("interior_painting");
   const [selectedAttachmentCategory, setSelectedAttachmentCategory] = useState<(typeof ATTACHMENT_CATEGORIES)[number]>("Other");
+  const [selectedExamples, setSelectedExamples] = useState<Array<{ id: number; title: string; proposalCategory: string; proposalType: string | null; tags: string[] }>>([]);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState({
     customerId: 0,
@@ -374,6 +375,7 @@ export default function ProposalDetailPage() {
 
   const generateProposalDraft = api.proposals.generateProposalDraft.useMutation({
     onSuccess: (draft) => {
+      setSelectedExamples(draft.selectedExamples || []);
       setForm((current) => ({
         ...current,
         projectSummary: draft.projectSummary || current.projectSummary,
@@ -942,6 +944,18 @@ export default function ProposalDetailPage() {
               >
                 {generateProposalDraft.isPending ? "Generating..." : "Generate Proposal"}
               </button>
+              {selectedExamples.length > 0 ? (
+                <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
+                  <div className="text-xs uppercase tracking-wide text-slate-500 mb-2">Using Examples</div>
+                  <div className="space-y-1">
+                    {selectedExamples.map((example) => (
+                      <div key={example.id} className="text-slate-700">
+                        ✓ {example.title}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               <FieldArea label="Proposal Notes" value={form.notes} onChange={(v) => setForm((f) => ({ ...f, notes: v }))} disabled={isReadOnly} />
             </div>
           </div>

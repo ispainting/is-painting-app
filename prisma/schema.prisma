@@ -71,6 +71,21 @@ enum ProposalStatus {
   converted
 }
 
+enum ProposalCategory {
+  interior_painting
+  exterior_painting
+  deck_restoration
+  pergola_restoration
+  trim_restoration
+  cabinet_refinishing
+  wallpaper_removal
+  drywall_repair
+  commercial_painting
+  new_construction
+  property_maintenance
+  custom
+}
+
 enum ProposalTemplate {
   interior_painting
   exterior_painting
@@ -459,6 +474,23 @@ model Proposal {
 
   @@index([customerId])
   @@index([status])
+}
+
+model ProposalExample {
+  id                  Int              @id @default(autoincrement())
+  title               String
+  proposalCategory    ProposalCategory
+  proposalType        ProposalType?
+  description         String?          @db.Text
+  fullProposalContent String           @db.Text
+  tags                String[]
+  notes               String?          @db.Text
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  @@index([proposalCategory])
+  @@index([proposalType])
+  @@index([title])
 }
 
 model ProposalPaintColor {

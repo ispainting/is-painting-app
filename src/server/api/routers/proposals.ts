@@ -18,6 +18,20 @@ const ProposalTemplateZ = z.enum([
   "property_maintenance",
 ]);
 const ProposalTypeZ = z.enum(["residential", "commercial", "restoration", "maintenance", "new_construction", "custom"]);
+const ProposalCategoryZ = z.enum([
+  "interior_painting",
+  "exterior_painting",
+  "deck_restoration",
+  "pergola_restoration",
+  "trim_restoration",
+  "cabinet_refinishing",
+  "wallpaper_removal",
+  "drywall_repair",
+  "commercial_painting",
+  "new_construction",
+  "property_maintenance",
+  "custom",
+]);
 
 const proposalOptionInput = z.object({
   title: z.string().min(1),
@@ -278,6 +292,40 @@ function extractProductName(line: string) {
   if (/\bfresh\s*start\b/.test(lower)) return "Benjamin Moore Fresh Start primer";
   if (/\boil\s*prime\b|\boil\s*based primer\b/.test(lower)) return "oil-based primer";
   return null;
+}
+
+function detectProposalCategory(input: {
+  proposalTemplate?: z.infer<typeof ProposalTemplateZ> | null;
+  proposalType?: z.infer<typeof ProposalTypeZ> | null;
+  lines: string[];
+}) {
+  if (input.proposalTemplate) return input.proposalTemplate;
+
+  const noteText = input.lines.join(" ").toLowerCase();
+  const keywordMap: Array<{ category: z.infer<typeof ProposalCategoryZ>; pattern: RegExp }> = [
+    { category: "deck_restoration", pattern: /\bdeck\b/ },
+    { category: "pergola_restoration", pattern: /\bpergola\b/ },
+    { category: "cabinet_refinishing", pattern: /\bcabinet(s)?\b|\brefinish\b/ },
+    { category: "trim_restoration", pattern: /\btrim\b|\bbaseboard\b|\bcasing\b|\bmolding\b|\bmoulding\b/ },
+    { category: "wallpaper_removal", pattern: /\bwallpaper\b/ },
+    { category: "drywall_repair", pattern: /\bdrywall\b|\bpatch\b|\bcrack\b|\bnail holes?\b/ },
+    { category: "exterior_painting", pattern: /\bexterior\b|\bsiding\b|\bfacade\b|\boutside\b/ },
+    { category: "commercial_painting", pattern: /\bcommercial\b|\boffice\b|\btenant\b|\bstorefront\b/ },
+    { category: "new_construction", pattern: /\bnew construction\b|\bnew build\b|\bspec\b/ },
+    { category: "property_maintenance", pattern: /\bmaintenance\b|\btouch\s*up\b|\bservice\b/ },
+  ];
+
+  for (const rule of keywordMap) {
+    if (rule.pattern.test(noteText)) return rule.category;
+  }
+
+  if (input.proposalType === "commercial") return "commercial_painting";
+  if (input.proposalType === "new_construction") return "new_construction";
+  if (input.proposalType === "maintenance") return "property_maintenance";
+  if (input.proposalType === "restoration") return "trim_restoration";
+  if (input.proposalType === "custom") return "custom";
+
+  return "interior_painting";
 }
 
 type ProposalArchetype = z.infer<typeof ProposalTemplateZ>;
@@ -626,6 +674,7 @@ export const proposalsRouter = router({
         aiDraftNotes: z.string().min(1),
         proposalTemplate: ProposalTemplateZ.nullable().optional(),
         proposalType: ProposalTypeZ.nullable().optional(),
+        selectedExampleIds: z.array(z.number()).default([]),
         customerName: z.string().optional(),
         projectName: z.string().optional(),
         options: z
@@ -640,16 +689,31 @@ export const proposalsRouter = router({
         attachments: z.array(z.string()).default([]),
       })
     )
-    .mutation(({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const customerName = normalizeText(input.customerName || "") || "Valued Customer";
       const projectName = normalizeText(input.projectName || "") || "your project";
       const lines = splitDraftNotes(input.aiDraftNotes);
-      const archetype = detectProposalArchetype({
+      const proposalCategory = detectProposalCategory({
         proposalTemplate: input.proposalTemplate,
         proposalType: input.proposalType,
         lines,
       });
-      const writingGuide = TEMPLATE_WRITING_GUIDE[archetype];
+      const archetype = proposalCategory === "custom" ? "interior_painting" : proposalCategory;
+      const writingGuide = proposalCategory === "custom" ? null : TEMPLATE_WRITING_GUIDE[proposalCategory];
+
+      const selectedExamples = input.selectedExampleIds.length
+        ? await ctx.prisma.proposalExample.findMany({
+            where: { id: { in: input.selectedExampleIds } },
+            orderBy: { updatedAt: "desc" },
+          })
+        : await ctx.prisma.proposalExample.findMany({
+            where: { proposalCategory },
+            orderBy: [
+              { proposalType: input.proposalType ? "desc" : "asc" },
+              { updatedAt: "desc" },
+            ],
+            take: 3,
+          });
 
       let sqft: number | null = null;
       let totalAmount: number | null = null;
@@ -1065,6 +1129,14 @@ export const proposalsRouter = router({
         paymentSchedule: paymentSchedule || undefined,
         totalAmount: totalAmount ?? undefined,
         sections,
+        proposalCategory,
+        selectedExamples: selectedExamples.map((example) => ({
+          id: example.id,
+          title: example.title,
+          proposalCategory: example.proposalCategory,
+          proposalType: example.proposalType,
+          tags: example.tags,
+        })),
       };
     }),
 
