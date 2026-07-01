@@ -47,6 +47,8 @@ const WorkTypeInputZ = z.enum(["job_site", "shop", "office", "travel", "meeting"
 const timeEntryFiltersInput = z
   .object({
     days: z.number().default(30),
+    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     employeeId: z.number().int().positive().optional(),
     projectId: z.number().int().positive().optional(),
@@ -99,7 +101,14 @@ const timeBulkToolsInput = z.object({
   projectId: z.number().int().positive().optional(),
 });
 
-function getDateRange(input?: { days?: number; weekStart?: string }) {
+function getDateRange(input?: { days?: number; weekStart?: string; startDate?: string; endDate?: string }) {
+  if (input?.startDate && input?.endDate) {
+    const start = new Date(`${input.startDate}T00:00:00`);
+    const end = new Date(`${input.endDate}T00:00:00`);
+    end.setDate(end.getDate() + 1);
+    return { start, end };
+  }
+
   if (input?.weekStart) {
     const start = new Date(`${input.weekStart}T00:00:00`);
     const end = new Date(start);
@@ -113,6 +122,8 @@ function getDateRange(input?: { days?: number; weekStart?: string }) {
 
 type TimeEntryWhereFilters = {
   days?: number;
+  startDate?: string;
+  endDate?: string;
   weekStart?: string;
   employeeId?: number;
   projectId?: number;
