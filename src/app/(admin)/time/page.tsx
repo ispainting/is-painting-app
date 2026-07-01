@@ -19,13 +19,15 @@ type TimeEntryRecord = {
   hoursWorked: number | string | null;
   grossHours: number | string | null;
   paidHours: number | string | null;
+  rateType?: "regular" | "island" | "travel" | "overtime" | null;
+  travelHours?: number | string | null;
   isManual: boolean;
   isIslandJob: boolean;
   notes: string | null;
   reviewStatus: ReviewStatus;
   workType: string | null;
-  user?: { id: number; name: string; hourlyRate: number | string | null };
-  job?: { id: number; name: string; address: string | null } | null;
+  user?: { id: number; name: string; hourlyRate: number | string | null; regularRate?: number | string | null; islandRate?: number | string | null; overtimeRate?: number | string | null };
+  job?: { id: number; name: string; address: string | null; isIslandJob?: boolean; travelPayEnabled?: boolean; defaultTravelHours?: number | string | null } | null;
 };
 
 type EntryEditorState = {
@@ -75,6 +77,33 @@ function toNumber(value: unknown) {
 
 function entryHours(entry: TimeEntryRecord) {
   return toNumber(entry.paidHours ?? entry.hoursWorked ?? entry.grossHours ?? 0);
+}
+
+function travelEntryHours(entry: TimeEntryRecord) {
+  return toNumber(entry.travelHours ?? entry.job?.defaultTravelHours ?? 0);
+}
+
+function getRates(entry: TimeEntryRecord, fallbackRate: number) {
+  const regularRate = toNumber(entry.user?.regularRate ?? entry.user?.hourlyRate ?? fallbackRate);
+  const islandRate = toNumber(entry.user?.islandRate ?? regularRate);
+  const overtimeRate = toNumber(entry.user?.overtimeRate ?? regularRate * 1.5);
+  return { regularRate, islandRate, overtimeRate };
+}
+
+function getRateType(entry: TimeEntryRecord) {
+  if (entry.rateType) return entry.rateType;
+  if (entry.isIslandJob || entry.job?.isIslandJob) return "island";
+  if (entry.workType === "travel" || entry.job?.travelPayEnabled) return "travel";
+  return "regular";
+}
+
+function getPayableHours(entry: TimeEntryRecord) {
+  const rateType = getRateType(entry);
+  if (rateType === "travel") {
+    const travelHours = travelEntryHours(entry);
+    return travelHours > 0 ? travelHours : entryHours(entry);
+  }
+  return entryHours(entry);
 }
 
 function weekKey(date: Date) {
@@ -171,34 +200,42 @@ export default function TimePage() {
       .map(([id, entries]) => {
         const sorted = [...entries].sort((a, b) => new Date(a.clockIn).getTime() - new Date(b.clockIn).getTime());
         const name = sorted[0]?.user?.name || employees.data?.find((e) => e.id === id)?.name || "Employee";
-        const hourlyRate = toNumber(sorted[0]?.user?.hourlyRate || employees.data?.find((e) => e.id === id)?.hourlyRate || 0);
-        const islandRate = hourlyRate * 1.25;
+        const hourlyRate = toNumber(sorted[0]?.user?.regularRate ?? sorted[0]?.user?.hourlyRate ?? employees.data?.find((e) => e.id === id)?.hourlyRate ?? 0);
+        const { islandRate, overtimeRate } = getRates(sorted[0] || {}, hourlyRate);
         let regularHours = 0;
         let overtimeHours = 0;
         let islandHours = 0;
+        let travelHours = 0;
         let totalHours = 0;
         let estimatedCheck = 0;
 
         const weekTotals = new Map<string, number>();
         const details = sorted.map((entry) => {
-          const hours = entryHours(entry);
+          const payableHours = getPayableHours(entry);
           const wk = weekKey(new Date(entry.clockIn));
           const prior = weekTotals.get(wk) || 0;
-          const overtimePart = Math.max(0, prior + hours - 40);
-          const boundedOvertime = Math.min(hours, overtimePart);
-          const regularPart = hours - boundedOvertime;
-          weekTotals.set(wk, prior + hours);
+          const rateType = getRateType(entry);
+          const overtimePart = Math.max(0, prior + payableHours - 40);
+          const boundedOvertime = rateType === "overtime" ? payableHours : Math.min(payableHours, overtimePart);
+          const regularPart = payableHours - boundedOvertime;
+          weekTotals.set(wk, prior + payableHours);
 
-          const islandPart = entry.isIslandJob ? hours : 0;
-          const amount = regularPart * hourlyRate + boundedOvertime * hourlyRate * 1.5 + islandPart * hourlyRate * 0.25;
+          const islandPart = rateType === "island" ? payableHours : 0;
+          const travelPart = rateType === "travel" ? payableHours : 0;
+          const amount = rateType === "travel"
+            ? payableHours * hourlyRate
+            : regularPart * hourlyRate + boundedOvertime * overtimeRate + islandPart * islandRate;
 
           regularHours += regularPart;
           overtimeHours += boundedOvertime;
           islandHours += islandPart;
-          totalHours += hours;
+          travelHours += travelPart;
+          totalHours += payableHours;
           estimatedCheck += amount;
 
-          const rateLabel = `${hourlyRate.toFixed(2)}${boundedOvertime > 0 ? " + OT" : ""}${entry.isIslandJob ? " + Island" : ""}`;
+          const rateLabel = rateType === "travel"
+            ? `${hourlyRate.toFixed(2)} travel`
+            : `${hourlyRate.toFixed(2)}${boundedOvertime > 0 ? " overtime" : ""}${islandPart > 0 ? " island" : ""}`;
 
           return {
             id: entry.id,
@@ -207,7 +244,7 @@ export default function TimePage() {
             clockIn: entry.clockIn,
             clockOut: entry.clockOut,
             breakMinutes: entry.breakMinutes || 0,
-            hours,
+            hours: payableHours,
             rateLabel,
             amount,
             notes: entry.notes || "",
@@ -221,9 +258,11 @@ export default function TimePage() {
           regularHours,
           overtimeHours,
           islandHours,
+          travelHours,
           totalHours,
           hourlyRate,
           islandRate,
+          overtimeRate,
           estimatedCheck,
           details,
         };
@@ -356,7 +395,7 @@ export default function TimePage() {
       </div>
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard label="Total Hours" value={summaryCards.totalHours.toFixed(2)} />
+          <SummaryCard label="Total Hours" value={summaryCards.totalHours.toFixed(2)} />
         <SummaryCard label="Total Payroll" value={`$${summaryCards.totalPayroll.toFixed(2)}`} />
         <SummaryCard label="Total Employees" value={String(summaryCards.totalEmployees)} />
         <SummaryCard label="Date Range" value={`${startDate} to ${endDate}`} />

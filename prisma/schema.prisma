@@ -188,6 +188,13 @@ enum WorkType {
   other
 }
 
+enum TimeRateType {
+  regular
+  island
+  travel
+  overtime
+}
+
 enum TimeReviewStatus {
   pending
   approved
@@ -204,6 +211,9 @@ model User {
   role       UserRole @default(employee)
   phone      String?  @db.VarChar(20)
   hourlyRate Decimal? @db.Decimal(10, 2)
+  regularRate Decimal? @db.Decimal(10, 2)
+  islandRate  Decimal? @db.Decimal(10, 2)
+  overtimeRate Decimal? @db.Decimal(10, 2)
 employeeRole String? @db.VarChar(50)
   isActive   Boolean  @default(true)
   createdAt  DateTime @default(now())
@@ -263,6 +273,9 @@ model Job {
   name           String
   status         JobStatus @default(estimate)
   jobType        JobType   @default(interior)
+  isIslandJob    Boolean   @default(false)
+  travelPayEnabled Boolean @default(false)
+  defaultTravelHours Decimal @default(0) @db.Decimal(8, 2)
 
   address        String?
   city           String?  @db.VarChar(100)
@@ -579,6 +592,7 @@ model TimeEntry {
   id                   Int       @id @default(autoincrement())
   userId               Int
   workType             WorkType?
+  rateType             TimeRateType @default(regular)
   jobId                Int?
   clockIn              DateTime
   clockOut             DateTime?
@@ -605,6 +619,7 @@ model TimeEntry {
   isManual             Boolean   @default(false)
   isIslandJob          Boolean   @default(false)
   overtimeOverride     Boolean   @default(false)
+  travelHours          Decimal?  @db.Decimal(8, 2)
   reviewStatus         TimeReviewStatus @default(pending)
   managerNotes         String?   @db.Text
   approvedById         Int?
