@@ -188,6 +188,12 @@ enum WorkType {
   other
 }
 
+enum TimeReviewStatus {
+  pending
+  approved
+  rejected
+}
+
 // ─── USERS ───────────────────────────────────────────
 
 model User {
@@ -204,6 +210,7 @@ employeeRole String? @db.VarChar(50)
   updatedAt  DateTime @updatedAt
 
   timeEntries           TimeEntry[]
+  approvedTimeEntries   TimeEntry[]             @relation("ApprovedTimeEntries")
   expenses              Expense[]               @relation("SubmittedExpenses")
   approvedExpenses      Expense[]               @relation("ApprovedExpenses")
   payments              Payment[]
@@ -596,6 +603,10 @@ model TimeEntry {
   clockInAccuracy      Decimal?  @db.Decimal(8, 2)
   clockOutAccuracy     Decimal?  @db.Decimal(8, 2)
   isManual             Boolean   @default(false)
+  isIslandJob          Boolean   @default(false)
+  overtimeOverride     Boolean   @default(false)
+  reviewStatus         TimeReviewStatus @default(pending)
+  managerNotes         String?   @db.Text
   approvedById         Int?
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
@@ -627,6 +638,7 @@ model TimeEntry {
 
   user                  User      @relation(fields: [userId], references: [id])
   job                   Job?      @relation(fields: [jobId], references: [id])
+  approvedBy            User?     @relation("ApprovedTimeEntries", fields: [approvedById], references: [id])
 
   @@index([userId])
   @@index([jobId])
