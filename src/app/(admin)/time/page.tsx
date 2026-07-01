@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatDateTime } from "@/lib/utils";
 import { toast } from "sonner";
-import { CalendarDays, Check, ChevronDown, ChevronRight, ClipboardList, Copy, Eye, Filter, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Copy, Filter, Pencil, Plus, Trash2, X } from "lucide-react";
 
 type TabId = "overview" | "log" | "review";
 
@@ -101,6 +101,14 @@ const REVIEW_STATUS_LABELS: Record<ReviewStatus, string> = {
 };
 
 const WEEKDAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MANAGER_NOTE_TEMPLATES = [
+  "Missing clock out",
+  "Wrong job selected",
+  "Needs GPS review",
+  "Hours need confirmation",
+  "Duplicate entry",
+  "Manual correction needed",
+];
 
 function formatHours(value: number) {
   return `${value.toFixed(2)}h`;
@@ -116,15 +124,6 @@ function toLocalDateInput(date: Date) {
   const month = `${date.getMonth() + 1}`.padStart(2, "0");
   const day = `${date.getDate()}`.padStart(2, "0");
   return `${year}-${month}-${day}`;
-}
-
-function toLocalDateTimeInput(date: Date) {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  const hours = `${date.getHours()}`.padStart(2, "0");
-  const minutes = `${date.getMinutes()}`.padStart(2, "0");
-  return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
 function getWeekStart(date: Date) {
@@ -291,6 +290,7 @@ export default function TimePage() {
   const [selectedEntries, setSelectedEntries] = useState<number[]>([]);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editor, setEditor] = useState<EntryEditorState>(buildEntryEditor());
+  const [quickManagerNote, setQuickManagerNote] = useState("");
   const [sortKey, setSortKey] = useState<"employee" | "hours" | "payroll" | "status">("employee");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
@@ -311,6 +311,15 @@ export default function TimePage() {
     void utils.time.listAll.invalidate();
     void utils.time.myActive.invalidate();
     void utils.time.myEntries.invalidate();
+  };
+
+  const resetFilters = () => {
+    setEmployeeFilter("");
+    setProjectFilter("");
+    setReviewFilter("all");
+    setIslandFilter(undefined);
+    setManualFilter(undefined);
+    setSearch("");
   };
 
   const saveEntry = api.time.saveEntry.useMutation({
@@ -364,6 +373,26 @@ export default function TimePage() {
     onError: (error) => toast.error(error.message),
   });
 
+  const applyBulkReview = (ids: number[], reviewStatus: ReviewStatus, managerNotes?: string) => {
+    bulkReview.mutate({
+      ids,
+      reviewStatus,
+      managerNotes: managerNotes?.trim() || undefined,
+    });
+  };
+
+  const applyDayReview = (dayEntries: TimeEntryRecord[], reviewStatus: ReviewStatus) => {
+    if (!dayEntries.length) {
+      toast.error("No entries found for this day.");
+      return;
+    }
+    applyBulkReview(
+      dayEntries.map((entry) => entry.id),
+      reviewStatus,
+      reviewStatus === "rejected" ? quickManagerNote : undefined
+    );
+  };
+
   const weekStartDate = useMemo(() => new Date(`${selectedWeek}T00:00:00`), [selectedWeek]);
   const dayMap = useMemo(() => {
     const map = new Map<string, Date>();
@@ -382,7 +411,6 @@ export default function TimePage() {
     for (const entry of entries) {
       const clockIn = new Date(entry.clockIn);
       const dayIndex = clockIn.getDay();
-      const dayKey = `day-${dayIndex}`;
       const employee = employeeLookup.get(entry.userId);
       const employeeId = entry.userId;
       const existing = employeeMap.get(employeeId);
@@ -601,14 +629,7 @@ export default function TimePage() {
                   onChange={(e) => setSearch(e.target.value)}
                 />
               </div>
-              <button className="btn btn-secondary" onClick={() => {
-                setEmployeeFilter("");
-                setProjectFilter("");
-                setReviewFilter("all");
-                setIslandFilter(undefined);
-                setManualFilter(undefined);
-                setSearch("");
-              }}>
+              <button className="btn btn-secondary" onClick={resetFilters}>
                 Reset
               </button>
             </div>
@@ -641,9 +662,23 @@ export default function TimePage() {
                   </thead>
                   <tbody>
                     {listQuery.isLoading ? (
-                      <tr><td colSpan={13} className="px-4 py-6 text-slate-500">Loading…</td></tr>
+                      <tr>
+                        <td colSpan={13} className="px-4 py-8 text-center text-slate-500">
+                          <div className="font-medium">Loading weekly dashboard…</div>
+                          <div className="mt-1 text-xs text-slate-400">Preparing employee totals and day-by-day status.</div>
+                        </td>
+                      </tr>
                     ) : overviewGroups.length === 0 ? (
-                      <tr><td colSpan={13} className="px-4 py-6 text-slate-500">No time entries found for the selected filters.</td></tr>
+                      <tr>
+                        <td colSpan={13} className="px-4 py-8 text-center text-slate-500">
+                          <div className="font-medium">No time entries found for this week.</div>
+                          <div className="mt-1 text-xs text-slate-400">Try different filters or add a manual time row.</div>
+                          <div className="mt-3 flex justify-center gap-2">
+                            <button className="btn btn-secondary" onClick={resetFilters}>Clear Filters</button>
+                            <button className="btn btn-primary" onClick={openCreate}>Add Manual Hours</button>
+                          </div>
+                        </td>
+                      </tr>
                     ) : (
                       overviewGroups.map((group) => (
                         <tr key={group.employeeId} className="border-t border-slate-100 align-top">
@@ -712,9 +747,23 @@ export default function TimePage() {
                   </thead>
                   <tbody>
                     {listQuery.isLoading ? (
-                      <tr><td colSpan={11} className="px-4 py-6 text-slate-500">Loading…</td></tr>
+                      <tr>
+                        <td colSpan={11} className="px-4 py-8 text-center text-slate-500">
+                          <div className="font-medium">Loading detailed log…</div>
+                          <div className="mt-1 text-xs text-slate-400">Fetching entry details, location, and status.</div>
+                        </td>
+                      </tr>
                     ) : entries.length === 0 ? (
-                      <tr><td colSpan={11} className="px-4 py-6 text-slate-500">No entries found.</td></tr>
+                      <tr>
+                        <td colSpan={11} className="px-4 py-8 text-center text-slate-500">
+                          <div className="font-medium">No entries match the current filters.</div>
+                          <div className="mt-1 text-xs text-slate-400">You can add a manual correction or clear filters.</div>
+                          <div className="mt-3 flex justify-center gap-2">
+                            <button className="btn btn-secondary" onClick={resetFilters}>Clear Filters</button>
+                            <button className="btn btn-primary" onClick={openCreate}>Add Manual Hours</button>
+                          </div>
+                        </td>
+                      </tr>
                     ) : (
                       entries.map((entry) => (
                         <tr key={entry.id} className="border-t border-slate-100 align-top">
@@ -735,7 +784,7 @@ export default function TimePage() {
                               <ActionButton label="Edit" onClick={() => openEdit(entry)} icon={<Pencil className="h-3.5 w-3.5" />} />
                               <ActionButton label="Duplicate" onClick={() => openDuplicate(entry)} icon={<Copy className="h-3.5 w-3.5" />} />
                               <ActionButton label="Approve" onClick={() => approveEntry.mutate({ id: entry.id })} icon={<Check className="h-3.5 w-3.5" />} />
-                              <ActionButton label="Reject" onClick={() => rejectEntry.mutate({ id: entry.id })} icon={<X className="h-3.5 w-3.5" />} />
+                              <ActionButton label="Reject" onClick={() => rejectEntry.mutate({ id: entry.id, managerNotes: quickManagerNote || undefined })} icon={<X className="h-3.5 w-3.5" />} />
                               <ActionButton label="Delete" onClick={() => removeEntry.mutate({ id: entry.id })} icon={<Trash2 className="h-3.5 w-3.5" />} />
                             </div>
                           </td>
@@ -757,14 +806,51 @@ export default function TimePage() {
                     <div className="text-sm text-slate-500">Expand each employee, inspect each day, and bulk approve or reject with fewer clicks.</div>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <button className="btn btn-secondary" disabled={!selectedEntries.length || bulkReview.isPending} onClick={() => bulkReview.mutate({ ids: selectedEntries, reviewStatus: "approved" })}>Approve Selected</button>
-                    <button className="btn btn-secondary" disabled={!selectedEntries.length || bulkReview.isPending} onClick={() => bulkReview.mutate({ ids: selectedEntries, reviewStatus: "rejected" })}>Reject Selected</button>
+                    <button className="btn btn-secondary" disabled={!selectedEntries.length || bulkReview.isPending} onClick={() => applyBulkReview(selectedEntries, "approved")}>Approve Selected</button>
+                    <button className="btn btn-secondary" disabled={!selectedEntries.length || bulkReview.isPending} onClick={() => applyBulkReview(selectedEntries, "rejected", quickManagerNote)}>Reject Selected</button>
                   </div>
+                </div>
+                <div className="mt-4 border-t border-slate-200 pt-4">
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Manager Note Templates</div>
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {MANAGER_NOTE_TEMPLATES.map((template) => (
+                      <button
+                        key={template}
+                        type="button"
+                        className={[
+                          "rounded-full border px-3 py-1 text-xs font-medium transition",
+                          quickManagerNote === template ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
+                        ].join(" ")}
+                        onClick={() => setQuickManagerNote(template)}
+                      >
+                        {template}
+                      </button>
+                    ))}
+                    <button type="button" className="rounded-full border border-slate-200 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50" onClick={() => setQuickManagerNote("")}>Clear</button>
+                  </div>
+                  <input
+                    className="input"
+                    placeholder="Optional note applied to reject actions"
+                    value={quickManagerNote}
+                    onChange={(event) => setQuickManagerNote(event.target.value)}
+                  />
                 </div>
               </div>
 
-              {groupedByEmployee.length === 0 ? (
-                <div className="card p-6 text-slate-500">No entries found.</div>
+              {listQuery.isLoading ? (
+                <div className="card p-8 text-center text-slate-500">
+                  <div className="font-medium">Loading approval workspace…</div>
+                  <div className="mt-1 text-xs text-slate-400">Grouping entries by employee and day.</div>
+                </div>
+              ) : groupedByEmployee.length === 0 ? (
+                <div className="card p-8 text-center text-slate-500">
+                  <div className="font-medium">Nothing to review for this filter set.</div>
+                  <div className="mt-1 text-xs text-slate-400">Adjust filters or add a manual correction entry.</div>
+                  <div className="mt-3 flex justify-center gap-2">
+                    <button className="btn btn-secondary" onClick={resetFilters}>Clear Filters</button>
+                    <button className="btn btn-primary" onClick={openCreate}>Add Manual Hours</button>
+                  </div>
+                </div>
               ) : (
                 groupedByEmployee.map((group) => {
                   const employeeWeekEntries = group.entries;
@@ -805,6 +891,24 @@ export default function TimePage() {
                                   </div>
                                 </div>
                               </summary>
+                              <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-200 bg-white px-4 py-2">
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary text-xs"
+                                  disabled={!dayEntries.length || bulkReview.isPending}
+                                  onClick={() => applyDayReview(dayEntries, "approved")}
+                                >
+                                  Approve Day
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary text-xs"
+                                  disabled={!dayEntries.length || bulkReview.isPending}
+                                  onClick={() => applyDayReview(dayEntries, "rejected")}
+                                >
+                                  Reject Day
+                                </button>
+                              </div>
                               <div className="overflow-x-auto border-t border-slate-200 bg-white">
                                 <table className="w-full text-sm">
                                   <thead className="bg-slate-50 text-left">
@@ -823,7 +927,11 @@ export default function TimePage() {
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {dayEntries.map((entry) => (
+                                    {dayEntries.length === 0 ? (
+                                      <tr>
+                                        <td colSpan={11} className="px-3 py-6 text-center text-slate-500">No entries on this day.</td>
+                                      </tr>
+                                    ) : dayEntries.map((entry) => (
                                       <tr key={entry.id} className="border-t border-slate-100 align-top">
                                         <td className="px-3 py-2">
                                           <input
@@ -852,8 +960,8 @@ export default function TimePage() {
                                         <td className="px-3 py-2 text-slate-600">{entry.managerNotes || "—"}</td>
                                         <td className="px-3 py-2 text-right">
                                           <div className="flex justify-end gap-1">
-                                            <ActionButton label="Approve" onClick={() => bulkReview.mutate({ ids: [entry.id], reviewStatus: "approved" })} icon={<Check className="h-3.5 w-3.5" />} />
-                                            <ActionButton label="Reject" onClick={() => bulkReview.mutate({ ids: [entry.id], reviewStatus: "rejected" })} icon={<X className="h-3.5 w-3.5" />} />
+                                            <ActionButton label="Approve" onClick={() => applyBulkReview([entry.id], "approved")} icon={<Check className="h-3.5 w-3.5" />} />
+                                            <ActionButton label="Reject" onClick={() => applyBulkReview([entry.id], "rejected", quickManagerNote)} icon={<X className="h-3.5 w-3.5" />} />
                                             <ActionButton label="Edit" onClick={() => openEdit(entry)} icon={<Pencil className="h-3.5 w-3.5" />} />
                                           </div>
                                         </td>
@@ -913,11 +1021,11 @@ export default function TimePage() {
           <div className="card p-4">
             <div className="text-sm font-semibold uppercase tracking-wide text-slate-500">Bulk Actions</div>
             <div className="mt-3 space-y-2">
-              <button className="btn btn-secondary w-full" onClick={() => bulkReview.mutate({ ids: selectedEntries, reviewStatus: "approved" })} disabled={!selectedEntries.length || bulkReview.isPending}>Approve Selected Entries</button>
-              <button className="btn btn-secondary w-full" onClick={() => bulkReview.mutate({ ids: selectedEntries, reviewStatus: "rejected" })} disabled={!selectedEntries.length || bulkReview.isPending}>Reject Selected Entries</button>
-              <button className="btn btn-secondary w-full" onClick={() => selectedEntries.length && bulkReview.mutate({ ids: selectedEntries, reviewStatus: "approved" })} disabled={bulkReview.isPending}>Approve Entire Employee</button>
+              <button className="btn btn-secondary w-full" onClick={() => applyBulkReview(selectedEntries, "approved")} disabled={!selectedEntries.length || bulkReview.isPending}>Approve Selected Entries</button>
+              <button className="btn btn-secondary w-full" onClick={() => applyBulkReview(selectedEntries, "rejected", quickManagerNote)} disabled={!selectedEntries.length || bulkReview.isPending}>Reject Selected Entries</button>
+              <button className="btn btn-secondary w-full" onClick={() => selectedEntries.length && applyBulkReview(selectedEntries, "approved")} disabled={bulkReview.isPending}>Approve Entire Employee</button>
               <button className="btn btn-secondary w-full" onClick={() => bulkReview.mutate({ reviewStatus: "approved", employeeId: employeeFilter ? Number(employeeFilter) : undefined, weekStart: selectedWeek, projectId: projectFilter ? Number(projectFilter) : undefined, search: search || undefined, manualEntries: manualFilter, islandJobs: islandFilter })} disabled={bulkReview.isPending}>Approve Entire Week</button>
-              <button className="btn btn-secondary w-full" onClick={() => bulkReview.mutate({ reviewStatus: "rejected", employeeId: employeeFilter ? Number(employeeFilter) : undefined, weekStart: selectedWeek, projectId: projectFilter ? Number(projectFilter) : undefined, search: search || undefined, manualEntries: manualFilter, islandJobs: islandFilter })} disabled={bulkReview.isPending}>Reject Entire Week</button>
+              <button className="btn btn-secondary w-full" onClick={() => bulkReview.mutate({ reviewStatus: "rejected", employeeId: employeeFilter ? Number(employeeFilter) : undefined, weekStart: selectedWeek, projectId: projectFilter ? Number(projectFilter) : undefined, search: search || undefined, manualEntries: manualFilter, islandJobs: islandFilter, managerNotes: quickManagerNote || undefined })} disabled={bulkReview.isPending}>Reject Entire Week</button>
               <button className="btn btn-secondary w-full" onClick={() => bulkReview.mutate({ reviewStatus: "approved", projectId: projectFilter ? Number(projectFilter) : undefined, weekStart: selectedWeek })} disabled={bulkReview.isPending}>Approve Entire Project</button>
             </div>
           </div>
@@ -969,7 +1077,22 @@ export default function TimePage() {
               <FieldInput label="Total Hours" type="number" value={editor.totalHours} onChange={(value) => setEditor((current) => ({ ...current, totalHours: value }))} helperText="Use this instead of clock out if needed." />
               <FieldInput label="Break Minutes" type="number" value={editor.breakMinutes} onChange={(value) => setEditor((current) => ({ ...current, breakMinutes: value }))} />
               <FieldTextArea label="Notes" value={editor.notes} onChange={(value) => setEditor((current) => ({ ...current, notes: value }))} />
-              <FieldTextArea label="Manager Notes" value={editor.managerNotes} onChange={(value) => setEditor((current) => ({ ...current, managerNotes: value }))} />
+              <div className="md:col-span-2">
+                <label className="label">Manager Notes</label>
+                <textarea className="input min-h-28" value={editor.managerNotes} onChange={(event) => setEditor((current) => ({ ...current, managerNotes: event.target.value }))} />
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {MANAGER_NOTE_TEMPLATES.map((template) => (
+                    <button
+                      key={template}
+                      type="button"
+                      className="rounded-full border border-slate-200 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                      onClick={() => setEditor((current) => ({ ...current, managerNotes: template }))}
+                    >
+                      {template}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <FieldTextArea label="Not at Jobsite Reason" value={editor.notAtJobsiteReason} onChange={(value) => setEditor((current) => ({ ...current, notAtJobsiteReason: value }))} />
               <div className="grid gap-3 md:grid-cols-2">
                 <ToggleCard label="Manual Entry" checked={editor.isManual} onChange={(checked) => setEditor((current) => ({ ...current, isManual: checked }))} />
