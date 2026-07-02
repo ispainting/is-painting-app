@@ -5,6 +5,7 @@ import { useState } from "react";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
 
@@ -12,10 +13,13 @@ const STATUSES = ["draft", "ready", "sent", "viewed", "approved", "declined", "c
 
 export default function ProposalsPage() {
   const utils = api.useUtils();
-  const { data, isLoading } = api.proposals.list.useQuery();
+  const [visibility, setVisibility] = useState<"active" | "archived" | "all">("active");
+  const { data, isLoading } = api.proposals.list.useQuery({ visibility });
   const [open, setOpen] = useState(false);
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustomerResults, setShowCustomerResults] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [selectedProposal, setSelectedProposal] = useState<{ id: number; projectName: string } | null>(null);
   const customers = api.customers.list.useQuery(
     { search: customerSearch.trim() || undefined },
     { enabled: open }
@@ -34,6 +38,16 @@ export default function ProposalsPage() {
     laborBudget: 0,
     subcontractorBudget: 0,
     totalAmount: 0,
+  });
+
+  const deleteProposal = api.proposals.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Proposal archived");
+      utils.proposals.list.invalidate();
+      setConfirmDeleteOpen(false);
+      setSelectedProposal(null);
+    },
+    onError: (e) => toast.error(e.message),
   });
 
   const create = api.proposals.create.useMutation({
@@ -89,6 +103,11 @@ export default function ProposalsPage() {
         description="Lead / Customer -> Proposal -> Sent / Approved -> Job"
         actions={
           <div className="flex gap-2">
+            <select className="input w-auto" value={visibility} onChange={(e) => setVisibility(e.target.value as typeof visibility)}>
+              <option value="active">Active</option>
+              <option value="archived">Archived</option>
+              <option value="all">All</option>
+            </select>
             <Link href="/proposals/library" className="btn btn-secondary">
               Proposal Library
             </Link>
@@ -109,13 +128,14 @@ export default function ProposalsPage() {
               <th className="px-4 py-2 font-medium">Status</th>
               <th className="px-4 py-2 font-medium text-right">Total Amount</th>
               <th className="px-4 py-2 font-medium">Created</th>
+              <th className="px-4 py-2 font-medium text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
             {isLoading ? (
-              <tr><td colSpan={6} className="px-4 py-6 text-slate-500">Loading…</td></tr>
+              <tr><td colSpan={7} className="px-4 py-6 text-slate-500">Loading…</td></tr>
             ) : data?.length === 0 ? (
-              <tr><td colSpan={6} className="px-4 py-6 text-slate-500">No proposals yet.</td></tr>
+              <tr><td colSpan={7} className="px-4 py-6 text-slate-500">No proposals yet.</td></tr>
             ) : (
               data?.map((p) => (
                 <tr key={p.id} className="border-t border-slate-100 hover:bg-slate-50">
@@ -129,6 +149,23 @@ export default function ProposalsPage() {
                   </td>
                   <td className="px-4 py-2 text-right">{formatCurrency(Number(p.totalAmount))}</td>
                   <td className="px-4 py-2 text-slate-500">{formatDate(p.createdAt)}</td>
+                  <td className="px-4 py-2 text-right">
+                    <div className="inline-flex items-center gap-2">
+                      <Link href={`/proposals/${p.id}`} className="btn btn-secondary">
+                        Edit
+                      </Link>
+                      <button
+                        type="button"
+                        className="btn bg-rose-600 text-white hover:bg-rose-700"
+                        onClick={() => {
+                          setSelectedProposal({ id: p.id, projectName: p.projectName });
+                          setConfirmDeleteOpen(true);
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))
             )}
@@ -227,6 +264,23 @@ export default function ProposalsPage() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmDeleteOpen}
+        title="Delete Proposal"
+        message="Are you sure you want to delete this proposal? This cannot be undone."
+        confirmLabel="Delete Proposal"
+        destructive
+        isPending={deleteProposal.isPending}
+        onCancel={() => {
+          setConfirmDeleteOpen(false);
+          setSelectedProposal(null);
+        }}
+        onConfirm={() => {
+          if (!selectedProposal) return;
+          deleteProposal.mutate({ id: selectedProposal.id });
+        }}
+      />
     </>
   );
 }

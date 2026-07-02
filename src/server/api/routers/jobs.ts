@@ -8,6 +8,7 @@ const JobStatusZ = z.enum([
 ]);
 const JobTypeZ = z.enum(["interior", "exterior", "both", "commercial", "other"]);
 const JobTravelRateTypeZ = z.enum(["regular", "island", "special", "custom"]);
+const JobVisibilityZ = z.enum(["active", "archived", "all"]);
 
 const jobInput = z.object({
   customerId: z.number(),
@@ -51,11 +52,14 @@ const paintColorInput = z.object({
 
 export const jobsRouter = router({
   list: protectedProcedure
-    .input(z.object({ status: JobStatusZ.optional() }).optional())
+    .input(z.object({ status: JobStatusZ.optional(), visibility: JobVisibilityZ.optional() }).optional())
     .query(async ({ ctx, input }) => {
       // Employees only see assigned jobs
-      const where: any = { deletedAt: null };
+      const where: any = {};
       if (input?.status) where.status = input.status;
+      const visibility = input?.visibility ?? "active";
+      if (visibility === "active") where.deletedAt = null;
+      if (visibility === "archived") where.deletedAt = { not: null };
       if (ctx.session?.role === "employee") {
         where.assignments = { some: { userId: ctx.session.userId } };
       }
@@ -327,6 +331,10 @@ export const jobsRouter = router({
     .mutation(({ ctx, input }) => ctx.prisma.jobPaintColor.delete({ where: { id: input.id } })),
 
   softDelete: adminProcedure.input(z.object({ id: z.number() })).mutation(({ ctx, input }) =>
+    ctx.prisma.job.update({ where: { id: input.id }, data: { deletedAt: new Date() } })
+  ),
+
+  archive: adminProcedure.input(z.object({ id: z.number() })).mutation(({ ctx, input }) =>
     ctx.prisma.job.update({ where: { id: input.id }, data: { deletedAt: new Date() } })
   ),
 });

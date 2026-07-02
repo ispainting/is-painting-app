@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { toast } from "sonner";
 
 const STATUSES = ["estimate", "sent", "approved", "active", "completed", "on_hold", "cancelled"] as const;
@@ -113,6 +114,18 @@ export default function JobDetailPage() {
     },
     onError: (e) => toast.error(e.message),
   });
+
+  const archiveJob = api.jobs.softDelete.useMutation({
+    onSuccess: () => {
+      utils.jobs.byId.invalidate({ id });
+      utils.jobs.list.invalidate();
+      toast.success("Job archived");
+      setConfirmDeleteOpen(false);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   if (isLoading || !job) return <div className="text-slate-500">Loading…</div>;
   const jobData = job as typeof job & {
@@ -284,6 +297,9 @@ export default function JobDetailPage() {
             <button className="btn btn-secondary" type="button" onClick={openEditModal}>
               Edit Job
             </button>
+            <button className="btn bg-rose-600 text-white hover:bg-rose-700" type="button" onClick={() => setConfirmDeleteOpen(true)}>
+              Delete Job
+            </button>
             <select
               className="input w-auto"
               value={job.status}
@@ -292,6 +308,17 @@ export default function JobDetailPage() {
               {STATUSES.map((s) => (
                 <option key={s} value={s}>{s}</option>
               ))}
+
+              <ConfirmDialog
+                open={confirmDeleteOpen}
+                title="Delete Job"
+                message="Are you sure you want to delete this job? This cannot be undone."
+                confirmLabel="Delete Job"
+                destructive
+                isPending={archiveJob.isPending}
+                onCancel={() => setConfirmDeleteOpen(false)}
+                onConfirm={() => archiveJob.mutate({ id })}
+              />
             </select>
           </div>
         }

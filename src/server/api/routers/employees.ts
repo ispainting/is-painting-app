@@ -3,16 +3,23 @@ import { router, adminProcedure } from "../trpc";
 import { hashPassword } from "@/lib/auth";
 
 export const employeesRouter = router({
-  list: adminProcedure.query(({ ctx }) =>
-    ctx.prisma.user.findMany({
-      where: { isActive: true },
-      orderBy: { name: "asc" },
-      select: {
-        id: true, name: true, email: true, role: true, phone: true,
-        hourlyRate: true, isActive: true, createdAt: true,
-      },
-    })
-  ),
+  list: adminProcedure
+    .input(z.object({ visibility: z.enum(["active", "inactive", "all"]).optional() }).optional())
+    .query(({ ctx, input }) => {
+      const visibility = input?.visibility ?? "active";
+      const where: any = {};
+      if (visibility === "active") where.isActive = true;
+      if (visibility === "inactive") where.isActive = false;
+
+      return ctx.prisma.user.findMany({
+        where,
+        orderBy: { name: "asc" },
+        select: {
+          id: true, name: true, email: true, role: true, phone: true,
+          hourlyRate: true, isActive: true, createdAt: true,
+        },
+      });
+    }),
 
   create: adminProcedure
     .input(z.object({

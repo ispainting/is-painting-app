@@ -32,6 +32,7 @@ const ProposalCategoryZ = z.enum([
   "property_maintenance",
   "custom",
 ]);
+const ProposalVisibilityZ = z.enum(["active", "archived", "all"]);
 
 const proposalOptionInput = z.object({
   title: z.string().min(1),
@@ -483,23 +484,31 @@ function createSection(
 }
 
 export const proposalsRouter = router({
-  list: protectedProcedure.query(({ ctx }) =>
-    ctx.prisma.proposal.findMany({
-      include: {
-        customer: true,
-        _count: {
-          select: {
-            options: true,
-            attachments: true,
-            paintColors: true,
-            sections: true,
+  list: protectedProcedure
+    .input(z.object({ visibility: ProposalVisibilityZ.optional() }).optional())
+    .query(({ ctx, input }) => {
+      const visibility = input?.visibility ?? "active";
+      const where: any = {};
+      if (visibility === "active") where.deletedAt = null;
+      if (visibility === "archived") where.deletedAt = { not: null };
+
+      return ctx.prisma.proposal.findMany({
+        where,
+        include: {
+          customer: true,
+          _count: {
+            select: {
+              options: true,
+              attachments: true,
+              paintColors: true,
+              sections: true,
+            },
           },
         },
-      },
-      orderBy: { createdAt: "desc" },
-      take: 200,
-    })
-  ),
+        orderBy: { createdAt: "desc" },
+        take: 200,
+      });
+    }),
 
   byId: protectedProcedure.input(z.object({ id: z.number() })).query(({ ctx, input }) =>
     ctx.prisma.proposal.findUnique({
@@ -512,6 +521,10 @@ export const proposalsRouter = router({
         paintColors: { orderBy: { sortOrder: "asc" } },
       },
     })
+  ),
+
+  delete: adminProcedure.input(z.object({ id: z.number() })).mutation(({ ctx, input }) =>
+    ctx.prisma.proposal.update({ where: { id: input.id }, data: { deletedAt: new Date() } })
   ),
 
   create: adminProcedure.input(proposalInput).mutation(async ({ ctx, input }) => {

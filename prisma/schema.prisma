@@ -493,6 +493,7 @@ model Proposal {
   expectedEndDate     DateTime?
   sentAt              DateTime?
   approvedAt          DateTime?
+  deletedAt           DateTime?
   createdAt           DateTime       @default(now())
   updatedAt           DateTime       @updatedAt
 
@@ -504,6 +505,7 @@ model Proposal {
 
   @@index([customerId])
   @@index([status])
+  @@index([deletedAt])
 }
 
 model ProposalExample {

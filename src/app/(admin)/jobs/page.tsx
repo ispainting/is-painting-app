@@ -5,20 +5,33 @@ import { useState } from "react";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
 
 export default function JobsPage() {
   const router = useRouter();
   const utils = api.useUtils();
-  const { data, isLoading } = api.jobs.list.useQuery();
+  const [visibility, setVisibility] = useState<"active" | "archived" | "all">("active");
+  const { data, isLoading } = api.jobs.list.useQuery({ visibility });
   const [open, setOpen] = useState(false);
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustomerResults, setShowCustomerResults] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [selectedJob, setSelectedJob] = useState<{ id: number; name: string } | null>(null);
   const customers = api.customers.list.useQuery(
     { search: customerSearch.trim() || undefined },
     { enabled: open }
   );
+  const deleteJob = api.jobs.softDelete.useMutation({
+    onSuccess: () => {
+      toast.success("Job archived");
+      utils.jobs.list.invalidate();
+      setConfirmDeleteOpen(false);
+      setSelectedJob(null);
+    },
+    onError: (e) => toast.error(e.message),
+  });
   const create = api.jobs.create.useMutation({
     onSuccess: () => {
       toast.success("Job created");
@@ -77,9 +90,16 @@ export default function JobsPage() {
         title="Jobs"
         description="Estimates and active jobs"
         actions={
-          <button onClick={() => { setOpen(true); setShowCustomerResults(false); }} className="btn btn-primary">
-            <Plus className="w-4 h-4 mr-1" /> New job
-          </button>
+          <div className="flex items-center gap-2">
+            <select className="input w-auto" value={visibility} onChange={(e) => setVisibility(e.target.value as typeof visibility)}>
+              <option value="active">Active</option>
+              <option value="archived">Archived</option>
+              <option value="all">All</option>
+            </select>
+            <button onClick={() => { setOpen(true); setShowCustomerResults(false); }} className="btn btn-primary">
+              <Plus className="w-4 h-4 mr-1" /> New job
+            </button>
+          </div>
         }
       />
 
@@ -93,13 +113,14 @@ export default function JobsPage() {
               <th className="px-4 py-2 font-medium">Status</th>
               <th className="px-4 py-2 font-medium text-right">Total</th>
               <th className="px-4 py-2 font-medium">Created</th>
+              <th className="px-4 py-2 font-medium text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
             {isLoading ? (
-              <tr><td colSpan={6} className="px-4 py-6 text-slate-500">Loading…</td></tr>
+              <tr><td colSpan={7} className="px-4 py-6 text-slate-500">Loading…</td></tr>
             ) : data?.length === 0 ? (
-              <tr><td colSpan={6} className="px-4 py-6 text-slate-500">No jobs yet.</td></tr>
+              <tr><td colSpan={7} className="px-4 py-6 text-slate-500">No jobs yet.</td></tr>
             ) : (
               data?.map((j) => (
                 <tr
@@ -124,6 +145,31 @@ export default function JobsPage() {
                   </td>
                   <td className="px-4 py-2 text-right">{formatCurrency(Number(j.totalEstimate))}</td>
                   <td className="px-4 py-2 text-slate-500">{formatDate(j.createdAt)}</td>
+                  <td className="px-4 py-2 text-right">
+                    <div className="inline-flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          router.push(`/jobs/${j.id}`);
+                        }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="btn bg-rose-600 text-white hover:bg-rose-700"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setSelectedJob({ id: j.id, name: j.name });
+                          setConfirmDeleteOpen(true);
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))
             )}
@@ -235,6 +281,23 @@ export default function JobsPage() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmDeleteOpen}
+        title="Delete Job"
+        message={`Are you sure you want to delete this job? This cannot be undone.`}
+        confirmLabel="Delete Job"
+        destructive
+        isPending={deleteJob.isPending}
+        onCancel={() => {
+          setConfirmDeleteOpen(false);
+          setSelectedJob(null);
+        }}
+        onConfirm={() => {
+          if (!selectedJob) return;
+          deleteJob.mutate({ id: selectedJob.id });
+        }}
+      />
     </>
   );
 }

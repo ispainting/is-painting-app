@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { toast } from "sonner";
 
 const TABS = [
@@ -472,6 +473,17 @@ export default function ProposalDetailPage() {
     });
   }, [proposal]);
 
+  const archiveProposal = api.proposals.delete.useMutation({
+    onSuccess: () => {
+      utils.proposals.byId.invalidate({ id });
+      utils.proposals.list.invalidate();
+      toast.success("Proposal archived");
+      setConfirmDeleteOpen(false);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+
   const isReadOnly = form.status === "converted";
   const totalOptionsAmount = useMemo(
     () =>
@@ -773,7 +785,24 @@ export default function ProposalDetailPage() {
 
   return (
     <>
-      <PageHeader title={proposal.projectName} description={`${proposal.proposalNumber} · ${proposal.customer.name}`} />
+      <PageHeader
+        title={proposal.projectName}
+        description={`${proposal.proposalNumber} · ${proposal.customer.name}`}
+        actions={
+          <div className="flex items-center gap-2">
+            <button
+              className="btn bg-rose-600 text-white hover:bg-rose-700"
+              type="button"
+              onClick={() => setConfirmDeleteOpen(true)}
+            >
+              Delete Proposal
+            </button>
+            <button className="btn btn-primary" disabled={update.isPending || isReadOnly} onClick={onSave}>
+              {update.isPending ? "Saving..." : "Save Proposal"}
+            </button>
+          </div>
+        }
+      />
 
       {isReadOnly && (
         <div className="card p-4 mb-4 border border-amber-200 bg-amber-50 text-amber-800 text-sm">
@@ -792,9 +821,6 @@ export default function ProposalDetailPage() {
               onClick={() => toast.info("Proposal-to-job conversion remains intentionally deferred.")}
             >
               Convert to Job
-            </button>
-            <button className="btn btn-primary" disabled={update.isPending || isReadOnly} onClick={onSave}>
-              {update.isPending ? "Saving..." : "Save Proposal"}
             </button>
           </div>
 
@@ -862,6 +888,17 @@ export default function ProposalDetailPage() {
           <FieldDate label="Expected Finish" value={form.expectedEndDate} onChange={(v) => setForm((f) => ({ ...f, expectedEndDate: v }))} disabled={isReadOnly} />
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmDeleteOpen}
+        title="Delete Proposal"
+        message="Are you sure you want to delete this proposal? This cannot be undone."
+        confirmLabel="Delete Proposal"
+        destructive
+        isPending={archiveProposal.isPending}
+        onCancel={() => setConfirmDeleteOpen(false)}
+        onConfirm={() => archiveProposal.mutate({ id })}
+      />
 
       <div className="card p-2 mb-4">
         <div className="flex flex-wrap gap-2">
