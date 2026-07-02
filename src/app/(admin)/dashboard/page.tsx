@@ -1,11 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import type { ReactNode } from "react";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency } from "@/lib/utils";
 import {
   AlertTriangle,
+  CalendarRange,
   CircleAlert,
   DollarSign,
   FileText,
@@ -16,8 +18,44 @@ import {
   Workflow,
 } from "lucide-react";
 
+const MONTH_OPTIONS = [
+  { value: 1, label: "January" },
+  { value: 2, label: "February" },
+  { value: 3, label: "March" },
+  { value: 4, label: "April" },
+  { value: 5, label: "May" },
+  { value: 6, label: "June" },
+  { value: 7, label: "July" },
+  { value: 8, label: "August" },
+  { value: 9, label: "September" },
+  { value: 10, label: "October" },
+  { value: 11, label: "November" },
+  { value: 12, label: "December" },
+];
+
+function formatMonthLabel(year: number, month: number) {
+  return new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(new Date(year, month - 1, 1));
+}
+
+type TrendMetric = {
+  label: string;
+  value: number | null;
+  type: "count" | "currency" | "percent";
+};
+
 export default function DashboardPage() {
-  const { data, isLoading } = api.reports.dashboard.useQuery();
+  const now = new Date();
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [year, setYear] = useState(now.getFullYear());
+  const [comparePreviousMonth, setComparePreviousMonth] = useState(true);
+  const [compareSameMonthLastYear, setCompareSameMonthLastYear] = useState(true);
+
+  const { data, isLoading } = api.reports.dashboard.useQuery({
+    month,
+    year,
+    comparePreviousMonth,
+    compareSameMonthLastYear,
+  });
   const report = data as any;
 
   const survival = report?.survival ?? {};
@@ -26,6 +64,10 @@ export default function DashboardPage() {
   const cash = report?.cash ?? {};
   const expenses = report?.expenses ?? {};
   const alerts = report?.alerts ?? [];
+  const trends = report?.trends ?? {};
+  const selectedTrend = trends.selected;
+  const previousTrend = trends.previousMonth;
+  const lastYearTrend = trends.sameMonthLastYear;
 
   const overallStatus = survival.status || "Behind";
   const overallStatusClass =
@@ -37,6 +79,9 @@ export default function DashboardPage() {
 
   const survivalProgress = Math.min(100, Number(survival.progressPercent ?? 0));
   const productionProgress = Math.min(100, Number(production.progressPercent ?? 0));
+  const comparisonRows = buildComparisonRows(selectedTrend, previousTrend);
+  const yearComparisonRows = buildComparisonRows(selectedTrend, lastYearTrend);
+  const yearOptions = [year, year - 1, year - 2, year - 3, year - 4].filter((option, index, values) => values.indexOf(option) === index);
 
   return (
     <>
@@ -174,10 +219,180 @@ export default function DashboardPage() {
             <MiniStat icon={Workflow} label="Production goal" value={formatCurrency(65_000)} />
             <MiniStat icon={AlertTriangle} label="Typical close rate" value="35% - 50%" />
           </div>
+
+          <SectionCard
+            title="7. Trends / Comparison"
+            icon={CalendarRange}
+            subtitle="Simple month-over-month and year-over-year checks with lead quality by source."
+          >
+            <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-sm font-semibold text-slate-900">Filters</div>
+                <div className="mt-3 space-y-3">
+                  <label className="block text-sm">
+                    <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Month</span>
+                    <select
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                      value={month}
+                      onChange={(event) => setMonth(Number(event.target.value))}
+                    >
+                      {MONTH_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block text-sm">
+                    <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Year</span>
+                    <select
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                      value={year}
+                      onChange={(event) => setYear(Number(event.target.value))}
+                    >
+                      {yearOptions.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      className="mt-1 h-4 w-4 rounded border-slate-300 text-slate-900"
+                      checked={comparePreviousMonth}
+                      onChange={(event) => setComparePreviousMonth(event.target.checked)}
+                    />
+                    <span>
+                      <span className="block font-medium text-slate-900">Compare to previous month</span>
+                      <span className="block text-xs text-slate-500">Shows month-over-month deltas for the selected period.</span>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      className="mt-1 h-4 w-4 rounded border-slate-300 text-slate-900"
+                      checked={compareSameMonthLastYear}
+                      onChange={(event) => setCompareSameMonthLastYear(event.target.checked)}
+                    />
+                    <span>
+                      <span className="block font-medium text-slate-900">Compare to same month last year</span>
+                      <span className="block text-xs text-slate-500">Only shown if there is data for that period.</span>
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <ComparisonCard
+                  title={`This month vs ${previousTrend ? previousTrend.label : "last month"}`}
+                  currentLabel={selectedTrend?.label ?? formatMonthLabel(year, month)}
+                  compareLabel={previousTrend?.label ?? "No previous month data"}
+                  rows={comparisonRows}
+                  emptyMessage={comparePreviousMonth ? (previousTrend ? null : "No previous month data is available yet.") : "Previous month comparison is turned off."}
+                />
+
+                <ComparisonCard
+                  title={`This month vs ${lastYearTrend ? lastYearTrend.label : "same month last year"}`}
+                  currentLabel={selectedTrend?.label ?? formatMonthLabel(year, month)}
+                  compareLabel={lastYearTrend?.label ?? "No data last year"}
+                  rows={yearComparisonRows}
+                  emptyMessage={compareSameMonthLastYear ? (lastYearTrend ? null : "No same-month-last-year data is available yet.") : "Same-month-last-year comparison is turned off."}
+                />
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">Lead quality by source</div>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Source-level lead quality for {selectedTrend?.label ?? formatMonthLabel(year, month)}.
+                      </p>
+                    </div>
+                    <FileText className="h-5 w-5 text-brand-500" />
+                  </div>
+
+                  {selectedTrend?.hasData ? (
+                    <div className="mt-4 overflow-x-auto">
+                      <table className="min-w-full border-separate border-spacing-0 text-sm">
+                        <thead>
+                          <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
+                            <th className="border-b border-slate-200 pb-2 pr-4 font-semibold">Source</th>
+                            <th className="border-b border-slate-200 pb-2 pr-4 font-semibold">Leads</th>
+                            <th className="border-b border-slate-200 pb-2 pr-4 font-semibold">Proposals</th>
+                            <th className="border-b border-slate-200 pb-2 pr-4 font-semibold">Won</th>
+                            <th className="border-b border-slate-200 pb-2 pr-4 font-semibold">Close rate</th>
+                            <th className="border-b border-slate-200 pb-2 font-semibold">Average job value</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedTrend.leadQualityBySource.map((row: any) => (
+                            <tr key={row.source} className="align-top">
+                              <td className="border-b border-slate-100 py-3 pr-4 font-medium text-slate-900">{row.source}</td>
+                              <td className="border-b border-slate-100 py-3 pr-4 text-slate-700">{formatCount(row.leads)}</td>
+                              <td className="border-b border-slate-100 py-3 pr-4 text-slate-700">{formatCount(row.proposals)}</td>
+                              <td className="border-b border-slate-100 py-3 pr-4 text-slate-700">{formatCount(row.won)}</td>
+                              <td className="border-b border-slate-100 py-3 pr-4 text-slate-700">{formatPercent(row.closeRate)}</td>
+                              <td className="border-b border-slate-100 py-3 text-slate-700">{formatNullableCurrency(row.averageJobValue)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                      No lead or proposal activity was recorded for this month yet.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </SectionCard>
         </div>
       )}
     </>
   );
+}
+
+function buildComparisonRows(current: any, compare: any): TrendMetric[] {
+  return [
+    { label: "New leads", value: current ? Number(current.newLeads ?? 0) - Number(compare?.newLeads ?? 0) : null, type: "count" },
+    { label: "Estimates created", value: current ? Number(current.estimatesCreated ?? 0) - Number(compare?.estimatesCreated ?? 0) : null, type: "count" },
+    { label: "Proposals sent", value: current ? Number(current.proposalsSent ?? 0) - Number(compare?.proposalsSent ?? 0) : null, type: "count" },
+    { label: "Proposals won", value: current ? Number(current.proposalsWon ?? 0) - Number(compare?.proposalsWon ?? 0) : null, type: "count" },
+    { label: "Proposals lost", value: current ? Number(current.proposalsLost ?? 0) - Number(compare?.proposalsLost ?? 0) : null, type: "count" },
+    { label: "Total proposal value", value: current ? Number(current.totalProposalValue ?? 0) - Number(compare?.totalProposalValue ?? 0) : null, type: "currency" },
+    { label: "Average proposal value", value: current ? Number(current.averageProposalValue ?? 0) - Number(compare?.averageProposalValue ?? 0) : null, type: "currency" },
+    { label: "Close rate %", value: current ? Number(current.closeRate ?? 0) - Number(compare?.closeRate ?? 0) : null, type: "percent" },
+  ];
+}
+
+function formatCount(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "—";
+  return Number(value).toLocaleString("en-US");
+}
+
+function formatNullableCurrency(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "—";
+  return formatCurrency(Number(value));
+}
+
+function formatPercent(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "—";
+  return `${(Number(value) * 100).toFixed(1)}%`;
+}
+
+function formatTrendDelta(metric: TrendMetric) {
+  if (metric.value === null || metric.value === undefined || !Number.isFinite(metric.value)) return "—";
+  if (metric.type === "percent") {
+    const points = metric.value * 100;
+    return `${points >= 0 ? "+" : ""}${points.toFixed(1)} pp`;
+  }
+  if (metric.type === "currency") {
+    return `${metric.value >= 0 ? "+" : ""}${formatCurrency(Math.abs(metric.value))}`;
+  }
+  const value = metric.value.toLocaleString("en-US");
+  return `${metric.value >= 0 ? "+" : ""}${value}`;
 }
 
 function SectionCard({
@@ -201,6 +416,59 @@ function SectionCard({
         <Icon className="h-8 w-8 text-brand-500" />
       </div>
       <div className="mt-4">{children}</div>
+    </div>
+  );
+}
+
+function ComparisonCard({
+  title,
+  currentLabel,
+  compareLabel,
+  rows,
+  emptyMessage,
+}: {
+  title: string;
+  currentLabel: string;
+  compareLabel: string;
+  rows: TrendMetric[];
+  emptyMessage: string | null;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <div className="text-sm font-semibold text-slate-900">{title}</div>
+          <p className="mt-1 text-sm text-slate-500">
+            <span className="font-medium text-slate-700">{currentLabel}</span> compared with <span className="font-medium text-slate-700">{compareLabel}</span>.
+          </p>
+        </div>
+        <Workflow className="h-5 w-5 text-brand-500" />
+      </div>
+
+      {emptyMessage ? (
+        <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+          {emptyMessage}
+        </div>
+      ) : (
+        <div className="mt-4 overflow-x-auto">
+          <table className="min-w-full border-separate border-spacing-0 text-sm">
+            <thead>
+              <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
+                <th className="border-b border-slate-200 pb-2 pr-4 font-semibold">Metric</th>
+                <th className="border-b border-slate-200 pb-2 pr-4 font-semibold">Difference</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.label}>
+                  <td className="border-b border-slate-100 py-3 pr-4 font-medium text-slate-900">{row.label}</td>
+                  <td className="border-b border-slate-100 py-3 pr-4 text-slate-700">{formatTrendDelta(row)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
