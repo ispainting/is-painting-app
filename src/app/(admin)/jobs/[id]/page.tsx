@@ -917,7 +917,7 @@ export default function JobDetailPage() {
                   </label>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  <Field label="Hourly rate adjustment" value={editForm.hourlyRateAdjustment} onChange={(v) => setEditForm((f) => ({ ...f, hourlyRateAdjustment: v }))} prefix="+" disabled={!editForm.specialPayEnabled} />
+                  <Field label="Hourly rate adjustment (+$/hr)" value={editForm.hourlyRateAdjustment} onChange={(v) => setEditForm((f) => ({ ...f, hourlyRateAdjustment: v }))} disabled={!editForm.specialPayEnabled} />
                   <Field label="Default travel hours" value={editForm.defaultTravelHours} onChange={(v) => setEditForm((f) => ({ ...f, defaultTravelHours: v }))} />
                   <div>
                     <label className="label">Travel rate type</label>
@@ -994,22 +994,19 @@ function normalizeNumberInput(nextValue: string) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function Field({ label, value, onChange, prefix, disabled }: { label: string; value: number; onChange: (v: number) => void; prefix?: string; disabled?: boolean }) {
+function Field({ label, value, onChange, disabled }: { label: string; value: number; onChange: (v: number) => void; disabled?: boolean }) {
   return (
     <div>
       <label className="label">{label}</label>
-      <div className="relative">
-        {prefix ? <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">{prefix}</span> : null}
-        <input
-          type="number"
-          step="0.01"
-          className={["input", prefix ? "pl-7" : ""].join(" ")}
-          value={value}
-          onChange={(e) => onChange(normalizeNumberInput(e.target.value))}
-          onBlur={(e) => onChange(normalizeNumberInput(e.target.value))}
-          disabled={disabled}
-        />
-      </div>
+      <input
+        type="number"
+        step="0.01"
+        className="input"
+        value={value}
+        onChange={(e) => onChange(normalizeNumberInput(e.target.value))}
+        onBlur={(e) => onChange(normalizeNumberInput(e.target.value))}
+        disabled={disabled}
+      />
     </div>
   );
 }

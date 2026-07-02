@@ -262,6 +262,37 @@ export default function TimePage() {
         const sorted = [...entries].sort((a, b) => new Date(a.clockIn).getTime() - new Date(b.clockIn).getTime());
         const name = sorted[0]?.user?.name || employees.data?.find((e) => e.id === id)?.name || "Employee";
         const hourlyRate = toNumber(sorted[0]?.user?.hourlyRate ?? employees.data?.find((e) => e.id === id)?.hourlyRate ?? 0);
+
+        // Travel pay is applied once per employee + job + date.
+        const travelAllocations = new Map<string, { anchorEntryId: number; travelHours: number; travelRate: number }>();
+        const travelGroups = new Map<string, TimeEntryRecord[]>();
+        for (const entry of sorted) {
+          const groupKey = `${entry.job?.id ?? 0}:${toDateInput(new Date(entry.clockIn))}`;
+          const list = travelGroups.get(groupKey) || [];
+          list.push(entry);
+          travelGroups.set(groupKey, list);
+        }
+        for (const groupEntries of travelGroups.values()) {
+          const explicitOverride = groupEntries.find((entry) => entry.travelHours !== null && entry.travelHours !== undefined);
+          if (explicitOverride) {
+            travelAllocations.set(`${explicitOverride.job?.id ?? 0}:${toDateInput(new Date(explicitOverride.clockIn))}`, {
+              anchorEntryId: explicitOverride.id,
+              travelHours: toNumber(explicitOverride.travelHours),
+              travelRate: getTravelRate(explicitOverride, hourlyRate),
+            });
+            continue;
+          }
+
+          const defaultSource = groupEntries.find((entry) => Boolean(entry.job?.travelPayEnabled));
+          if (defaultSource) {
+            travelAllocations.set(`${defaultSource.job?.id ?? 0}:${toDateInput(new Date(defaultSource.clockIn))}`, {
+              anchorEntryId: groupEntries[0].id,
+              travelHours: toNumber(defaultSource.job?.defaultTravelHours ?? 0),
+              travelRate: getTravelRate(defaultSource, hourlyRate),
+            });
+          }
+        }
+
         let regularHours = 0;
         let overtimeHours = 0;
         let specialHours = 0;
@@ -275,12 +306,14 @@ export default function TimePage() {
         const weekTotals = new Map<string, number>();
         const details = sorted.map((entry) => {
           const workHours = entryHours(entry);
-          const travelPayHours = travelEntryHours(entry);
+          const travelGroupKey = `${entry.job?.id ?? 0}:${toDateInput(new Date(entry.clockIn))}`;
+          const travelAllocation = travelAllocations.get(travelGroupKey);
+          const travelPayHours = travelAllocation && travelAllocation.anchorEntryId === entry.id ? travelAllocation.travelHours : 0;
           const wk = weekKey(new Date(entry.clockIn));
           const prior = weekTotals.get(wk) || 0;
           const rateType = getRateType(entry);
           const rates = getRates(entry, hourlyRate);
-          const travelRate = getTravelRate(entry, hourlyRate);
+          const travelRate = travelAllocation?.travelRate ?? getTravelRate(entry, hourlyRate);
           const overtimePart = Math.max(0, prior + workHours - 40);
           const boundedOvertime = rateType === "overtime" ? workHours : Math.min(workHours, overtimePart);
           const baseHours = Math.max(0, workHours - boundedOvertime);
