@@ -19,16 +19,17 @@ type TimeEntryRecord = {
   hoursWorked: number | string | null;
   grossHours: number | string | null;
   paidHours: number | string | null;
-  rateType?: "regular" | "special" | "travel" | "overtime" | null;
+  rateType?: "regular" | "island" | "special" | "travel" | "overtime" | null;
   travelHours?: number | string | null;
   isManual: boolean;
+  isIslandJob?: boolean;
   specialPayEnabled: boolean;
   hourlyRateAdjustment?: number | string | null;
   notes: string | null;
   reviewStatus: ReviewStatus;
   workType: string | null;
   user?: { id: number; name: string; hourlyRate: number | string | null };
-  job?: { id: number; name: string; address: string | null; specialPayEnabled?: boolean; hourlyRateAdjustment?: number | string | null; travelPayEnabled?: boolean; defaultTravelHours?: number | string | null; travelRateType?: "regular" | "special" | "custom" | null; customTravelRate?: number | string | null } | null;
+  job?: { id: number; name: string; address: string | null; isIslandJob?: boolean; specialPayEnabled?: boolean; hourlyRateAdjustment?: number | string | null; travelPayEnabled?: boolean; defaultTravelHours?: number | string | null; travelRateType?: "regular" | "island" | "special" | "custom" | null; customTravelRate?: number | string | null } | null;
 };
 
 type EntryEditorState = {
@@ -42,7 +43,7 @@ type EntryEditorState = {
   travelHours: string;
   notes: string;
   managerNotes: string;
-  rateType: "regular" | "special" | "travel" | "overtime";
+  rateType: "regular" | "island" | "special" | "travel" | "overtime";
 };
 
 function toDateInput(date: Date) {
@@ -88,14 +89,16 @@ function travelEntryHours(entry: TimeEntryRecord) {
 }
 
 function hasSpecialPay(entry: TimeEntryRecord) {
-  return Boolean(entry.specialPayEnabled || entry.job?.specialPayEnabled);
+  return Boolean(entry.specialPayEnabled || entry.isIslandJob || entry.job?.specialPayEnabled || entry.job?.isIslandJob);
 }
 
 function getRates(entry: TimeEntryRecord, fallbackRate: number) {
   const regularRate = toNumber(entry.user?.hourlyRate ?? fallbackRate);
-  const adjustment = hasSpecialPay(entry)
+  const rawAdjustment = hasSpecialPay(entry)
     ? toNumber(entry.hourlyRateAdjustment ?? entry.job?.hourlyRateAdjustment ?? 0)
     : 0;
+  const legacyIslandSpecial = Boolean(entry.isIslandJob || entry.job?.isIslandJob);
+  const adjustment = rawAdjustment > 0 ? rawAdjustment : (legacyIslandSpecial ? 2 : 0);
   const effectiveRate = regularRate + adjustment;
   const overtimeRate = effectiveRate * 1.5;
   return { regularRate, adjustment, effectiveRate, overtimeRate };
@@ -104,6 +107,7 @@ function getRates(entry: TimeEntryRecord, fallbackRate: number) {
 function getRateType(entry: TimeEntryRecord) {
   if (entry.rateType === "travel" || entry.workType === "travel") return "travel";
   if (entry.rateType === "overtime") return "overtime";
+  if (entry.rateType === "island") return "special";
   if (entry.rateType === "special") return "special";
   if (hasSpecialPay(entry)) return "special";
   if (entry.workType === "travel" || entry.job?.travelPayEnabled) return "travel";
@@ -122,6 +126,7 @@ function getPayableHours(entry: TimeEntryRecord) {
 function getTravelRate(entry: TimeEntryRecord, fallbackRate: number) {
   const { regularRate, effectiveRate } = getRates(entry, fallbackRate);
   const travelRateType = entry.job?.travelRateType || "regular";
+  if (travelRateType === "island") return effectiveRate;
   if (travelRateType === "special") return effectiveRate;
   if (travelRateType === "custom") return toNumber(entry.job?.customTravelRate ?? regularRate);
   return regularRate;
@@ -170,7 +175,7 @@ function buildEditor(entry?: TimeEntryRecord | null): EntryEditorState {
     travelHours: String(toNumber(entry.travelHours ?? entry.job?.defaultTravelHours ?? 0)),
     notes: entry.notes || "",
     managerNotes: "",
-    rateType: entry.rateType || (entry.specialPayEnabled || entry.job?.specialPayEnabled ? "special" : "regular"),
+    rateType: (entry.rateType === "island" ? "special" : entry.rateType) || (hasSpecialPay(entry) ? "special" : "regular"),
   };
 }
 
@@ -188,11 +193,12 @@ export default function TimePage() {
   const employees = api.employees.list.useQuery();
   const jobs = api.jobs.list.useQuery();
   const selectedJob = useMemo(() => jobs.data?.find((job) => job.id === editor.jobId) || null, [editor.jobId, jobs.data]) as (null | {
+    isIslandJob: boolean;
     specialPayEnabled: boolean;
     hourlyRateAdjustment: number | string | null;
     travelPayEnabled: boolean;
     defaultTravelHours: number | string | null;
-    travelRateType?: "regular" | "special" | "custom" | null;
+    travelRateType?: "regular" | "island" | "special" | "custom" | null;
   });
 
   useEffect(() => {
@@ -203,7 +209,7 @@ export default function TimePage() {
         travelHours: String(toNumber(selectedJob.defaultTravelHours ?? 0)),
       }));
     }
-    if (selectedJob.specialPayEnabled && editor.rateType === "regular") {
+    if ((selectedJob.specialPayEnabled || selectedJob.isIslandJob) && editor.rateType === "regular") {
       setEditor((current) => ({ ...current, rateType: "special" }));
     }
   }, [editor.rateType, editorTouchedTravelHours, selectedJob]);
@@ -684,9 +690,9 @@ export default function TimePage() {
                   Travel pay is enabled for this job. Default travel hours: {toNumber(selectedJob.defaultTravelHours ?? 0).toFixed(2)}. Rate source: {selectedJob.travelRateType || "regular"}.
                 </div>
               ) : null}
-              {selectedJob?.specialPayEnabled ? (
+              {(selectedJob?.specialPayEnabled || selectedJob?.isIslandJob) ? (
                 <div className="md:col-span-2 rounded-lg border border-slate-200 bg-emerald-50 p-3 text-sm text-emerald-800">
-                  This job uses special pay. The payroll preview adds +${toNumber(selectedJob.hourlyRateAdjustment ?? 0).toFixed(2)}/hr to the employee regular rate for worked hours on this job.
+                  This job uses special pay. The payroll preview adds +${toNumber(selectedJob.hourlyRateAdjustment ?? (selectedJob.isIslandJob ? 2 : 0)).toFixed(2)}/hr to the employee regular rate for worked hours on this job.
                 </div>
               ) : null}
               <FieldTextArea label="Notes" value={editor.notes} onChange={(value) => setEditor((s) => ({ ...s, notes: value }))} />

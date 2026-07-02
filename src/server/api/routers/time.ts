@@ -59,7 +59,7 @@ const timeEntryFiltersInput = z
   })
   .optional();
 
-const TimeRateTypeInputZ = z.enum(["regular", "special", "travel", "overtime"]);
+const TimeRateTypeInputZ = z.enum(["regular", "island", "special", "travel", "overtime"]);
 
 const timeEntryUpsertInput = z.object({
   userId: z.number().int().positive(),
@@ -256,6 +256,7 @@ export const timeRouter = router({
             id: true,
             status: true,
             deletedAt: true,
+            isIslandJob: true,
             specialPayEnabled: true,
             hourlyRateAdjustment: true,
           },
@@ -276,11 +277,16 @@ export const timeRouter = router({
         ? await ctx.prisma.job.findUnique({
             where: { id: selectedJobId },
             select: {
+              isIslandJob: true,
               specialPayEnabled: true,
               hourlyRateAdjustment: true,
             },
           })
         : null;
+      const effectiveSpecialPayEnabled = Boolean(selectedJob?.specialPayEnabled || selectedJob?.isIslandJob);
+      const effectiveHourlyRateAdjustment = effectiveSpecialPayEnabled
+        ? (Number(selectedJob?.hourlyRateAdjustment || 0) > 0 ? Number(selectedJob?.hourlyRateAdjustment || 0) : 2)
+        : 0;
       const payroll = buildPayrollPayload({
         clockIn,
         clockOut: null,
@@ -299,9 +305,10 @@ export const timeRouter = router({
           clockInLatitude: input.lat,
           clockInLongitude: input.lng,
           clockInAccuracy: input.accuracy,
-          specialPayEnabled: Boolean(selectedJob?.specialPayEnabled),
-          hourlyRateAdjustment: Number(selectedJob?.hourlyRateAdjustment || 0),
-          rateType: selectedJob?.specialPayEnabled ? "special" : "regular",
+          isIslandJob: effectiveSpecialPayEnabled,
+          specialPayEnabled: effectiveSpecialPayEnabled,
+          hourlyRateAdjustment: effectiveHourlyRateAdjustment,
+          rateType: effectiveSpecialPayEnabled ? "special" : "regular",
           travelHours: null,
           overtimeOverride: false,
           reviewStatus: "pending",
@@ -440,11 +447,17 @@ export const timeRouter = router({
       ? await ctx.prisma.job.findUnique({
           where: { id: input.data.jobId },
           select: {
+            isIslandJob: true,
             specialPayEnabled: true,
             hourlyRateAdjustment: true,
           },
         })
       : null;
+    const effectiveSpecialPayEnabled = Boolean(selectedJob?.specialPayEnabled || selectedJob?.isIslandJob);
+    const effectiveHourlyRateAdjustment = effectiveSpecialPayEnabled
+      ? (Number(selectedJob?.hourlyRateAdjustment || 0) > 0 ? Number(selectedJob?.hourlyRateAdjustment || 0) : 2)
+      : 0;
+    const normalizedRateType = input.data.rateType === "island" ? "special" : input.data.rateType;
     const payroll = buildManualPayroll({
       clockIn,
       clockOut,
@@ -475,9 +488,10 @@ export const timeRouter = router({
       clockInAccuracy: input.data.clockInAccuracy ?? null,
       clockOutAccuracy: input.data.clockOutAccuracy ?? null,
       isManual: input.data.isManual,
-      specialPayEnabled: Boolean(selectedJob?.specialPayEnabled),
-      hourlyRateAdjustment: Number(selectedJob?.hourlyRateAdjustment || 0),
-      rateType: input.data.rateType,
+      isIslandJob: effectiveSpecialPayEnabled,
+      specialPayEnabled: effectiveSpecialPayEnabled,
+      hourlyRateAdjustment: effectiveHourlyRateAdjustment,
+      rateType: normalizedRateType,
       travelHours: input.data.travelHours ?? null,
       overtimeOverride: input.data.overtimeOverride,
       ...payroll,
@@ -527,9 +541,10 @@ export const timeRouter = router({
         clockInAccuracy: existing.clockInAccuracy,
         clockOutAccuracy: existing.clockOutAccuracy,
         isManual: true,
+        isIslandJob: existing.isIslandJob,
         specialPayEnabled: existing.specialPayEnabled,
         hourlyRateAdjustment: existing.hourlyRateAdjustment,
-        rateType: existing.rateType,
+        rateType: existing.rateType === "island" ? "special" : existing.rateType,
         travelHours: existing.travelHours,
         overtimeOverride: existing.overtimeOverride,
         ...buildManualPayroll({

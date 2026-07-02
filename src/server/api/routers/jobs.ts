@@ -7,7 +7,7 @@ const JobStatusZ = z.enum([
   "estimate", "sent", "approved", "active", "completed", "on_hold", "cancelled",
 ]);
 const JobTypeZ = z.enum(["interior", "exterior", "both", "commercial", "other"]);
-const JobTravelRateTypeZ = z.enum(["regular", "special", "custom"]);
+const JobTravelRateTypeZ = z.enum(["regular", "island", "special", "custom"]);
 
 const jobInput = z.object({
   customerId: z.number(),
@@ -136,9 +136,19 @@ export const jobsRouter = router({
       markup: input.markupPercent,
       tax: input.taxPercent,
     });
+    const effectiveSpecialPayEnabled = Boolean(input.specialPayEnabled);
+    const effectiveHourlyRateAdjustment = effectiveSpecialPayEnabled
+      ? (input.hourlyRateAdjustment > 0 ? input.hourlyRateAdjustment : 2)
+      : 0;
+    const effectiveTravelRateType = input.travelRateType === "island" ? "special" : input.travelRateType;
+
     return ctx.prisma.job.create({
       data: {
         ...input,
+        isIslandJob: effectiveSpecialPayEnabled,
+        specialPayEnabled: effectiveSpecialPayEnabled,
+        hourlyRateAdjustment: effectiveHourlyRateAdjustment,
+        travelRateType: effectiveTravelRateType,
         estimateNumber,
         subtotalBeforeMarkup: calc.subtotalBeforeMarkup,
         totalEstimate: calc.totalEstimate,
@@ -163,12 +173,33 @@ export const jobsRouter = router({
         tax: Number(merged.taxPercent),
       });
 
+      const effectiveSpecialPayEnabled = input.data.specialPayEnabled ?? existing.specialPayEnabled ?? existing.isIslandJob;
+      const effectiveHourlyRateAdjustment = effectiveSpecialPayEnabled
+        ? (
+            input.data.hourlyRateAdjustment ??
+            (Number(existing.hourlyRateAdjustment || 0) > 0
+              ? Number(existing.hourlyRateAdjustment || 0)
+              : (existing.isIslandJob ? 2 : 0))
+          )
+        : 0;
+      const effectiveTravelRateType = (input.data.travelRateType || existing.travelRateType) === "island"
+        ? "special"
+        : (input.data.travelRateType || existing.travelRateType);
+
+      const normalizedData: any = {
+        ...input.data,
+        isIslandJob: Boolean(effectiveSpecialPayEnabled),
+        specialPayEnabled: Boolean(effectiveSpecialPayEnabled),
+        hourlyRateAdjustment: Number(effectiveHourlyRateAdjustment),
+        travelRateType: effectiveTravelRateType,
+      };
+
       const shouldRecomputeTotal = !existing.budgetLocked && input.data.totalEstimate === undefined;
       return ctx.prisma.job.update({
         where: { id: input.id },
         data: shouldRecomputeTotal
-          ? { ...input.data, subtotalBeforeMarkup: calc.subtotalBeforeMarkup, totalEstimate: calc.totalEstimate }
-          : input.data,
+          ? { ...normalizedData, subtotalBeforeMarkup: calc.subtotalBeforeMarkup, totalEstimate: calc.totalEstimate }
+          : normalizedData,
       });
     }),
 

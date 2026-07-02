@@ -39,7 +39,7 @@ export default function JobsPage() {
     hourlyRateAdjustment: 0,
     travelPayEnabled: false,
     defaultTravelHours: 0,
-    travelRateType: "regular" as "regular" | "special" | "custom",
+    travelRateType: "regular" as "regular" | "island" | "special" | "custom",
     customTravelRate: 0,
     materialsBudget: 0,
     laborBudget: 0,
@@ -199,7 +199,7 @@ export default function JobsPage() {
                 <Field label="Default Travel Hours" value={form.defaultTravelHours} onChange={(v) => setForm((f) => ({ ...f, defaultTravelHours: v }))} />
                 <div>
                   <label className="label">Travel Rate Type</label>
-                  <select className="input" value={form.travelRateType} onChange={(e) => setForm((f) => ({ ...f, travelRateType: e.target.value as "regular" | "special" | "custom" }))}>
+                  <select className="input" value={form.travelRateType} onChange={(e) => setForm((f) => ({ ...f, travelRateType: e.target.value as "regular" | "island" | "special" | "custom" }))}>
                     <option value="regular">Regular Rate</option>
                     <option value="special">Special Rate (includes the job adjustment)</option>
                     <option value="custom">Custom Rate</option>

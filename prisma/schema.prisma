@@ -196,6 +196,7 @@ enum TimeReviewStatus {
 
 enum TimeRateType {
   regular
+  island
   special
   travel
   overtime
@@ -203,6 +204,7 @@ enum TimeRateType {
 
 enum JobTravelRateType {
   regular
+  island
   special
   custom
 }
@@ -300,6 +302,8 @@ model Job {
   totalEstimate        Decimal @default(0) @db.Decimal(12, 2)
   contractAmount       Decimal @default(0) @db.Decimal(12, 2)
   budgetLocked         Boolean @default(false)
+  /// Legacy compatibility field. Keep until production data migration is complete.
+  isIslandJob          Boolean @default(false)
   specialPayEnabled    Boolean @default(false)
   hourlyRateAdjustment Decimal @default(0) @db.Decimal(10, 2)
   travelPayEnabled     Boolean @default(false)
@@ -622,6 +626,8 @@ model TimeEntry {
   clockInAccuracy      Decimal?  @db.Decimal(8, 2)
   clockOutAccuracy     Decimal?  @db.Decimal(8, 2)
   isManual             Boolean   @default(false)
+  /// Legacy compatibility field. Keep until production data migration is complete.
+  isIslandJob          Boolean   @default(false)
   specialPayEnabled    Boolean   @default(false)
   hourlyRateAdjustment Decimal   @default(0) @db.Decimal(10, 2)
   rateType             TimeRateType @default(regular)

@@ -43,7 +43,7 @@ export default function JobDetailPage() {
     hourlyRateAdjustment: 0,
     travelPayEnabled: false,
     defaultTravelHours: 0,
-    travelRateType: "regular" as "regular" | "special" | "custom",
+    travelRateType: "regular" as "regular" | "island" | "special" | "custom",
     customTravelRate: 0,
     materialsBudget: 0,
     laborBudget: 0,
@@ -123,11 +123,12 @@ export default function JobDetailPage() {
     invoices: Array<{ id: number; total: string | number; invoiceNumber: string | null; title: string | null }>;
     payments: Array<{ id: number; amount: string | number; dateReceived: string; attachmentUrl: string | null; method: string | null }>;
     paintColors: Array<{ id: number; area: string; colorName: string; brand: string | null; finish: string | null; notes: string | null }>;
+    isIslandJob: boolean;
     specialPayEnabled: boolean;
     hourlyRateAdjustment: number | string | null;
     travelPayEnabled: boolean;
     defaultTravelHours: number | string | null;
-    travelRateType: "regular" | "special" | "custom" | null;
+    travelRateType: "regular" | "island" | "special" | "custom" | null;
     customTravelRate: number | string | null;
   };
 
@@ -139,11 +140,11 @@ export default function JobDetailPage() {
       status: job.status,
       scopeOfWork: job.scopeOfWork || "",
       jobNotes: job.notes || "",
-      specialPayEnabled: Boolean((job as any).specialPayEnabled),
-      hourlyRateAdjustment: Number((job as any).hourlyRateAdjustment || 0),
+      specialPayEnabled: Boolean((job as any).specialPayEnabled || (job as any).isIslandJob),
+      hourlyRateAdjustment: Number((job as any).hourlyRateAdjustment || ((job as any).isIslandJob ? 2 : 0)),
       travelPayEnabled: Boolean((job as any).travelPayEnabled),
       defaultTravelHours: Number((job as any).defaultTravelHours || 0),
-      travelRateType: ((job as any).travelRateType || "regular") as "regular" | "special" | "custom",
+      travelRateType: ((job as any).travelRateType || "regular") as "regular" | "island" | "special" | "custom",
       customTravelRate: Number((job as any).customTravelRate || 0),
       materialsBudget: Number(job.materialsBudget),
       laborBudget: Number(job.laborBudget),
@@ -297,9 +298,9 @@ export default function JobDetailPage() {
       />
 
       <div className="mb-4 flex flex-wrap gap-2">
-        {jobData.specialPayEnabled ? (
+        {(jobData.specialPayEnabled || jobData.isIslandJob) ? (
           <span className="badge bg-emerald-100 text-emerald-700">
-            SPECIAL PAY {Number(jobData.hourlyRateAdjustment || 0) > 0 ? `+$${Number(jobData.hourlyRateAdjustment || 0).toFixed(2)}/hr` : "+$0.00/hr"}
+            SPECIAL PAY {Number(jobData.hourlyRateAdjustment || (jobData.isIslandJob ? 2 : 0)) > 0 ? `+$${Number(jobData.hourlyRateAdjustment || (jobData.isIslandJob ? 2 : 0)).toFixed(2)}/hr` : "+$0.00/hr"}
           </span>
         ) : null}
         {jobData.travelPayEnabled ? <span className="badge bg-blue-100 text-blue-700">Travel Paid</span> : null}
@@ -916,7 +917,7 @@ export default function JobDetailPage() {
                 <Field label="Default travel hours" value={editForm.defaultTravelHours} onChange={(v) => setEditForm((f) => ({ ...f, defaultTravelHours: v }))} />
                 <div>
                   <label className="label">Travel rate type</label>
-                  <select className="input" value={editForm.travelRateType} onChange={(e) => setEditForm((f) => ({ ...f, travelRateType: e.target.value as "regular" | "special" | "custom" }))}>
+                  <select className="input" value={editForm.travelRateType} onChange={(e) => setEditForm((f) => ({ ...f, travelRateType: e.target.value as "regular" | "island" | "special" | "custom" }))}>
                     <option value="regular">Regular rate</option>
                     <option value="special">Special rate (includes the job adjustment)</option>
                     <option value="custom">Custom rate</option>

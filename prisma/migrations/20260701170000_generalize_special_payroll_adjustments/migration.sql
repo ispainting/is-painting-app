@@ -1,17 +1,63 @@
--- Rename island-specific enum variants to generic special pay variants
-ALTER TYPE "TimeRateType" RENAME VALUE 'island' TO 'special';
-ALTER TYPE "JobTravelRateType" RENAME VALUE 'island' TO 'special';
+-- Deploy-safe generalization:
+-- Keep legacy island fields/enum values and add special-pay fields side-by-side.
 
--- Generalize job-level payroll settings
+-- Add non-destructive enum values for new generic semantics.
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1
+		FROM pg_enum e
+		JOIN pg_type t ON t.oid = e.enumtypid
+		WHERE t.typname = 'TimeRateType' AND e.enumlabel = 'special'
+	) THEN
+		ALTER TYPE "TimeRateType" ADD VALUE 'special';
+	END IF;
+END $$;
+
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1
+		FROM pg_enum e
+		JOIN pg_type t ON t.oid = e.enumtypid
+		WHERE t.typname = 'JobTravelRateType' AND e.enumlabel = 'special'
+	) THEN
+		ALTER TYPE "JobTravelRateType" ADD VALUE 'special';
+	END IF;
+END $$;
+
+-- Add forward-compatible columns while preserving legacy columns.
 ALTER TABLE "Job"
-RENAME COLUMN "isIslandJob" TO "specialPayEnabled";
-
-ALTER TABLE "Job"
-ADD COLUMN "hourlyRateAdjustment" DECIMAL(10,2) NOT NULL DEFAULT 0;
-
--- Snapshot generic special pay settings on time entries for stable payroll history
-ALTER TABLE "TimeEntry"
-RENAME COLUMN "isIslandJob" TO "specialPayEnabled";
+ADD COLUMN IF NOT EXISTS "specialPayEnabled" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN IF NOT EXISTS "hourlyRateAdjustment" DECIMAL(10,2) NOT NULL DEFAULT 0;
 
 ALTER TABLE "TimeEntry"
-ADD COLUMN "hourlyRateAdjustment" DECIMAL(10,2) NOT NULL DEFAULT 0;
+ADD COLUMN IF NOT EXISTS "specialPayEnabled" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN IF NOT EXISTS "hourlyRateAdjustment" DECIMAL(10,2) NOT NULL DEFAULT 0;
+
+-- Backfill mappings from legacy island model into generic special-pay model.
+UPDATE "Job"
+SET
+	"specialPayEnabled" = true,
+	"hourlyRateAdjustment" = CASE
+		WHEN COALESCE("hourlyRateAdjustment", 0) > 0 THEN "hourlyRateAdjustment"
+		ELSE 2.00
+	END,
+	"travelRateType" = CASE
+		WHEN "travelRateType"::text = 'island' THEN 'special'::"JobTravelRateType"
+		ELSE "travelRateType"
+	END
+WHERE "isIslandJob" = true;
+
+UPDATE "TimeEntry"
+SET
+	"specialPayEnabled" = true,
+	"hourlyRateAdjustment" = CASE
+		WHEN COALESCE("hourlyRateAdjustment", 0) > 0 THEN "hourlyRateAdjustment"
+		ELSE 2.00
+	END,
+	"rateType" = CASE
+		WHEN "rateType"::text = 'island' THEN 'special'::"TimeRateType"
+		ELSE "rateType"
+	END
+WHERE "isIslandJob" = true OR "rateType"::text = 'island';
