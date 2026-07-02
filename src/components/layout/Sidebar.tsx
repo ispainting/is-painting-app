@@ -22,6 +22,7 @@ const NAV = [
   { href: "/invoices", label: "Invoices", icon: FileText },
   { href: "/automations", label: "Automations", icon: Bot },
   { href: "/employees", label: "Employees", icon: UserCog },
+  { href: "/analytics", label: "Business Analytics", icon: BarChart3 },
   { href: "/reports", label: "Reports", icon: BarChart3 },
   { href: "/settings", label: "Settings", icon: Settings },
 ];

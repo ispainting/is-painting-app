@@ -12,6 +12,7 @@ import { invoicesRouter } from "./routers/invoices";
 import { paymentsRouter } from "./routers/payments";
 import { automationsRouter } from "./routers/automations";
 import { employeesRouter } from "./routers/employees";
+import { businessRouter } from "./routers/business";
 import { reportsRouter } from "./routers/reports";
 import { configRouter } from "./routers/config";
 import { reviewsRouter } from "./routers/reviews";
@@ -30,6 +31,7 @@ export const appRouter = router({
   payments: paymentsRouter,
   automations: automationsRouter,
   employees: employeesRouter,
+  business: businessRouter,
   reports: reportsRouter,
   config: configRouter,
   reviews: reviewsRouter,
