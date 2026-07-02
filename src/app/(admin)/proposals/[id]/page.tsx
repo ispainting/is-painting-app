@@ -1017,9 +1017,9 @@ export default function ProposalDetailPage() {
           <div className="card p-5">
             <h2 className="text-base font-semibold mb-3">Internal Budget</h2>
             <div className="grid md:grid-cols-2 gap-3">
-              <FieldNumber label="Materials Budget" value={form.materialsBudget} onChange={(v) => setForm((f) => ({ ...f, materialsBudget: v }))} disabled={isReadOnly} currency />
-              <FieldNumber label="Labor Budget" value={form.laborBudget} onChange={(v) => setForm((f) => ({ ...f, laborBudget: v }))} disabled={isReadOnly} currency />
-              <FieldNumber label="Subcontractor Budget" value={form.subcontractorBudget} onChange={(v) => setForm((f) => ({ ...f, subcontractorBudget: v }))} disabled={isReadOnly} currency />
+              <FieldNumber label="Materials Budget" value={form.materialsBudget} onChange={(v) => setForm((f) => ({ ...f, materialsBudget: v }))} disabled={isReadOnly} />
+              <FieldNumber label="Labor Budget" value={form.laborBudget} onChange={(v) => setForm((f) => ({ ...f, laborBudget: v }))} disabled={isReadOnly} />
+              <FieldNumber label="Subcontractor Budget" value={form.subcontractorBudget} onChange={(v) => setForm((f) => ({ ...f, subcontractorBudget: v }))} disabled={isReadOnly} />
               <div>
                 <label className="label">Internal Cost</label>
                 <div className="input flex items-center">{formatCurrency(form.materialsBudget + form.laborBudget + form.subcontractorBudget)}</div>
@@ -1030,7 +1030,7 @@ export default function ProposalDetailPage() {
                   {formatCurrency(form.totalAmount - (form.materialsBudget + form.laborBudget + form.subcontractorBudget))}
                 </div>
               </div>
-              <FieldNumber label="Final Proposal Price" value={form.totalAmount} onChange={(v) => setForm((f) => ({ ...f, totalAmount: v }))} disabled={isReadOnly} currency />
+              <FieldNumber label="Final Proposal Price" value={form.totalAmount} onChange={(v) => setForm((f) => ({ ...f, totalAmount: v }))} disabled={isReadOnly} />
               <FieldArea label="Payment Schedule" value={form.paymentSchedule} onChange={(v) => setForm((f) => ({ ...f, paymentSchedule: v }))} disabled={isReadOnly} className="md:col-span-2" />
               <FieldArea label="Terms" value={form.termsAndConditions} onChange={(v) => setForm((f) => ({ ...f, termsAndConditions: v }))} disabled={isReadOnly} className="md:col-span-2" />
             </div>
@@ -1088,6 +1088,8 @@ export default function ProposalDetailPage() {
                             <label className="label">Price</label>
                             <input
                               className="input"
+                              type="text"
+                              inputMode="decimal"
                               value={option.price}
                               disabled={isReadOnly}
                               onChange={(e) =>
@@ -1096,18 +1098,6 @@ export default function ProposalDetailPage() {
                                   options: f.options.map((current, i) =>
                                     i === index ? { ...current, price: sanitizeNumericInput(e.target.value) } : current
                                   ),
-                                }))
-                              }
-                              onBlur={() =>
-                                setForm((f) => ({
-                                  ...f,
-                                  options: f.options.map((current, i) => {
-                                    if (i !== index) return current;
-                                    const parsed = parseCurrencyValue(current.price);
-                                    return Number.isFinite(parsed)
-                                      ? { ...current, price: formatCurrency(parsed) }
-                                      : { ...current, price: "" };
-                                  }),
                                 }))
                               }
                             />
@@ -1475,13 +1465,11 @@ function FieldNumber({
   value,
   onChange,
   disabled,
-  currency,
 }: {
   label: string;
   value: number;
   onChange: (v: number) => void;
   disabled?: boolean;
-  currency?: boolean;
 }) {
   return (
     <div>
@@ -1489,9 +1477,10 @@ function FieldNumber({
       <input
         type="text"
         className="input"
-        value={currency ? formatCurrency(value) : String(value)}
+        inputMode="decimal"
+        value={String(value)}
         onChange={(e) => {
-          const next = currency ? parseCurrencyValue(e.target.value) : Number(sanitizeNumericInput(e.target.value));
+          const next = Number(sanitizeNumericInput(e.target.value));
           onChange(Number.isFinite(next) ? next : 0);
         }}
         disabled={disabled}
