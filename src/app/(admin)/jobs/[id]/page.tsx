@@ -818,9 +818,11 @@ export default function JobDetailPage() {
 
       {isEditOpen && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
-          <div className="card w-full max-w-2xl p-6">
-            <div className="text-lg font-semibold mb-3">Edit Job</div>
-            <div className="grid grid-cols-2 gap-3">
+          <div className="card w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="px-6 pt-6 pb-3 border-b border-slate-200">
+              <div className="text-lg font-semibold">Edit Job</div>
+            </div>
+            <div className="grid grid-cols-2 gap-3 overflow-y-auto px-6 py-4 pr-5 flex-1">
               <div className="col-span-2">
                 <label className="label">Job name</label>
                 <input
@@ -902,30 +904,33 @@ export default function JobDetailPage() {
                 />
               </div>
 
-              <div className="col-span-2 grid grid-cols-2 gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                  <input type="checkbox" checked={editForm.specialPayEnabled} onChange={(e) => setEditForm((f) => ({ ...f, specialPayEnabled: e.target.checked }))} />
-                  Special Pay Job
-                </label>
-                <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                  <input type="checkbox" checked={editForm.travelPayEnabled} onChange={(e) => setEditForm((f) => ({ ...f, travelPayEnabled: e.target.checked }))} />
-                  Paid Travel
-                </label>
-                {editForm.specialPayEnabled ? (
-                  <Field label="Hourly rate adjustment" value={editForm.hourlyRateAdjustment} onChange={(v) => setEditForm((f) => ({ ...f, hourlyRateAdjustment: v }))} prefix="+" />
-                ) : <div />}
-                <Field label="Default travel hours" value={editForm.defaultTravelHours} onChange={(v) => setEditForm((f) => ({ ...f, defaultTravelHours: v }))} />
-                <div>
-                  <label className="label">Travel rate type</label>
-                  <select className="input" value={editForm.travelRateType} onChange={(e) => setEditForm((f) => ({ ...f, travelRateType: e.target.value as "regular" | "island" | "special" | "custom" }))}>
-                    <option value="regular">Regular rate</option>
-                    <option value="special">Special rate (includes the job adjustment)</option>
-                    <option value="custom">Custom rate</option>
-                  </select>
+              <div className="col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Payroll Settings</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                  <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                    <input type="checkbox" checked={editForm.specialPayEnabled} onChange={(e) => setEditForm((f) => ({ ...f, specialPayEnabled: e.target.checked }))} />
+                    Special Pay Job
+                  </label>
+                  <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                    <input type="checkbox" checked={editForm.travelPayEnabled} onChange={(e) => setEditForm((f) => ({ ...f, travelPayEnabled: e.target.checked }))} />
+                    Paid Travel
+                  </label>
                 </div>
-                {editForm.travelRateType === "custom" ? (
-                  <Field label="Custom travel rate" value={editForm.customTravelRate} onChange={(v) => setEditForm((f) => ({ ...f, customTravelRate: v }))} />
-                ) : null}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  <Field label="Hourly rate adjustment" value={editForm.hourlyRateAdjustment} onChange={(v) => setEditForm((f) => ({ ...f, hourlyRateAdjustment: v }))} prefix="+" disabled={!editForm.specialPayEnabled} />
+                  <Field label="Default travel hours" value={editForm.defaultTravelHours} onChange={(v) => setEditForm((f) => ({ ...f, defaultTravelHours: v }))} />
+                  <div>
+                    <label className="label">Travel rate type</label>
+                    <select className="input" value={editForm.travelRateType} onChange={(e) => setEditForm((f) => ({ ...f, travelRateType: e.target.value as "regular" | "island" | "special" | "custom" }))}>
+                      <option value="regular">Regular rate</option>
+                      <option value="special">Special rate (includes the job adjustment)</option>
+                      <option value="custom">Custom rate</option>
+                    </select>
+                  </div>
+                  {editForm.travelRateType === "custom" ? (
+                    <Field label="Custom travel rate" value={editForm.customTravelRate} onChange={(v) => setEditForm((f) => ({ ...f, customTravelRate: v }))} />
+                  ) : null}
+                </div>
               </div>
 
               <Field label="Materials budget" value={editForm.materialsBudget} onChange={(v) => setEditForm((f) => ({ ...f, materialsBudget: v }))} />
@@ -935,7 +940,7 @@ export default function JobDetailPage() {
               <Field label="Contract amount" value={editForm.contractAmount} onChange={(v) => setEditForm((f) => ({ ...f, contractAmount: v }))} />
             </div>
 
-            <div className="flex justify-end gap-2 mt-5">
+            <div className="sticky bottom-0 z-10 flex justify-end gap-2 border-t border-slate-200 bg-white px-6 py-4">
               <button className="btn btn-secondary" onClick={() => setIsEditOpen(false)}>Cancel</button>
               <button
                 className="btn btn-primary"
@@ -983,7 +988,13 @@ function ComingSoonCard({ title, description }: { title: string; description: st
   );
 }
 
-function Field({ label, value, onChange, prefix }: { label: string; value: number; onChange: (v: number) => void; prefix?: string }) {
+function normalizeNumberInput(nextValue: string) {
+  if (!nextValue.trim()) return 0;
+  const parsed = Number(nextValue);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function Field({ label, value, onChange, prefix, disabled }: { label: string; value: number; onChange: (v: number) => void; prefix?: string; disabled?: boolean }) {
   return (
     <div>
       <label className="label">{label}</label>
@@ -994,7 +1005,9 @@ function Field({ label, value, onChange, prefix }: { label: string; value: numbe
           step="0.01"
           className={["input", prefix ? "pl-7" : ""].join(" ")}
           value={value}
-          onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+          onChange={(e) => onChange(normalizeNumberInput(e.target.value))}
+          onBlur={(e) => onChange(normalizeNumberInput(e.target.value))}
+          disabled={disabled}
         />
       </div>
     </div>

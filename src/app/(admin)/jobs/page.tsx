@@ -133,9 +133,11 @@ export default function JobsPage() {
 
       {open && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
-          <div className="card w-full max-w-lg p-6 max-h-[85vh] flex flex-col">
-            <div className="text-lg font-semibold mb-3">New job</div>
-            <div className="grid grid-cols-2 gap-3 overflow-y-auto pr-1 flex-1">
+          <div className="card w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="px-6 pt-6 pb-3 border-b border-slate-200">
+              <div className="text-lg font-semibold">New job</div>
+            </div>
+            <div className="grid grid-cols-2 gap-3 overflow-y-auto px-6 py-4 pr-5 flex-1">
               <div className="col-span-2">
                 <label className="label">Customer</label>
                 <div className="relative">
@@ -184,30 +186,33 @@ export default function JobsPage() {
               <FieldText label="City" value={form.city} onChange={(v) => setForm((f) => ({ ...f, city: v }))} />
               <FieldText label="State" value={form.state} onChange={(v) => setForm((f) => ({ ...f, state: v }))} />
               <FieldText label="Zip" value={form.zipCode} onChange={(v) => setForm((f) => ({ ...f, zipCode: v }))} />
-              <div className="col-span-2 grid grid-cols-2 gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                  <input type="checkbox" checked={form.specialPayEnabled} onChange={(e) => setForm((f) => ({ ...f, specialPayEnabled: e.target.checked }))} />
-                  Special Pay Job
-                </label>
-                <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                  <input type="checkbox" checked={form.travelPayEnabled} onChange={(e) => setForm((f) => ({ ...f, travelPayEnabled: e.target.checked }))} />
-                  Paid Travel
-                </label>
-                {form.specialPayEnabled ? (
-                  <Field label="Hourly Rate Adjustment" value={form.hourlyRateAdjustment} onChange={(v) => setForm((f) => ({ ...f, hourlyRateAdjustment: v }))} prefix="+" />
-                ) : <div />}
-                <Field label="Default Travel Hours" value={form.defaultTravelHours} onChange={(v) => setForm((f) => ({ ...f, defaultTravelHours: v }))} />
-                <div>
-                  <label className="label">Travel Rate Type</label>
-                  <select className="input" value={form.travelRateType} onChange={(e) => setForm((f) => ({ ...f, travelRateType: e.target.value as "regular" | "island" | "special" | "custom" }))}>
-                    <option value="regular">Regular Rate</option>
-                    <option value="special">Special Rate (includes the job adjustment)</option>
-                    <option value="custom">Custom Rate</option>
-                  </select>
+              <div className="col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Payroll Settings</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                  <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                    <input type="checkbox" checked={form.specialPayEnabled} onChange={(e) => setForm((f) => ({ ...f, specialPayEnabled: e.target.checked }))} />
+                    Special Pay Job
+                  </label>
+                  <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                    <input type="checkbox" checked={form.travelPayEnabled} onChange={(e) => setForm((f) => ({ ...f, travelPayEnabled: e.target.checked }))} />
+                    Paid Travel
+                  </label>
                 </div>
-                {form.travelRateType === "custom" ? (
-                  <Field label="Custom Travel Rate" value={form.customTravelRate} onChange={(v) => setForm((f) => ({ ...f, customTravelRate: v }))} />
-                ) : null}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  <Field label="Hourly Rate Adjustment" value={form.hourlyRateAdjustment} onChange={(v) => setForm((f) => ({ ...f, hourlyRateAdjustment: v }))} prefix="+" disabled={!form.specialPayEnabled} />
+                  <Field label="Default Travel Hours" value={form.defaultTravelHours} onChange={(v) => setForm((f) => ({ ...f, defaultTravelHours: v }))} />
+                  <div>
+                    <label className="label">Travel Rate Type</label>
+                    <select className="input" value={form.travelRateType} onChange={(e) => setForm((f) => ({ ...f, travelRateType: e.target.value as "regular" | "island" | "special" | "custom" }))}>
+                      <option value="regular">Regular Rate</option>
+                      <option value="special">Special Rate (includes the job adjustment)</option>
+                      <option value="custom">Custom Rate</option>
+                    </select>
+                  </div>
+                  {form.travelRateType === "custom" ? (
+                    <Field label="Custom Travel Rate" value={form.customTravelRate} onChange={(v) => setForm((f) => ({ ...f, customTravelRate: v }))} />
+                  ) : null}
+                </div>
               </div>
               <Field label="Materials" value={form.materialsBudget} onChange={(v) => setForm((f) => ({ ...f, materialsBudget: v }))} />
               <Field label="Labor" value={form.laborBudget} onChange={(v) => setForm((f) => ({ ...f, laborBudget: v }))} />
@@ -217,7 +222,7 @@ export default function JobsPage() {
               <Field label="Markup %" value={form.markupPercent} onChange={(v) => setForm((f) => ({ ...f, markupPercent: v }))} />
               <Field label="Tax %" value={form.taxPercent} onChange={(v) => setForm((f) => ({ ...f, taxPercent: v }))} />
             </div>
-            <div className="flex justify-end gap-2 mt-4 pt-4 border-t border-slate-200 bg-white sticky bottom-0">
+            <div className="sticky bottom-0 z-10 flex justify-end gap-2 border-t border-slate-200 bg-white px-6 py-4">
               <button className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button>
               <button
                 className="btn btn-primary"
@@ -234,7 +239,13 @@ export default function JobsPage() {
   );
 }
 
-function Field({ label, value, onChange, prefix }: { label: string; value: number; onChange: (v: number) => void; prefix?: string }) {
+function normalizeNumberInput(nextValue: string) {
+  if (!nextValue.trim()) return 0;
+  const parsed = Number(nextValue);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function Field({ label, value, onChange, prefix, disabled }: { label: string; value: number; onChange: (v: number) => void; prefix?: string; disabled?: boolean }) {
   return (
     <div>
       <label className="label">{label}</label>
@@ -245,7 +256,9 @@ function Field({ label, value, onChange, prefix }: { label: string; value: numbe
           step="0.01"
           className={["input", prefix ? "pl-7" : ""].join(" ")}
           value={value}
-          onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+          onChange={(e) => onChange(normalizeNumberInput(e.target.value))}
+          onBlur={(e) => onChange(normalizeNumberInput(e.target.value))}
+          disabled={disabled}
         />
       </div>
     </div>
