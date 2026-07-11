@@ -39,8 +39,6 @@ ADD COLUMN "payrollNotes" TEXT,
 ADD COLUMN "skills" TEXT[] DEFAULT ARRAY[]::TEXT[],
 ADD COLUMN "languages" TEXT[] DEFAULT ARRAY[]::TEXT[];
 
-CREATE UNIQUE INDEX "User_employeeCode_key" ON "User"("employeeCode");
-
 CREATE TABLE "EmployeeCertification" (
   "id" SERIAL NOT NULL,
   "userId" INTEGER NOT NULL,

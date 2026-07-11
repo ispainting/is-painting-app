@@ -312,7 +312,6 @@ model User {
 
   @@index([role])
   @@index([isActive])
-  @@unique([employeeCode])
 }
 
 model EmployeeCertification {

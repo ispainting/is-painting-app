@@ -183,7 +183,7 @@ When it's green, click **Visit** to open your live URL.
 > ```
 > This creates `prisma/migrations/<timestamp>_init/`. Commit it and push. Then Vercel's `prisma migrate deploy` has something to apply.
 >
-> **Alternative** — change the build command to `prisma db push && prisma db seed && next build` for the first deploy only. `db push` syncs the schema directly without migration files. Then switch to `migrate deploy` afterward.
+> Keep production deploys on `prisma migrate deploy` to apply tracked, safe migrations.
 
 ---
 
