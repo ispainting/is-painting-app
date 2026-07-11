@@ -159,6 +159,19 @@ enum InventoryCategory {
   other
 }
 
+enum CustomerTouchpointType {
+  call
+  email
+  sms
+  note
+  follow_up
+}
+
+enum CustomerFileType {
+  attachment
+  photo
+}
+
 enum AutomationName {
   follow_up
   not_answered
@@ -209,6 +222,46 @@ enum JobTravelRateType {
   custom
 }
 
+enum EmployeeTravelRateType {
+  regular
+  special
+  custom
+}
+
+enum EmployeeCertificationStatus {
+  active
+  expiring_soon
+  expired
+}
+
+enum EmployeeDocumentType {
+  driver_license
+  osha_card
+  contract
+  w9
+  i9
+  insurance
+  custom
+}
+
+enum EmployeeActivityType {
+  created
+  updated
+  payroll_updated
+  job_assigned
+  job_unassigned
+  archived
+  restored
+  deleted
+  duplicated
+  certification_added
+  certification_updated
+  certification_removed
+  document_uploaded
+  document_removed
+  note_added
+}
+
 // ─── USERS ───────────────────────────────────────────
 
 model User {
@@ -219,7 +272,23 @@ model User {
   role       UserRole @default(employee)
   phone      String?  @db.VarChar(20)
   hourlyRate Decimal? @db.Decimal(10, 2)
-employeeRole String? @db.VarChar(50)
+  employeeRole String? @db.VarChar(50)
+  profilePhotoUrl String? @db.Text
+  address String? @db.Text
+  emergencyContactName String? @db.VarChar(120)
+  emergencyContactPhone String? @db.VarChar(30)
+  hireDate DateTime?
+  employeeCode String? @db.VarChar(50)
+  specialJobAdjustment Decimal @default(0) @db.Decimal(8, 2)
+  overtimeMultiplier Decimal @default(1.5) @db.Decimal(5, 2)
+  overtimeRate Decimal? @db.Decimal(8, 2)
+  travelPayEnabled Boolean @default(false)
+  defaultTravelHours Decimal @default(0) @db.Decimal(8, 2)
+  travelRateType EmployeeTravelRateType @default(regular)
+  customTravelRate Decimal? @db.Decimal(8, 2)
+  payrollNotes String? @db.Text
+  skills String[]
+  languages String[]
   isActive   Boolean  @default(true)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -228,6 +297,13 @@ employeeRole String? @db.VarChar(50)
   approvedTimeEntries   TimeEntry[]             @relation("ApprovedTimeEntries")
   expenses              Expense[]               @relation("SubmittedExpenses")
   approvedExpenses      Expense[]               @relation("ApprovedExpenses")
+  customerTouchpoints   CustomerTouchpoint[]
+  employeeCertifications EmployeeCertification[]
+  employeeDocuments     EmployeeDocument[]
+  employeeNotes         EmployeeNote[]          @relation("EmployeeNoteTarget")
+  authoredEmployeeNotes EmployeeNote[]          @relation("EmployeeNoteAuthor")
+  employeeActivities    EmployeeActivity[]      @relation("EmployeeActivityTarget")
+  authoredEmployeeActivities EmployeeActivity[] @relation("EmployeeActivityActor")
   payments              Payment[]
   invoicesCreated       Invoice[]
   auditLogs             AuditLog[]
@@ -236,6 +312,75 @@ employeeRole String? @db.VarChar(50)
 
   @@index([role])
   @@index([isActive])
+  @@unique([employeeCode])
+}
+
+model EmployeeCertification {
+  id             Int                         @id @default(autoincrement())
+  userId         Int
+  name           String                      @db.VarChar(120)
+  issuingAuthority String?                   @db.VarChar(120)
+  issueDate      DateTime?
+  expirationDate DateTime?
+  reminderDays   Int                         @default(30)
+  status         EmployeeCertificationStatus @default(active)
+  notes          String?                     @db.Text
+  createdAt      DateTime                    @default(now())
+  updatedAt      DateTime                    @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+}
+
+model EmployeeDocument {
+  id          Int                @id @default(autoincrement())
+  userId      Int
+  type        EmployeeDocumentType @default(custom)
+  title       String             @db.VarChar(160)
+  fileName    String
+  fileUrl     String?            @db.Text
+  mimeType    String?            @db.VarChar(80)
+  notes       String?            @db.Text
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([type])
+}
+
+model EmployeeNote {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  authorId    Int
+  note        String   @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user   User @relation("EmployeeNoteTarget", fields: [userId], references: [id], onDelete: Cascade)
+  author User @relation("EmployeeNoteAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([authorId])
+}
+
+model EmployeeActivity {
+  id          Int                  @id @default(autoincrement())
+  userId      Int
+  actorId     Int?
+  type        EmployeeActivityType
+  description String               @db.Text
+  metadata    Json?
+  createdAt   DateTime             @default(now())
+
+  user  User  @relation("EmployeeActivityTarget", fields: [userId], references: [id], onDelete: Cascade)
+  actor User? @relation("EmployeeActivityActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([type])
 }
 
 // ─── CUSTOMERS ───────────────────────────────────────
@@ -243,6 +388,7 @@ employeeRole String? @db.VarChar(50)
 model Customer {
   id        Int       @id @default(autoincrement())
   name      String
+  contactName String?  @db.VarChar(120)
   email     String?
   phone     String?   @db.VarChar(30)
   address   String?
@@ -250,8 +396,12 @@ model Customer {
   state     String?   @db.VarChar(50)
   zipCode   String?   @db.VarChar(20)
   source    String?   @db.VarChar(100)
+  leadSource String?  @db.VarChar(100)
+  referralSource String? @db.VarChar(100)
   tags      String[]
   notes     String?
+  lastContactAt DateTime?
+  nextFollowUpAt DateTime?
   deletedAt DateTime?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -261,11 +411,46 @@ externalId String? @db.VarChar(100)
   proposals         Proposal[]
   opportunities     Opportunity[]
   invoices          Invoice[]
+  touchpoints       CustomerTouchpoint[]
+  files             CustomerFile[]
   reviewSubmissions ReviewSubmission[]
 
  @@index([deletedAt])
 @@index([name])
 @@unique([externalId])
+}
+
+model CustomerTouchpoint {
+  id          Int                   @id @default(autoincrement())
+  customerId  Int
+  createdById Int?
+  type        CustomerTouchpointType @default(note)
+  subject     String?               @db.VarChar(200)
+  body        String?               @db.Text
+  occurredAt  DateTime              @default(now())
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  customer  Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  createdBy User?    @relation(fields: [createdById], references: [id])
+
+  @@index([customerId, occurredAt])
+  @@index([type])
+}
+
+model CustomerFile {
+  id         Int              @id @default(autoincrement())
+  customerId Int
+  type       CustomerFileType @default(attachment)
+  fileName   String
+  fileUrl    String?          @db.Text
+  notes      String?          @db.Text
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, type])
 }
 
 // ─── JOBS ────────────────────────────────────────────

@@ -191,6 +191,7 @@ export default function TimePage() {
   const [editorTouchedTravelHours, setEditorTouchedTravelHours] = useState(false);
 
   const employees = api.employees.list.useQuery();
+  const employeeRows = employees.data?.rows || [];
   const jobs = api.jobs.list.useQuery();
   const selectedJob = useMemo(() => jobs.data?.find((job) => job.id === editor.jobId) || null, [editor.jobId, jobs.data]) as (null | {
     isIslandJob: boolean;
@@ -260,8 +261,8 @@ export default function TimePage() {
     return Array.from(byEmployee.entries())
       .map(([id, entries]) => {
         const sorted = [...entries].sort((a, b) => new Date(a.clockIn).getTime() - new Date(b.clockIn).getTime());
-        const name = sorted[0]?.user?.name || employees.data?.find((e) => e.id === id)?.name || "Employee";
-        const hourlyRate = toNumber(sorted[0]?.user?.hourlyRate ?? employees.data?.find((e) => e.id === id)?.hourlyRate ?? 0);
+        const name = sorted[0]?.user?.name || employeeRows.find((e) => e.id === id)?.name || "Employee";
+        const hourlyRate = toNumber(sorted[0]?.user?.hourlyRate ?? employeeRows.find((e) => e.id === id)?.hourlyRate ?? 0);
 
         // Travel pay is applied once per employee + job + date.
         const travelAllocations = new Map<string, { anchorEntryId: number; travelHours: number; travelRate: number }>();
@@ -490,7 +491,7 @@ export default function TimePage() {
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <FieldInput label="Start date" type="date" value={startDate} onChange={setStartDate} />
           <FieldInput label="End date" type="date" value={endDate} onChange={setEndDate} />
-          <FieldSelect label="Employee" value={employeeId} onChange={setEmployeeId} options={[{ value: "", label: "All employees" }, ...(employees.data || []).map((e) => ({ value: String(e.id), label: e.name }))]} />
+          <FieldSelect label="Employee" value={employeeId} onChange={setEmployeeId} options={[{ value: "", label: "All employees" }, ...employeeRows.map((e) => ({ value: String(e.id), label: e.name }))]} />
           <FieldSelect label="Project" value={projectId} onChange={setProjectId} options={[{ value: "", label: "All projects" }, ...(jobs.data || []).map((j) => ({ value: String(j.id), label: j.name }))]} />
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
@@ -632,7 +633,7 @@ export default function TimePage() {
               <tbody>
                 {rows.map((entry) => (
                   <tr key={entry.id} className="border-t border-slate-100">
-                    <td className="px-3 py-2">{entry.user?.name || employees.data?.find((e) => e.id === entry.userId)?.name || "Employee"}</td>
+                    <td className="px-3 py-2">{entry.user?.name || employeeRows.find((e) => e.id === entry.userId)?.name || "Employee"}</td>
                     <td className="px-3 py-2">{entry.job?.name || "—"}</td>
                     <td className="px-3 py-2">{formatDateTime(entry.clockIn)}</td>
                     <td className="px-3 py-2">{entry.clockOut ? formatDateTime(entry.clockOut) : "—"}</td>
@@ -688,7 +689,7 @@ export default function TimePage() {
             </div>
 
             <div className="grid gap-3 md:grid-cols-2">
-              <FieldSelect label="Employee" value={editor.userId ? String(editor.userId) : ""} onChange={(value) => setEditor((s) => ({ ...s, userId: value ? Number(value) : null }))} options={[{ value: "", label: "Select employee" }, ...(employees.data || []).map((e) => ({ value: String(e.id), label: e.name }))]} />
+              <FieldSelect label="Employee" value={editor.userId ? String(editor.userId) : ""} onChange={(value) => setEditor((s) => ({ ...s, userId: value ? Number(value) : null }))} options={[{ value: "", label: "Select employee" }, ...employeeRows.map((e) => ({ value: String(e.id), label: e.name }))]} />
               <FieldSelect label="Project" value={editor.jobId ? String(editor.jobId) : ""} onChange={(value) => {
                 const jobId = value ? Number(value) : null;
                 setEditorTouchedTravelHours(false);

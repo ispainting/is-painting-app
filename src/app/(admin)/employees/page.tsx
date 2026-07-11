@@ -1,138 +1,374 @@
 "use client";
 
-import { useState } from "react";
-import { api } from "@/trpc/react";
+import Link from "next/link";
+import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
-import { Plus } from "lucide-react";
+import { api } from "@/trpc/react";
+import { formatDate } from "@/lib/utils";
 import { toast } from "sonner";
+import { Plus } from "lucide-react";
 
-const ROLE_OPTIONS = [
-  { value: "employee", label: "Employee" },
-  { value: "admin", label: "Admin" },
-] as const;
+type StatusFilter = "active" | "inactive" | "all";
 
 export default function EmployeesPage() {
+  const router = useRouter();
   const utils = api.useUtils();
-  const [visibility, setVisibility] = useState<"active" | "inactive" | "all">("active");
-  const { data, isLoading } = api.employees.list.useQuery({ visibility });
+  const [search, setSearch] = useState("");
+  const [positionFilter, setPositionFilter] = useState("");
+  const [visibility, setVisibility] = useState<StatusFilter>("active");
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [bulkJobId, setBulkJobId] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
-  const [editOpen, setEditOpen] = useState(false);
-  const [confirmArchiveOpen, setConfirmArchiveOpen] = useState(false);
-  const [selectedEmployee, setSelectedEmployee] = useState<EmployeeRecord | null>(null);
-  const [createForm, setCreateForm] = useState({ name: "", email: "", password: "", role: "employee" as "admin" | "employee", phone: "", hourlyRate: 0 });
-  const [editForm, setEditForm] = useState({ id: 0, name: "", email: "", role: "employee" as "admin" | "employee", phone: "", hourlyRate: 0, isActive: true });
+  const [page, setPage] = useState(1);
+  const [confirmDelete, setConfirmDelete] = useState<{ id: number; name: string } | null>(null);
+  const [duplicateTarget, setDuplicateTarget] = useState<{ id: number; name: string } | null>(null);
+  const [duplicateEmail, setDuplicateEmail] = useState("");
 
-  const create = api.employees.create.useMutation({
-    onSuccess: () => {
-      toast.success("Employee added");
-      utils.employees.list.invalidate();
-      setCreateOpen(false);
-      setCreateForm({ name: "", email: "", password: "", role: "employee", phone: "", hourlyRate: 0 });
-    },
-    onError: (e) => toast.error(e.message),
+  const [createForm, setCreateForm] = useState({
+    name: "",
+    email: "",
+    password: "",
+    role: "employee" as "admin" | "employee",
+    employeeRole: "",
+    phone: "",
+    hourlyRate: 0,
+    employeeCode: "",
+    hireDate: "",
   });
 
-  const update = api.employees.update.useMutation({
-    onSuccess: () => {
-      toast.success("Employee updated");
+  const list = api.employees.list.useQuery({
+    visibility,
+    search: search.trim() || undefined,
+    position: positionFilter.trim() || undefined,
+    page,
+    pageSize: 25,
+  });
+  const jobs = api.jobs.list.useQuery({ visibility: "active" });
+
+  const create = api.employees.create.useMutation({
+    onSuccess: (employee) => {
+      toast.success("Employee created");
       utils.employees.list.invalidate();
-      setEditOpen(false);
-      setSelectedEmployee(null);
+      setCreateOpen(false);
+      setCreateForm({
+        name: "",
+        email: "",
+        password: "",
+        role: "employee",
+        employeeRole: "",
+        phone: "",
+        hourlyRate: 0,
+        employeeCode: "",
+        hireDate: "",
+      });
+      router.push(`/employees/${employee.id}`);
     },
-    onError: (e) => toast.error(e.message),
+    onError: (error) => toast.error(error.message),
   });
 
   const archive = api.employees.archive.useMutation({
     onSuccess: () => {
       toast.success("Employee archived");
       utils.employees.list.invalidate();
-      setConfirmArchiveOpen(false);
-      setSelectedEmployee(null);
-      setEditOpen(false);
     },
-    onError: (e) => toast.error(e.message),
+    onError: (error) => toast.error(error.message),
   });
 
-  const openEdit = (employee: EmployeeRecord) => {
-    setSelectedEmployee(employee);
-    setEditForm({
-      id: employee.id,
-      name: employee.name,
-      email: employee.email,
-      role: employee.role,
-      phone: employee.phone || "",
-      hourlyRate: Number(employee.hourlyRate ?? 0),
-      isActive: employee.isActive,
-    });
-    setEditOpen(true);
+  const restore = api.employees.restore.useMutation({
+    onSuccess: () => {
+      toast.success("Employee restored");
+      utils.employees.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const remove = api.employees.remove.useMutation({
+    onSuccess: () => {
+      toast.success("Employee deleted");
+      utils.employees.list.invalidate();
+      setConfirmDelete(null);
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const duplicate = api.employees.duplicate.useMutation({
+    onSuccess: (employee) => {
+      toast.success("Employee duplicated");
+      utils.employees.list.invalidate();
+      setDuplicateTarget(null);
+      setDuplicateEmail("");
+      router.push(`/employees/${employee.id}`);
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const bulkArchive = api.employees.bulkArchive.useMutation({
+    onSuccess: () => {
+      toast.success("Selected employees archived");
+      setSelectedIds([]);
+      utils.employees.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const bulkRestore = api.employees.bulkRestore.useMutation({
+    onSuccess: () => {
+      toast.success("Selected employees restored");
+      setSelectedIds([]);
+      utils.employees.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const bulkDelete = api.employees.bulkDelete.useMutation({
+    onSuccess: () => {
+      toast.success("Selected employees deleted");
+      setSelectedIds([]);
+      utils.employees.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const bulkAssignJob = api.employees.bulkAssignJob.useMutation({
+    onSuccess: () => {
+      toast.success("Assigned selected employees to job");
+      setSelectedIds([]);
+      setBulkJobId("");
+      utils.employees.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const rows = list.data?.rows || [];
+  const allSelected = rows.length > 0 && rows.every((row) => selectedIds.includes(row.id));
+
+  const selectedEmployees = useMemo(
+    () => rows.filter((row) => selectedIds.includes(row.id)),
+    [rows, selectedIds]
+  );
+
+  const exportSelected = () => {
+    if (!selectedEmployees.length) return;
+    const headers = ["Name", "Email", "Position", "Status", "Hourly Rate", "Hire Date"];
+    const csvRows = selectedEmployees.map((employee) => [
+      employee.name,
+      employee.email,
+      employee.employeeRole || "",
+      employee.isActive ? "Active" : "Inactive",
+      Number(employee.hourlyRate || 0).toFixed(2),
+      employee.hireDate ? formatDate(employee.hireDate) : "",
+    ]);
+
+    const csv = [headers, ...csvRows]
+      .map((cols) => cols.map((col) => `"${String(col).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "employees-export.csv";
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+
+  const printSelected = () => {
+    if (!selectedEmployees.length) return;
+    const html = `
+      <html>
+        <head><title>Employees Print</title></head>
+        <body>
+          <h1>Employees</h1>
+          <table border="1" cellpadding="6" cellspacing="0">
+            <thead>
+              <tr><th>Name</th><th>Email</th><th>Position</th><th>Status</th><th>Hourly Rate</th><th>Hire Date</th></tr>
+            </thead>
+            <tbody>
+              ${selectedEmployees
+                .map(
+                  (employee) =>
+                    `<tr><td>${employee.name}</td><td>${employee.email}</td><td>${employee.employeeRole || ""}</td><td>${
+                      employee.isActive ? "Active" : "Inactive"
+                    }</td><td>$${Number(employee.hourlyRate || 0).toFixed(2)}</td><td>${
+                      employee.hireDate ? formatDate(employee.hireDate) : ""
+                    }</td></tr>`
+                )
+                .join("")}
+            </tbody>
+          </table>
+        </body>
+      </html>
+    `;
+    const win = window.open("", "_blank");
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    win.print();
   };
 
   return (
     <>
       <PageHeader
         title="Employees"
+        description="Manage workforce records, payroll settings, and assignments"
         actions={
           <div className="flex items-center gap-2">
-            <select className="input w-auto" value={visibility} onChange={(e) => setVisibility(e.target.value as typeof visibility)}>
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-              <option value="all">All</option>
-            </select>
             <button className="btn btn-primary" onClick={() => setCreateOpen(true)}>
-              <Plus className="mr-1 h-4 w-4" /> New employee
+              <Plus className="h-4 w-4 mr-1" /> New Employee
             </button>
           </div>
         }
       />
 
+      <div className="card p-4 mb-4 space-y-3">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <input
+            className="input"
+            placeholder="Search name, email, phone, code"
+            value={search}
+            onChange={(event) => {
+              setSearch(event.target.value);
+              setPage(1);
+            }}
+          />
+          <input
+            className="input"
+            placeholder="Filter by position"
+            value={positionFilter}
+            onChange={(event) => {
+              setPositionFilter(event.target.value);
+              setPage(1);
+            }}
+          />
+          <select
+            className="input"
+            value={visibility}
+            onChange={(event) => {
+              setVisibility(event.target.value as StatusFilter);
+              setPage(1);
+            }}
+          >
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+            <option value="all">All</option>
+          </select>
+          <div className="text-sm text-slate-600 flex items-center justify-end">
+            {list.data ? `${list.data.total} employees` : ""}
+          </div>
+        </div>
+
+        {!!selectedIds.length && (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+            <div className="text-sm font-semibold text-slate-700">Bulk Actions ({selectedIds.length} selected)</div>
+            <div className="flex flex-wrap gap-2">
+              <button className="btn btn-secondary" onClick={() => bulkArchive.mutate({ ids: selectedIds })}>Archive</button>
+              <button className="btn btn-secondary" onClick={() => bulkRestore.mutate({ ids: selectedIds })}>Restore</button>
+              <button className="btn bg-rose-600 text-white hover:bg-rose-700" onClick={() => bulkDelete.mutate({ ids: selectedIds })}>Delete</button>
+              <select className="input w-56" value={bulkJobId} onChange={(event) => setBulkJobId(event.target.value)}>
+                <option value="">Assign to job...</option>
+                {jobs.data?.map((job) => (
+                  <option key={job.id} value={job.id}>{job.name}</option>
+                ))}
+              </select>
+              <button
+                className="btn btn-secondary"
+                disabled={!bulkJobId}
+                onClick={() => bulkAssignJob.mutate({ ids: selectedIds, jobId: Number(bulkJobId) })}
+              >
+                Assign to Job
+              </button>
+              <button className="btn btn-secondary" onClick={exportSelected}>Export</button>
+              <button className="btn btn-secondary" onClick={printSelected}>Print</button>
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="card overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-left">
             <tr>
+              <th className="px-4 py-2">
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={() => {
+                    if (allSelected) {
+                      setSelectedIds((current) => current.filter((id) => !rows.some((row) => row.id === id)));
+                    } else {
+                      setSelectedIds((current) => Array.from(new Set([...current, ...rows.map((row) => row.id)])));
+                    }
+                  }}
+                />
+              </th>
               <th className="px-4 py-2 font-medium">Name</th>
-              <th className="px-4 py-2 font-medium">Email</th>
-              <th className="px-4 py-2 font-medium">Role</th>
+              <th className="px-4 py-2 font-medium">Position</th>
               <th className="px-4 py-2 font-medium">Status</th>
-              <th className="px-4 py-2 font-medium">Phone</th>
-              <th className="px-4 py-2 font-medium text-right">Hourly</th>
+              <th className="px-4 py-2 font-medium">Active Jobs</th>
+              <th className="px-4 py-2 font-medium text-right">Hourly Rate</th>
+              <th className="px-4 py-2 font-medium">Hire Date</th>
               <th className="px-4 py-2 font-medium text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {isLoading ? (
-              <tr><td colSpan={7} className="px-4 py-6 text-slate-500">Loading…</td></tr>
-            ) : data?.length === 0 ? (
-              <tr><td colSpan={7} className="px-4 py-6 text-slate-500">No employees found.</td></tr>
+            {list.isLoading ? (
+              <tr><td colSpan={8} className="px-4 py-6 text-slate-500">Loading…</td></tr>
+            ) : rows.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="px-4 py-8 text-center">
+                  <div className="text-sm font-semibold text-slate-700">No employees found</div>
+                  <div className="mt-1 text-sm text-slate-500">Add your first employee to begin assigning jobs and payroll tracking.</div>
+                </td>
+              </tr>
             ) : (
-              data?.map((employee) => (
-                <tr key={employee.id} className="border-t border-slate-100 hover:bg-slate-50">
-                  <td className="px-4 py-2 font-medium text-slate-900">{employee.name}</td>
-                  <td className="px-4 py-2">{employee.email}</td>
-                  <td className="px-4 py-2 capitalize">{employee.role}</td>
+              rows.map((employee) => (
+                <tr
+                  key={employee.id}
+                  className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer"
+                  onClick={() => router.push(`/employees/${employee.id}`)}
+                >
+                  <td className="px-4 py-2" onClick={(event) => event.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(employee.id)}
+                      onChange={(event) => {
+                        setSelectedIds((current) =>
+                          event.target.checked
+                            ? [...current, employee.id]
+                            : current.filter((id) => id !== employee.id)
+                        );
+                      }}
+                    />
+                  </td>
+                  <td className="px-4 py-2">
+                    <div className="font-medium text-brand-700">{employee.name}</div>
+                    <div className="text-xs text-slate-500">{employee.email}</div>
+                  </td>
+                  <td className="px-4 py-2">{employee.employeeRole || "—"}</td>
                   <td className="px-4 py-2">
                     <span className={`badge ${employee.isActive ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-700"}`}>
                       {employee.isActive ? "Active" : "Inactive"}
                     </span>
                   </td>
-                  <td className="px-4 py-2">{employee.phone || "—"}</td>
-                  <td className="px-4 py-2 text-right">
-                    {employee.hourlyRate != null ? `$${Number(employee.hourlyRate).toFixed(2)}` : "—"}
-                  </td>
-                  <td className="px-4 py-2 text-right">
-                    <div className="inline-flex items-center gap-2">
-                      <button className="btn btn-secondary" type="button" onClick={() => openEdit(employee)}>
-                        Edit
-                      </button>
+                  <td className="px-4 py-2">{employee._count.jobAssignments}</td>
+                  <td className="px-4 py-2 text-right">${Number(employee.hourlyRate || 0).toFixed(2)}</td>
+                  <td className="px-4 py-2">{employee.hireDate ? formatDate(employee.hireDate) : "—"}</td>
+                  <td className="px-4 py-2 text-right" onClick={(event) => event.stopPropagation()}>
+                    <div className="inline-flex gap-2">
+                      <Link href={`/employees/${employee.id}`} className="btn btn-secondary">Edit</Link>
+                      {employee.isActive ? (
+                        <button className="btn btn-secondary" onClick={() => archive.mutate({ id: employee.id })}>Archive</button>
+                      ) : (
+                        <button className="btn btn-secondary" onClick={() => restore.mutate({ id: employee.id })}>Restore</button>
+                      )}
+                      <button className="btn btn-secondary" onClick={() => setDuplicateTarget({ id: employee.id, name: employee.name })}>Duplicate</button>
                       <button
                         className="btn bg-rose-600 text-white hover:bg-rose-700"
-                        type="button"
-                        onClick={() => {
-                          setSelectedEmployee(employee);
-                          setConfirmArchiveOpen(true);
-                        }}
+                        onClick={() => setConfirmDelete({ id: employee.id, name: employee.name })}
                       >
-                        Archive/Delete
+                        Delete
                       </button>
                     </div>
                   </td>
@@ -143,164 +379,121 @@ export default function EmployeesPage() {
         </table>
       </div>
 
-      {createOpen && (
-        <ModalShell title="New employee" onClose={() => setCreateOpen(false)}>
-          <EmployeeFields
-            name={createForm.name}
-            email={createForm.email}
-            phone={createForm.phone}
-            hourlyRate={createForm.hourlyRate}
-            role={createForm.role}
-            isActive
-            password={createForm.password}
-            onChange={(next) => setCreateForm((current) => ({ ...current, ...next }))}
-            createMode
-          />
-          <div className="mt-5 flex justify-end gap-2 border-t border-slate-200 pt-4">
-            <button className="btn btn-secondary" onClick={() => setCreateOpen(false)}>
-              Cancel
-            </button>
-            <button
-              className="btn btn-primary"
-              disabled={create.isPending || !createForm.email || createForm.password.length < 6}
-              onClick={() => create.mutate(createForm)}
-            >
-              {create.isPending ? "Saving…" : "Save"}
-            </button>
-          </div>
-        </ModalShell>
-      )}
+      <div className="mt-3 flex items-center justify-between text-sm text-slate-600">
+        <div>Page {list.data?.page || 1} of {list.data?.pageCount || 1}</div>
+        <div className="flex gap-2">
+          <button className="btn btn-secondary" disabled={(list.data?.page || 1) <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>Previous</button>
+          <button className="btn btn-secondary" disabled={(list.data?.page || 1) >= (list.data?.pageCount || 1)} onClick={() => setPage((p) => p + 1)}>Next</button>
+        </div>
+      </div>
 
-      {editOpen && selectedEmployee ? (
-        <ModalShell title="Edit employee" onClose={() => setEditOpen(false)}>
-          <EmployeeFields
-            name={editForm.name}
-            email={editForm.email}
-            phone={editForm.phone}
-            hourlyRate={editForm.hourlyRate}
-            role={editForm.role}
-            isActive={editForm.isActive}
-            onChange={(next) => setEditForm((current) => ({ ...current, ...next }))}
-          />
-          <div className="mt-5 flex justify-between gap-2 border-t border-slate-200 pt-4">
-            <button
-              className="btn bg-rose-600 text-white hover:bg-rose-700"
-              onClick={() => setConfirmArchiveOpen(true)}
-            >
-              Archive/Delete
-            </button>
-            <div className="flex gap-2">
-              <button className="btn btn-secondary" onClick={() => setEditOpen(false)}>
-                Cancel
-              </button>
+      {createOpen && (
+        <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4">
+          <div className="card w-full max-w-2xl p-6 max-h-[90vh] flex flex-col">
+            <div className="text-lg font-semibold mb-3">New Employee</div>
+            <div className="grid grid-cols-2 gap-3 overflow-y-auto pr-1">
+              <Field label="Full Name" value={createForm.name} onChange={(v) => setCreateForm((f) => ({ ...f, name: v }))} />
+              <Field label="Email" value={createForm.email} onChange={(v) => setCreateForm((f) => ({ ...f, email: v }))} />
+              <Field label="Password" value={createForm.password} onChange={(v) => setCreateForm((f) => ({ ...f, password: v }))} type="password" />
+              <div>
+                <label className="label">Role</label>
+                <select className="input" value={createForm.role} onChange={(event) => setCreateForm((f) => ({ ...f, role: event.target.value as "admin" | "employee" }))}>
+                  <option value="employee">Employee</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <Field label="Position" value={createForm.employeeRole} onChange={(v) => setCreateForm((f) => ({ ...f, employeeRole: v }))} />
+              <Field label="Phone" value={createForm.phone} onChange={(v) => setCreateForm((f) => ({ ...f, phone: v }))} />
+              <Field label="Employee ID" value={createForm.employeeCode} onChange={(v) => setCreateForm((f) => ({ ...f, employeeCode: v }))} />
+              <Field label="Hire Date" value={createForm.hireDate} onChange={(v) => setCreateForm((f) => ({ ...f, hireDate: v }))} type="date" />
+              <Field
+                label="Hourly Rate"
+                value={String(createForm.hourlyRate)}
+                onChange={(v) => setCreateForm((f) => ({ ...f, hourlyRate: Number(v || 0) }))}
+                type="number"
+              />
+            </div>
+            <div className="flex justify-end gap-2 mt-4 pt-4 border-t border-slate-200">
+              <button className="btn btn-secondary" onClick={() => setCreateOpen(false)}>Cancel</button>
               <button
                 className="btn btn-primary"
-                disabled={update.isPending || !editForm.email}
+                disabled={!createForm.name || !createForm.email || createForm.password.length < 6 || create.isPending}
                 onClick={() =>
-                  update.mutate({
-                    id: editForm.id,
-                    data: {
-                      name: editForm.name,
-                      email: editForm.email,
-                      phone: editForm.phone || undefined,
-                      role: editForm.role,
-                      hourlyRate: editForm.hourlyRate,
-                      isActive: editForm.isActive,
-                    },
+                  create.mutate({
+                    name: createForm.name,
+                    email: createForm.email,
+                    password: createForm.password,
+                    role: createForm.role,
+                    employeeRole: createForm.employeeRole || undefined,
+                    phone: createForm.phone || undefined,
+                    hourlyRate: createForm.hourlyRate,
+                    employeeCode: createForm.employeeCode || undefined,
+                    hireDate: createForm.hireDate ? new Date(createForm.hireDate) : undefined,
                   })
                 }
               >
-                {update.isPending ? "Saving…" : "Save"}
+                {create.isPending ? "Creating…" : "Create"}
               </button>
             </div>
           </div>
-        </ModalShell>
-      ) : null}
+        </div>
+      )}
 
       <ConfirmDialog
-        open={confirmArchiveOpen}
-        title="Archive Employee"
-        message="Do you want to archive this employee? They will be hidden from the active list but time entries and payroll history will remain intact."
-        confirmLabel="Archive Employee"
+        open={!!confirmDelete}
+        title="Delete Employee"
+        message={`Delete ${confirmDelete?.name || "employee"}? This is permanent and allowed only if no linked records exist.`}
+        confirmLabel="Delete"
         destructive
-        isPending={archive.isPending}
-        onCancel={() => setConfirmArchiveOpen(false)}
+        isPending={remove.isPending}
+        onCancel={() => setConfirmDelete(null)}
         onConfirm={() => {
-          if (!selectedEmployee) return;
-          archive.mutate({ id: selectedEmployee.id });
+          if (!confirmDelete) return;
+          remove.mutate({ id: confirmDelete.id });
         }}
       />
+
+      {duplicateTarget && (
+        <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4">
+          <div className="card w-full max-w-md p-6">
+            <div className="text-lg font-semibold">Duplicate Employee</div>
+            <p className="text-sm text-slate-600 mt-1">Create a copy of {duplicateTarget.name}. Enter a unique login email.</p>
+            <div className="mt-3">
+              <label className="label">New Email</label>
+              <input className="input" value={duplicateEmail} onChange={(event) => setDuplicateEmail(event.target.value)} type="email" />
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <button className="btn btn-secondary" onClick={() => { setDuplicateTarget(null); setDuplicateEmail(""); }}>Cancel</button>
+              <button
+                className="btn btn-primary"
+                disabled={!duplicateEmail || duplicate.isPending}
+                onClick={() => duplicate.mutate({ id: duplicateTarget.id, email: duplicateEmail })}
+              >
+                {duplicate.isPending ? "Duplicating…" : "Duplicate"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
 
-function ModalShell({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-      <div className="card w-full max-w-xl max-h-[90vh] overflow-hidden flex flex-col">
-        <div className="border-b border-slate-200 px-6 py-4">
-          <div className="text-lg font-semibold">{title}</div>
-        </div>
-        <div className="flex-1 overflow-y-auto px-6 py-4">{children}</div>
-        <div className="border-t border-slate-200 px-6 py-4">
-          <button className="btn btn-secondary" onClick={onClose}>Close</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function EmployeeFields({
-  name,
-  email,
-  phone,
-  hourlyRate,
-  role,
-  isActive,
-  password,
+function Field({
+  label,
+  value,
   onChange,
-  createMode = false,
+  type = "text",
 }: {
-  name: string;
-  email: string;
-  phone: string;
-  hourlyRate: number;
-  role: "admin" | "employee";
-  isActive: boolean;
-  password?: string;
-  onChange: (next: Partial<{ name: string; email: string; phone: string; hourlyRate: number; role: "admin" | "employee"; isActive: boolean; password: string }>) => void;
-  createMode?: boolean;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: string;
 }) {
   return (
-    <div className="space-y-3">
-      <input className="input" placeholder="Name" value={name} onChange={(e) => onChange({ name: e.target.value })} />
-      <input className="input" placeholder="Email" type="email" value={email} onChange={(e) => onChange({ email: e.target.value })} />
-      {createMode ? (
-        <input className="input" placeholder="Password" type="password" value={password || ""} onChange={(e) => onChange({ password: e.target.value })} />
-      ) : null}
-      <select className="input" value={role} onChange={(e) => onChange({ role: e.target.value as "admin" | "employee" })}>
-        {ROLE_OPTIONS.map((option) => (
-          <option key={option.value} value={option.value}>{option.label}</option>
-        ))}
-      </select>
-      <input className="input" placeholder="Phone" value={phone} onChange={(e) => onChange({ phone: e.target.value })} />
-      <input className="input" placeholder="Hourly rate" type="number" step="0.01" value={hourlyRate} onChange={(e) => onChange({ hourlyRate: parseFloat(e.target.value) || 0 })} />
-      {!createMode ? (
-        <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-          <input type="checkbox" checked={isActive} onChange={(e) => onChange({ isActive: e.target.checked })} />
-          Active
-        </label>
-      ) : null}
+    <div>
+      <label className="label">{label}</label>
+      <input className="input" value={value} onChange={(event) => onChange(event.target.value)} type={type} />
     </div>
   );
 }
-
-type EmployeeRecord = {
-  id: number;
-  name: string;
-  email: string;
-  role: "admin" | "employee";
-  phone: string | null;
-  hourlyRate: any;
-  isActive: boolean;
-};
