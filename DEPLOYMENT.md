@@ -156,7 +156,7 @@ That's all you need from Neon. The schema and seed will be created automatically
 3. Framework Preset: **Next.js** (auto-detected).
 4. Root Directory: leave as `./`.
 5. Expand **Build & Output Settings** and set:
-   - **Build Command:** `prisma migrate deploy && prisma db seed && next build`
+   - **Build Command:** `prisma db push && prisma db seed && next build`
    - Install Command, Output Directory: leave defaults.
 6. Expand **Environment Variables** and add the values from section 5 below.
 7. Click **Deploy**.
@@ -164,26 +164,13 @@ That's all you need from Neon. The schema and seed will be created automatically
 The build will:
 - Install dependencies
 - Generate the Prisma client (via `postinstall`)
-- Run `prisma migrate deploy` — applies your migrations to Neon
+- Run `prisma db push` — syncs the schema directly to the existing database
 - Run `prisma db seed` — creates the admin user, sample data, and automation templates
 - Build Next.js
 
 When it's green, click **Visit** to open your live URL.
 
-> First deploy after adding new migrations: same command works. If you ever need to skip seeding on subsequent deploys, change the build command to just `prisma migrate deploy && next build`.
-
-> Initial migration creation: the very first build won't find a migration to deploy because none exists yet. Two ways to handle this:
->
-> **Easiest** — before deploying, run locally:
-> ```bash
-> cp .env.example .env
-> # paste your DIRECT_URL into BOTH DATABASE_URL and DIRECT_URL in .env temporarily
-> npm install
-> npx prisma migrate dev --name init
-> ```
-> This creates `prisma/migrations/<timestamp>_init/`. Commit it and push. Then Vercel's `prisma migrate deploy` has something to apply.
->
-> Keep production deploys on `prisma migrate deploy` to apply tracked, safe migrations.
+> This project is not yet baselined for Prisma Migrate in production. Keep Vercel on `prisma db push` until you create a proper baseline migration procedure.
 
 ---
 
