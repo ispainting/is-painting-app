@@ -6,6 +6,8 @@ import { calculateEmployeeGrossPay } from "@/lib/employee-payroll";
 
 const RoleZ = z.enum(["admin", "employee"]);
 const StatusFilterZ = z.enum(["active", "inactive", "all"]);
+const EmployeeSortByZ = z.enum(["name", "position", "status", "hireDate", "hourlyRate"]);
+const SortDirectionZ = z.enum(["asc", "desc"]);
 const TravelRateTypeZ = z.enum(["regular", "special", "custom"]);
 const DocumentTypeZ = z.enum(["driver_license", "osha_card", "contract", "w9", "i9", "insurance", "custom"]);
 const CertificationStatusZ = z.enum(["active", "expiring_soon", "expired"]);
@@ -118,6 +120,8 @@ export const employeesRouter = router({
           visibility: StatusFilterZ.optional(),
           search: z.string().optional(),
           position: z.string().optional(),
+          sortBy: EmployeeSortByZ.default("name"),
+          sortDir: SortDirectionZ.default("asc"),
           page: z.number().int().min(1).default(1),
           pageSize: z.number().int().min(1).max(100).default(25),
         })
@@ -125,13 +129,11 @@ export const employeesRouter = router({
     )
     .query(async ({ ctx, input }) => {
       const visibility = input?.visibility ?? "active";
-      const where: any = {};
-      if (visibility === "active") where.isActive = true;
-      if (visibility === "inactive") where.isActive = false;
+      const filteredWhere: any = {};
 
       if (input?.search?.trim()) {
         const search = input.search.trim();
-        where.OR = [
+        filteredWhere.OR = [
           { name: { contains: search, mode: "insensitive" } },
           { email: { contains: search, mode: "insensitive" } },
           { phone: { contains: search } },
@@ -141,17 +143,34 @@ export const employeesRouter = router({
       }
 
       if (input?.position?.trim()) {
-        where.employeeRole = { contains: input.position.trim(), mode: "insensitive" };
+        filteredWhere.employeeRole = { contains: input.position.trim(), mode: "insensitive" };
       }
+
+      const where: any = { ...filteredWhere };
+      if (visibility === "active") where.isActive = true;
+      if (visibility === "inactive") where.isActive = false;
+
+      const sortBy = input?.sortBy ?? "name";
+      const sortDir = input?.sortDir ?? "asc";
+      const orderBy: any[] =
+        sortBy === "status"
+          ? [{ isActive: sortDir }, { name: "asc" }]
+          : sortBy === "position"
+            ? [{ employeeRole: sortDir }, { name: "asc" }]
+            : sortBy === "hireDate"
+              ? [{ hireDate: sortDir }, { name: "asc" }]
+              : sortBy === "hourlyRate"
+                ? [{ hourlyRate: sortDir }, { name: "asc" }]
+                : [{ name: sortDir }];
 
       const page = input?.page ?? 1;
       const pageSize = input?.pageSize ?? 25;
 
-      const [total, rows] = await Promise.all([
+      const [total, rows, activeCount, inactiveCount] = await Promise.all([
         ctx.prisma.user.count({ where }),
         ctx.prisma.user.findMany({
           where,
-          orderBy: [{ isActive: "desc" }, { name: "asc" }],
+          orderBy,
           skip: (page - 1) * pageSize,
           take: pageSize,
           select: {
@@ -180,11 +199,15 @@ export const employeesRouter = router({
             },
           },
         }),
+        ctx.prisma.user.count({ where: { ...filteredWhere, isActive: true } }),
+        ctx.prisma.user.count({ where: { ...filteredWhere, isActive: false } }),
       ]);
 
       return {
         rows,
         total,
+        activeCount,
+        inactiveCount,
         page,
         pageSize,
         pageCount: Math.max(1, Math.ceil(total / pageSize)),
@@ -335,20 +358,23 @@ export const employeesRouter = router({
           at: user.createdAt,
           title: "Employee created",
           description: `${user.name} profile was created`,
+          type: "created",
         },
         ...user.employeeActivities.map((activity) => ({
           id: `activity-${activity.id}`,
           at: activity.createdAt,
           title: activity.type.replace(/_/g, " "),
           description: activity.description,
+          type: activity.type,
         })),
         ...timeEntries.slice(0, 120).map((entry) => ({
           id: `clock-${entry.id}`,
           at: entry.clockIn,
           title: "Clock event",
           description: `${entry.job?.name || "No job"} • ${entry.clockOut ? "Clocked out" : "Clocked in"}`,
+          type: "clock",
         })),
-      ].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+      ].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
 
       return {
         employee: user,
@@ -683,6 +709,43 @@ export const employeesRouter = router({
     });
 
     return note;
+  }),
+
+  updateNote: adminProcedure
+    .input(z.object({ id: z.number(), note: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const existing = await ctx.prisma.employeeNote.findUnique({ where: { id: input.id } });
+      if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Note not found" });
+
+      const updated = await ctx.prisma.employeeNote.update({
+        where: { id: input.id },
+        data: { note: input.note.trim() },
+        include: { author: { select: { id: true, name: true } } },
+      });
+
+      await logEmployeeActivity(ctx, {
+        userId: updated.userId,
+        actorId: ctx.session.userId,
+        type: "updated",
+        description: "Updated a private manager note",
+      });
+
+      return updated;
+    }),
+
+  removeNote: adminProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
+    const existing = await ctx.prisma.employeeNote.findUnique({ where: { id: input.id } });
+    if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Note not found" });
+
+    await ctx.prisma.employeeNote.delete({ where: { id: input.id } });
+    await logEmployeeActivity(ctx, {
+      userId: existing.userId,
+      actorId: ctx.session.userId,
+      type: "deleted",
+      description: "Deleted a private manager note",
+    });
+
+    return { ok: true };
   }),
 
   archive: adminProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
