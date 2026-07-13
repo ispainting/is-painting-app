@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { api } from "@/trpc/react";
@@ -790,6 +791,9 @@ export default function ProposalDetailPage() {
         description={`${proposal.proposalNumber} · ${proposal.customer.name}`}
         actions={
           <div className="flex items-center gap-2">
+            <Link href={`/customers/${proposal.customerId}`} className="btn btn-secondary">
+              Open Customer
+            </Link>
             <button
               className="btn bg-rose-600 text-white hover:bg-rose-700"
               type="button"

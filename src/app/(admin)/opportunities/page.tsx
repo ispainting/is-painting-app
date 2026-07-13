@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDate } from "@/lib/utils";
@@ -40,7 +41,9 @@ export default function OpportunitiesPage() {
               {col.items.map((o) => (
                 <div key={o.id} className="card p-3 mb-2 text-sm">
                   <div className="font-medium">{o.name}</div>
-                  <div className="text-xs text-slate-500">{o.customer.name}</div>
+                  <div className="text-xs text-slate-500">
+                    <Link href={`/customers/${o.customerId}`} className="text-brand-700 hover:underline">{o.customer.name}</Link>
+                  </div>
                   <div className="text-xs text-slate-500 mt-1">
                     {o.leadValue ? formatCurrency(Number(o.leadValue)) : ""} · {formatDate(o.createdAt)}
                   </div>

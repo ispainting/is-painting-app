@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDate } from "@/lib/utils";
@@ -32,7 +33,9 @@ export default function InvoicesPage() {
                 <tr key={i.id} className="border-t border-slate-100">
                   <td className="px-4 py-2 font-mono text-xs">{i.invoiceNumber}</td>
                   <td className="px-4 py-2">{i.title}</td>
-                  <td className="px-4 py-2">{i.customer.name}</td>
+                  <td className="px-4 py-2">
+                    <Link href={`/customers/${i.customerId}`} className="text-brand-700 hover:underline">{i.customer.name}</Link>
+                  </td>
                   <td className="px-4 py-2 capitalize">{i.status}</td>
                   <td className="px-4 py-2">{i.dueDate ? formatDate(i.dueDate) : "—"}</td>
                   <td className="px-4 py-2 text-right">{formatCurrency(Number(i.total))}</td>

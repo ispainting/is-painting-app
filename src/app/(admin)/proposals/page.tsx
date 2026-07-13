@@ -140,7 +140,9 @@ export default function ProposalsPage() {
               data?.map((p) => (
                 <tr key={p.id} className="border-t border-slate-100 hover:bg-slate-50">
                   <td className="px-4 py-2 font-mono text-xs">{p.proposalNumber}</td>
-                  <td className="px-4 py-2">{p.customer.name}</td>
+                  <td className="px-4 py-2">
+                    <Link href={`/customers/${p.customerId}`} className="text-brand-700 hover:underline">{p.customer.name}</Link>
+                  </td>
                   <td className="px-4 py-2">
                     <Link href={`/proposals/${p.id}`} className="text-brand-700 hover:underline">{p.projectName}</Link>
                   </td>

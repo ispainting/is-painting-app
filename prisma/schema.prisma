@@ -397,8 +397,18 @@ model Customer {
   source    String?   @db.VarChar(100)
   leadSource String?  @db.VarChar(100)
   referralSource String? @db.VarChar(100)
+  status    String?   @db.VarChar(50)
+  preferredCommunication String? @db.VarChar(30)
   tags      String[]
   notes     String?
+  secondaryPhoneNumbers Json?
+  secondaryEmails Json?
+  properties Json?
+  emergencyContact Json?
+  colorPreferences Json?
+  paintHistory Json?
+  productHistory Json?
+  warrantyHistory Json?
   lastContactAt DateTime?
   nextFollowUpAt DateTime?
   deletedAt DateTime?
@@ -416,6 +426,8 @@ externalId String? @db.VarChar(100)
 
  @@index([deletedAt])
 @@index([name])
+ @@index([status])
+ @@index([leadSource])
 @@unique([externalId])
 }
 
@@ -426,7 +438,10 @@ model CustomerTouchpoint {
   type        CustomerTouchpointType @default(note)
   subject     String?               @db.VarChar(200)
   body        String?               @db.Text
+  isPinned    Boolean               @default(false)
+  metadata    Json?
   occurredAt  DateTime              @default(now())
+  deletedAt   DateTime?
   createdAt   DateTime              @default(now())
   updatedAt   DateTime              @updatedAt
 
@@ -434,6 +449,7 @@ model CustomerTouchpoint {
   createdBy User?    @relation(fields: [createdById], references: [id])
 
   @@index([customerId, occurredAt])
+  @@index([customerId, isPinned])
   @@index([type])
 }
 
@@ -443,13 +459,19 @@ model CustomerFile {
   type       CustomerFileType @default(attachment)
   fileName   String
   fileUrl    String?          @db.Text
+  previewUrl String?          @db.Text
+  mimeType   String?          @db.VarChar(120)
+  category   String?          @db.VarChar(80)
   notes      String?          @db.Text
+  metadata   Json?
+  deletedAt  DateTime?
   createdAt  DateTime         @default(now())
   updatedAt  DateTime         @updatedAt
 
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
   @@index([customerId, type])
+  @@index([customerId, category])
 }
 
 // ─── JOBS ────────────────────────────────────────────

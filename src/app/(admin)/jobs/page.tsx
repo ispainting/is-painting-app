@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api } from "@/trpc/react";
@@ -139,7 +140,15 @@ export default function JobsPage() {
                 >
                   <td className="px-4 py-2 font-mono text-xs">{j.estimateNumber}</td>
                   <td className="px-4 py-2 text-brand-700">{j.name}</td>
-                  <td className="px-4 py-2">{j.customer.name}</td>
+                  <td className="px-4 py-2">
+                    <Link
+                      href={`/customers/${j.customerId}`}
+                      className="text-brand-700 hover:underline"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      {j.customer.name}
+                    </Link>
+                  </td>
                   <td className="px-4 py-2">
                     <span className="badge bg-slate-100 text-slate-700 capitalize">{j.status}</span>
                   </td>
