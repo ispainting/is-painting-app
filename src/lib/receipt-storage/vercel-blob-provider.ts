@@ -8,21 +8,34 @@ import type {
   UploadReceiptResult,
 } from "./types";
 
-function getBlobToken() {
-  const token = process.env.BLOB_READ_WRITE_TOKEN;
-  if (!token) {
-    throw new Error("BLOB_READ_WRITE_TOKEN is required for receipt storage.");
+function getOptionalBlobToken() {
+  const token = process.env.BLOB_READ_WRITE_TOKEN?.trim();
+  return token ? token : undefined;
+}
+
+function toStorageError(error: unknown): Error {
+  if (error instanceof Error) {
+    if (error.message.toLowerCase().includes("token")) {
+      return new Error(
+        "Vercel Blob credentials are not available. Ensure Blob is connected to this project in Vercel, or set BLOB_READ_WRITE_TOKEN for local/non-integrated environments."
+      );
+    }
+    return error;
   }
-  return token;
+  return new Error("Vercel Blob operation failed.");
 }
 
 async function fetchBlobObject(objectKey: string): Promise<ReceiptObject> {
-  const token = getBlobToken();
-  const result = await get(objectKey, {
-    access: "private",
-    token,
-    useCache: false,
-  });
+  let result;
+  try {
+    result = await get(objectKey, {
+      access: "private",
+      token: getOptionalBlobToken(),
+      useCache: false,
+    });
+  } catch (error) {
+    throw toStorageError(error);
+  }
 
   if (!result || result.statusCode !== 200 || !result.stream) {
     throw new Error("Blob fetch failed.");
@@ -40,15 +53,18 @@ async function fetchBlobObject(objectKey: string): Promise<ReceiptObject> {
 
 export class VercelBlobReceiptStorageProvider implements ReceiptStorageProvider {
   async upload(input: UploadReceiptInput): Promise<UploadReceiptResult> {
-    const token = getBlobToken();
-
-    const withBuffer = await put(input.objectKey, Buffer.from(input.data), {
-      token,
-      contentType: input.contentType,
-      addRandomSuffix: false,
-      access: "private",
-      cacheControlMaxAge: 0,
-    });
+    let withBuffer;
+    try {
+      withBuffer = await put(input.objectKey, Buffer.from(input.data), {
+        token: getOptionalBlobToken(),
+        contentType: input.contentType,
+        addRandomSuffix: false,
+        access: "private",
+        cacheControlMaxAge: 0,
+      });
+    } catch (error) {
+      throw toStorageError(error);
+    }
 
     return {
       objectKey: withBuffer.pathname,
@@ -65,8 +81,11 @@ export class VercelBlobReceiptStorageProvider implements ReceiptStorageProvider 
   }
 
   async delete(objectKey: string): Promise<void> {
-    const token = getBlobToken();
-    await del(objectKey, { token });
+    try {
+      await del(objectKey, { token: getOptionalBlobToken() });
+    } catch (error) {
+      throw toStorageError(error);
+    }
   }
 
   async replace(input: ReplaceReceiptInput): Promise<UploadReceiptResult> {
