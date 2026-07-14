@@ -22,10 +22,6 @@ export const SUPPORTED_EXPENSE_UPLOAD_FORMATS = [
   "HEIC/HEIF (.heic, .heif)",
 ] as const;
 
-export function getExpenseStorageRoot() {
-  return process.env.EXPENSE_STORAGE_DIR || path.join(process.cwd(), "storage", "expenses");
-}
-
 export function sanitizeOriginalFilename(input: string) {
   const base = path.basename(input || "receipt");
   return base.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 180) || "receipt";
@@ -67,7 +63,10 @@ export function validateExpenseUpload(file: { fileName: string; mimeType: string
 }
 
 export function buildStoredAttachmentName(extension: string) {
-  return `${Date.now()}-${randomUUID()}${extension}`;
+  const now = new Date();
+  const yyyy = String(now.getUTCFullYear());
+  const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
+  return `expense-receipts/${yyyy}/${mm}/${Date.now()}-${randomUUID()}${extension}`;
 }
 
 export function getAttachmentDownloadUrl(id: number) {

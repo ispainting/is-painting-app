@@ -1,11 +1,9 @@
-import { unlink } from "node:fs/promises";
-import path from "node:path";
 import { ExpenseCategory, ExpenseStatus } from "@prisma/client";
 import { z } from "zod";
 import {
   getAttachmentDownloadUrl,
-  getExpenseStorageRoot,
 } from "@/lib/expense-attachments";
+import { getReceiptStorageProvider } from "@/lib/receipt-storage";
 import { adminProcedure, protectedProcedure, router } from "../trpc";
 
 const listInput = z
@@ -202,6 +200,7 @@ export const expensesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      const provider = getReceiptStorageProvider();
       const expense = await ctx.prisma.expense.findUnique({
         where: { id: input.expenseId },
         select: { id: true, submittedById: true },
@@ -211,13 +210,24 @@ export const expensesRouter = router({
         throw new Error("You do not have permission to edit this expense.");
       }
 
-      const newAttachment = await ctx.prisma.expenseAttachment.findUnique({
+      const [newAttachment, oldAttachment] = await Promise.all([
+        ctx.prisma.expenseAttachment.findUnique({
         where: { id: input.newAttachmentId },
         select: { id: true, uploadedById: true },
-      });
+        }),
+        input.oldAttachmentId
+          ? ctx.prisma.expenseAttachment.findFirst({
+              where: { id: input.oldAttachmentId, expenseId: input.expenseId },
+              select: { id: true, storagePath: true },
+            })
+          : Promise.resolve(null),
+      ]);
       if (!newAttachment) throw new Error("Replacement attachment not found.");
       if (ctx.session.role === "employee" && newAttachment.uploadedById !== ctx.session.userId) {
         throw new Error("You do not have permission to use this attachment.");
+      }
+      if (input.oldAttachmentId && !oldAttachment) {
+        throw new Error("Current attachment was not found on this expense.");
       }
 
       await ctx.prisma.$transaction(async (tx) => {
@@ -226,14 +236,8 @@ export const expensesRouter = router({
           data: { expenseId: input.expenseId },
         });
 
-        if (input.oldAttachmentId) {
-          await tx.expenseAttachment.updateMany({
-            where: {
-              id: input.oldAttachmentId,
-              expenseId: input.expenseId,
-            },
-            data: { expenseId: null },
-          });
+        if (oldAttachment) {
+          await tx.expenseAttachment.delete({ where: { id: oldAttachment.id } });
         }
 
         await tx.expense.update({
@@ -242,12 +246,17 @@ export const expensesRouter = router({
         });
       });
 
+      if (oldAttachment) {
+        await provider.delete(oldAttachment.storagePath).catch(() => undefined);
+      }
+
       return { ok: true };
     }),
 
   deleteAttachment: protectedProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {
+      const provider = getReceiptStorageProvider();
       const attachment = await ctx.prisma.expenseAttachment.findUnique({
         where: { id: input.id },
         select: {
@@ -281,8 +290,7 @@ export const expensesRouter = router({
         }
       });
 
-      const filePath = path.join(getExpenseStorageRoot(), attachment.storagePath);
-      await unlink(filePath).catch(() => undefined);
+      await provider.delete(attachment.storagePath).catch(() => undefined);
 
       return { ok: true };
     }),

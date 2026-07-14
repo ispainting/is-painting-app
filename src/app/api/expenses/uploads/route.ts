@@ -1,14 +1,12 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getSessionFromRequest } from "@/lib/auth";
 import {
   buildStoredAttachmentName,
-  getExpenseStorageRoot,
   sanitizeOriginalFilename,
   validateExpenseUpload,
 } from "@/lib/expense-attachments";
+import { getReceiptStorageProvider } from "@/lib/receipt-storage";
 
 export const runtime = "nodejs";
 
@@ -37,20 +35,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: validation.reason }, { status: 400 });
     }
 
-    const storageRoot = getExpenseStorageRoot();
-    const fileName = buildStoredAttachmentName(validation.extension);
-    const relativePath = fileName;
-    const targetPath = path.join(storageRoot, relativePath);
-
-    await mkdir(storageRoot, { recursive: true });
-
-    const bytes = new Uint8Array(await raw.arrayBuffer());
-    await writeFile(targetPath, bytes);
+    const provider = getReceiptStorageProvider();
+    const objectKey = buildStoredAttachmentName(validation.extension);
+    const bytes = await raw.arrayBuffer();
+    const uploaded = await provider.upload({
+      objectKey,
+      data: bytes,
+      contentType: validation.mimeType,
+      originalFilename,
+    });
 
     const attachment = await prisma.expenseAttachment.create({
       data: {
         originalFilename,
-        storagePath: relativePath,
+        storagePath: uploaded.objectKey,
         mimeType: validation.mimeType,
         sizeBytes: raw.size,
         uploadedById: session.userId,

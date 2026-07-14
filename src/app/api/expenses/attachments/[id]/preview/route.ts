@@ -1,9 +1,7 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getSessionFromRequest } from "@/lib/auth";
-import { getExpenseStorageRoot } from "@/lib/expense-attachments";
+import { getReceiptStorageProvider } from "@/lib/receipt-storage";
 
 export const runtime = "nodejs";
 
@@ -47,11 +45,20 @@ export async function GET(req: Request, { params }: Params) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const filePath = path.join(getExpenseStorageRoot(), attachment.storagePath);
+  const provider = getReceiptStorageProvider();
 
   try {
-    const data = await readFile(filePath);
-    return new Response(data, {
+    const protectedUrl = await provider.getProtectedUrl({
+      objectKey: attachment.storagePath,
+      disposition: "inline",
+      filename: attachment.originalFilename,
+    });
+    if (protectedUrl) {
+      return NextResponse.redirect(protectedUrl);
+    }
+
+    const object = await provider.preview(attachment.storagePath);
+    return new Response(object.data, {
       status: 200,
       headers: {
         "Content-Type": attachment.mimeType,
@@ -60,6 +67,6 @@ export async function GET(req: Request, { params }: Params) {
       },
     });
   } catch {
-    return NextResponse.json({ error: "File is missing from storage." }, { status: 404 });
+    return NextResponse.json({ error: "File is missing from object storage." }, { status: 404 });
   }
 }
