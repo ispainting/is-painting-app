@@ -28,6 +28,21 @@ export function verifySession(token: string): SessionPayload | null {
   }
 }
 
+export function getSessionFromRequest(req: Request): SessionPayload | null {
+  const cookieHeader = req.headers.get("cookie");
+  if (!cookieHeader) return null;
+
+  const cookieValue = cookieHeader
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${COOKIE}=`));
+
+  if (!cookieValue) return null;
+
+  const token = decodeURIComponent(cookieValue.split("=").slice(1).join("="));
+  return verifySession(token);
+}
+
 export async function getSession(): Promise<SessionPayload | null> {
   const c = cookies().get(COOKIE);
   if (!c?.value) return null;
