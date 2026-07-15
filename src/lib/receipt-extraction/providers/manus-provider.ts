@@ -50,8 +50,18 @@ function ensureSupportedMime(mimeType: string) {
 
 function getApiKey() {
   const key = process.env.MANUS_API_KEY?.trim();
+  const keyState = key ? "FOUND" : "MISSING";
+  console.info("[receipt-extraction] MANUS_API_KEY", keyState, {
+    vercelEnv: process.env.VERCEL_ENV ?? null,
+    nodeEnv: process.env.NODE_ENV ?? null,
+  });
   if (!key) {
-    throw new ManusReceiptError("AI provider unavailable: MANUS_API_KEY is missing.", "missing_api_key");
+    const vercelEnv = process.env.VERCEL_ENV?.trim() || "unknown";
+    const nodeEnv = process.env.NODE_ENV?.trim() || "unknown";
+    throw new ManusReceiptError(
+      `AI provider unavailable: MANUS_API_KEY is missing. MANUS_API_KEY = ${keyState}. VERCEL_ENV = ${vercelEnv}. NODE_ENV = ${nodeEnv}.`,
+      "missing_api_key",
+    );
   }
   return key;
 }
