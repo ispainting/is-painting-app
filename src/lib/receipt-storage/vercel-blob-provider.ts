@@ -8,6 +8,8 @@ import type {
   UploadReceiptResult,
 } from "./types";
 
+const BLOB_UPLOAD_TIMEOUT_MS = 45_000;
+
 function getOptionalBlobToken() {
   const token = process.env.BLOB_READ_WRITE_TOKEN?.trim();
   return token ? token : undefined;
@@ -53,6 +55,9 @@ async function fetchBlobObject(objectKey: string): Promise<ReceiptObject> {
 
 export class VercelBlobReceiptStorageProvider implements ReceiptStorageProvider {
   async upload(input: UploadReceiptInput): Promise<UploadReceiptResult> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), BLOB_UPLOAD_TIMEOUT_MS);
+
     let withBuffer;
     try {
       withBuffer = await put(input.objectKey, Buffer.from(input.data), {
@@ -61,9 +66,15 @@ export class VercelBlobReceiptStorageProvider implements ReceiptStorageProvider 
         addRandomSuffix: false,
         access: "private",
         cacheControlMaxAge: 0,
+        abortSignal: controller.signal,
       });
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new Error(`Blob upload timed out after ${Math.round(BLOB_UPLOAD_TIMEOUT_MS / 1000)} seconds.`);
+      }
       throw toStorageError(error);
+    } finally {
+      clearTimeout(timeout);
     }
 
     return {

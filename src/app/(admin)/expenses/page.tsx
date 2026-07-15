@@ -49,6 +49,8 @@ const CATEGORY_OPTIONS = [
 ] as const;
 
 const STATUS_OPTIONS = ["pending", "approved", "rejected"] as const;
+const UPLOAD_REQUEST_TIMEOUT_MS = 60_000;
+const SUCCESS_UPLOAD_ROW_TTL_MS = 1_200;
 
 export default function ExpensesPage() {
   const utils = api.useUtils();
@@ -196,9 +198,14 @@ export default function ExpensesPage() {
     next.forEach((item) => startUpload(item));
   }
 
+  function removeUpload(id: string) {
+    setUploads((prev) => prev.filter((u) => u.id !== id));
+  }
+
   function startUpload(item: UploadItem) {
     const xhr = new XMLHttpRequest();
     xhrMap.current.set(item.id, xhr);
+    xhr.timeout = UPLOAD_REQUEST_TIMEOUT_MS;
 
     setUploads((prev) =>
       prev.map((u) => (u.id === item.id ? { ...u, status: "uploading", progress: 0, error: undefined } : u))
@@ -227,7 +234,14 @@ export default function ExpensesPage() {
               : u
           )
         );
-        void utils.expenses.meta.invalidate();
+        setTimeout(() => removeUpload(item.id), SUCCESS_UPLOAD_ROW_TTL_MS);
+        setSelectedAttachmentIds((prev) => Array.from(new Set([...prev, json.attachment!.id])));
+        void Promise.all([
+          utils.expenses.meta.invalidate(),
+          utils.expenses.stats.invalidate(),
+          utils.expenses.list.invalidate(),
+        ]);
+        toast.success("Receipt uploaded. Review and save the expense details.");
 
         if (replacementTarget) {
           replaceAttachment.mutate({
@@ -235,6 +249,8 @@ export default function ExpensesPage() {
             newAttachmentId: json.attachment.id,
             oldAttachmentId: replacementTarget.oldAttachmentId,
           });
+        } else {
+          setShowAddExpense(true);
         }
       } else {
         setUploads((prev) =>
@@ -248,12 +264,26 @@ export default function ExpensesPage() {
               : u
           )
         );
+        toast.error(json.error || "Upload failed");
       }
     };
 
     xhr.onerror = () => {
       xhrMap.current.delete(item.id);
       setUploads((prev) => prev.map((u) => (u.id === item.id ? { ...u, status: "failed", error: "Network error" } : u)));
+      toast.error("Network error while uploading receipt");
+    };
+
+    xhr.ontimeout = () => {
+      xhrMap.current.delete(item.id);
+      setUploads((prev) =>
+        prev.map((u) =>
+          u.id === item.id
+            ? { ...u, status: "failed", error: "Upload request timed out. Please retry." }
+            : u
+        )
+      );
+      toast.error("Upload timed out. Please retry.");
     };
 
     xhr.onabort = () => {
