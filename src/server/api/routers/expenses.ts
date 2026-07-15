@@ -294,6 +294,7 @@ export const expensesRouter = router({
         },
       });
 
+      const extractionStartedAt = Date.now();
       try {
         const object = await provider.download(attachment.storagePath);
         const jobs = await ctx.prisma.job.findMany({
@@ -327,6 +328,18 @@ export const expensesRouter = router({
           },
         });
 
+        console.info("[receipt-extraction] completed", {
+          attachmentId: attachment.id,
+          provider: extracted.provider,
+          model: extracted.model,
+          taskId: extracted.metadata?.taskId ?? null,
+          creditsUsed: extracted.metadata?.creditsUsed ?? null,
+          durationMs: extracted.metadata?.durationMs ?? (Date.now() - extractionStartedAt),
+          success: extracted.metadata?.success ?? true,
+          status: extracted.metadata?.status ?? status,
+          overallConfidence: extracted.normalized.overallConfidence,
+        });
+
         return {
           status,
           attachmentId: attachment.id,
@@ -346,13 +359,26 @@ export const expensesRouter = router({
           },
         });
 
+        console.warn("[receipt-extraction] failed", {
+          attachmentId: attachment.id,
+          provider: "manus",
+          model: "manus-1.6",
+          taskId: null,
+          creditsUsed: null,
+          durationMs: Date.now() - extractionStartedAt,
+          success: false,
+          status: "failed",
+          overallConfidence: null,
+          error: message,
+        });
+
         return {
           status: "failed" as const,
           attachmentId: attachment.id,
           message,
           data: null,
-          provider: process.env.RECEIPT_EXTRACTION_PROVIDER?.trim().toLowerCase() || "openai",
-          model: process.env.RECEIPT_EXTRACTION_OPENAI_MODEL?.trim() || "gpt-4.1-mini",
+          provider: "manus",
+          model: "manus-1.6",
         };
       }
     }),

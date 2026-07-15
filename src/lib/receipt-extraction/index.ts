@@ -1,16 +1,8 @@
-import { OpenAiReceiptExtractionProvider } from "./providers/openai-provider";
+import { ManusReceiptExtractionProvider } from "./providers/manus-provider";
 import type { ReceiptExtractionInput, ReceiptExtractionProvider } from "./types";
 
-function getProviderName() {
-  return process.env.RECEIPT_EXTRACTION_PROVIDER?.trim().toLowerCase() || "openai";
-}
-
 function createProvider(): ReceiptExtractionProvider {
-  const provider = getProviderName();
-  if (provider === "openai") {
-    return new OpenAiReceiptExtractionProvider();
-  }
-  throw new Error(`Unsupported receipt extraction provider: ${provider}`);
+  return new ManusReceiptExtractionProvider();
 }
 
 let singleton: ReceiptExtractionProvider | null = null;

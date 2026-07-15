@@ -16,7 +16,7 @@ Total time: ~10 minutes if everything goes well.
 What WON'T work without extra setup (all optional):
 - SMS via Twilio (needs `TWILIO_*` env vars)
 - Email via SMTP (needs `SMTP_*` env vars)
-- Receipt OCR / AI extraction (not wired in MVP)
+- Receipt OCR / AI extraction (needs Manus API env vars)
 - Cloudflare R2 file uploads (needs `R2_*` env vars)
 - Google Maps geofencing display (needs `NEXT_PUBLIC_GOOGLE_MAPS_KEY`)
 
@@ -192,6 +192,10 @@ Add these in Vercel under **Project → Settings → Environment Variables** (or
 
 | Name | What it enables |
 |---|---|
+| `MANUS_API_KEY` | Receipt OCR / AI extraction via Manus API v2 |
+| `MANUS_API_BASE_URL` | Manus API base URL (`https://api.manus.ai`) |
+| `MANUS_RECEIPT_TIMEOUT_MS` | Extraction hard timeout in milliseconds (example: `90000`) |
+| `MANUS_RECEIPT_POLL_INTERVAL_MS` | Poll interval in milliseconds for async task status (example: `1500`) |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` | SMS automation steps |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Email automation steps |
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_URL` | Receipt + check photo uploads |

@@ -29,6 +29,7 @@ export const normalizedReceiptExtractionSchema = z.object({
   total: extractionFieldSchema(z.number()),
   paymentMethod: extractionFieldSchema(z.string().trim().max(120)),
   receiptNumber: extractionFieldSchema(z.string().trim().max(120)),
+  invoiceNumber: extractionFieldSchema(z.string().trim().max(120)),
   category: extractionFieldSchema(z.string().trim().max(100)),
   description: extractionFieldSchema(z.string().trim().max(500)),
   items: z.array(extractionLineItemSchema),
@@ -52,6 +53,13 @@ export type ReceiptExtractionResult = {
   provider: string;
   model: string;
   needsReview: boolean;
+  metadata?: {
+    taskId: string | null;
+    creditsUsed: number | null;
+    durationMs: number;
+    success: boolean;
+    status: string | null;
+  };
 };
 
 export interface ReceiptExtractionProvider {
@@ -66,6 +74,7 @@ export type ExtractionConfidenceByField = {
   total: number;
   paymentMethod: number;
   receiptNumber: number;
+  invoiceNumber: number;
   category: number;
   description: number;
   overallConfidence: number;
@@ -82,6 +91,7 @@ export function buildConfidenceByField(
     total: normalized.total.confidence,
     paymentMethod: normalized.paymentMethod.confidence,
     receiptNumber: normalized.receiptNumber.confidence,
+    invoiceNumber: normalized.invoiceNumber.confidence,
     category: normalized.category.confidence,
     description: normalized.description.confidence,
     overallConfidence: normalized.overallConfidence,

@@ -21,6 +21,7 @@ const rawExtractionSchema = z.object({
   total: z.object({ value: z.union([z.number(), z.string(), z.null()]).optional(), confidence: z.union([z.number(), z.string()]).optional() }).optional(),
   paymentMethod: z.object({ value: z.union([z.string(), z.null()]).optional(), confidence: z.union([z.number(), z.string()]).optional() }).optional(),
   receiptNumber: z.object({ value: z.union([z.string(), z.null()]).optional(), confidence: z.union([z.number(), z.string()]).optional() }).optional(),
+  invoiceNumber: z.object({ value: z.union([z.string(), z.null()]).optional(), confidence: z.union([z.number(), z.string()]).optional() }).optional(),
   category: z.object({ value: z.union([z.string(), z.null()]).optional(), confidence: z.union([z.number(), z.string()]).optional() }).optional(),
   description: z.object({ value: z.union([z.string(), z.null()]).optional(), confidence: z.union([z.number(), z.string()]).optional() }).optional(),
   items: z.array(rawLineItemSchema).optional(),
@@ -150,6 +151,10 @@ export function normalizeExtractionResponse(input: unknown, jobs: Array<{ id: nu
     receiptNumber: {
       value: toStringValue(parsed.receiptNumber?.value, 120),
       confidence: clampConfidence(parsed.receiptNumber?.confidence),
+    },
+    invoiceNumber: {
+      value: toStringValue(parsed.invoiceNumber?.value, 120),
+      confidence: clampConfidence(parsed.invoiceNumber?.confidence),
     },
     category: {
       value: normalizeCategory(parsed.category?.value),
