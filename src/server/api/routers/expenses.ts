@@ -1,8 +1,9 @@
-import { ExpenseCategory, ExpenseStatus } from "@prisma/client";
+import { ExpenseCategory, ExpenseStatus, Prisma } from "@prisma/client";
 import { z } from "zod";
 import {
   getAttachmentDownloadUrl,
 } from "@/lib/expense-attachments";
+import { buildConfidenceByField, extractReceipt } from "@/lib/receipt-extraction";
 import { getReceiptStorageProvider } from "@/lib/receipt-storage";
 import { adminProcedure, protectedProcedure, router } from "../trpc";
 
@@ -25,13 +26,28 @@ const createInput = z.object({
   expenseDate: z.coerce.date(),
   description: z.string().trim().max(500).optional(),
   amount: z.number().positive(),
+  subtotal: z.number().nonnegative().optional(),
+  tax: z.number().nonnegative().optional(),
   category: z.nativeEnum(ExpenseCategory),
   paymentMethod: z.string().trim().max(120).optional(),
+  receiptNumber: z.string().trim().max(100).optional(),
+  invoiceNumber: z.string().trim().max(100).optional(),
   jobId: z.number().int().positive().optional(),
   employeeId: z.number().int().positive().optional(),
   notes: z.string().trim().max(2000).optional(),
   status: z.nativeEnum(ExpenseStatus).optional(),
   attachmentIds: z.array(z.number().int().positive()).default([]),
+  extractedRawText: z.string().trim().optional(),
+  extractedStructured: z.unknown().optional(),
+  extractedConfidence: z.number().min(0).max(1).optional(),
+  lineItems: z.array(
+    z.object({
+      description: z.string().trim().min(1).max(300),
+      quantity: z.number().nonnegative().nullable().optional(),
+      unitPrice: z.number().nonnegative().nullable().optional(),
+      totalPrice: z.number().nonnegative().nullable().optional(),
+    })
+  ).default([]),
 });
 
 export const expensesRouter = router({
@@ -134,6 +150,10 @@ export const expensesRouter = router({
           mimeType: true,
           sizeBytes: true,
           uploadedAt: true,
+          extractionStatus: true,
+          extractionError: true,
+          extractionConfidence: true,
+          extractionProcessedAt: true,
         },
       }),
     ]);
@@ -145,19 +165,40 @@ export const expensesRouter = router({
     const attachmentIds = Array.from(new Set(input.attachmentIds));
     const isEmployee = ctx.session.role === "employee";
 
-    let attachments: Array<{ id: number }> = [];
+    let attachments: Array<{
+      id: number;
+      extractionRawText: string | null;
+      extractionStructured: Prisma.JsonValue | null;
+      extractionConfidence: Prisma.Decimal | null;
+    }> = [];
     if (attachmentIds.length > 0) {
       attachments = await ctx.prisma.expenseAttachment.findMany({
         where: {
           id: { in: attachmentIds },
           ...(isEmployee ? { uploadedById: ctx.session.userId } : {}),
         },
-        select: { id: true },
+        select: {
+          id: true,
+          extractionRawText: true,
+          extractionStructured: true,
+          extractionConfidence: true,
+        },
       });
       if (attachments.length !== attachmentIds.length) {
         throw new Error("One or more attachments were not found or are inaccessible.");
       }
     }
+
+    const primaryAttachment = attachments[0];
+    const inputStructured = input.extractedStructured === undefined
+      ? undefined
+      : (input.extractedStructured as Prisma.InputJsonValue);
+    const attachmentStructured = primaryAttachment?.extractionStructured == null
+      ? undefined
+      : (primaryAttachment.extractionStructured as Prisma.InputJsonValue);
+    const attachmentConfidence = primaryAttachment?.extractionConfidence == null
+      ? undefined
+      : Number(primaryAttachment.extractionConfidence);
 
     return ctx.prisma.$transaction(async (tx) => {
       const expense = await tx.expense.create({
@@ -166,12 +207,22 @@ export const expensesRouter = router({
           expenseDate: input.expenseDate,
           description: input.description,
           amount: input.amount,
+          subtotal: input.subtotal,
+          tax: input.tax,
           category: input.category,
           paymentMethod: input.paymentMethod,
+          receiptNumber: input.receiptNumber,
+          invoiceNumber: input.invoiceNumber,
           jobId: input.jobId,
           employeeId: isEmployee ? ctx.session.userId : input.employeeId,
           submittedById: ctx.session.userId,
           notes: input.notes,
+          extractedData: inputStructured ?? attachmentStructured,
+          ocrRawText: input.extractedRawText ?? primaryAttachment?.extractionRawText,
+          ocrStructured: inputStructured ?? attachmentStructured,
+          ocrConfidence:
+            input.extractedConfidence
+            ?? attachmentConfidence,
           status: input.status ?? "pending",
           receiptUrl:
             attachmentIds.length > 0
@@ -187,9 +238,124 @@ export const expensesRouter = router({
         });
       }
 
+      if (input.lineItems.length > 0) {
+        await tx.expenseLineItem.createMany({
+          data: input.lineItems.map((item) => ({
+            expenseId: expense.id,
+            description: item.description,
+            quantity: item.quantity ?? null,
+            unitPrice: item.unitPrice ?? null,
+            total: item.totalPrice ?? null,
+          })),
+        });
+      }
+
       return expense;
     });
   }),
+
+  extractReceipt: protectedProcedure
+    .input(z.object({ attachmentId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const provider = getReceiptStorageProvider();
+      const attachment = await ctx.prisma.expenseAttachment.findUnique({
+        where: { id: input.attachmentId },
+        select: {
+          id: true,
+          uploadedById: true,
+          storagePath: true,
+          originalFilename: true,
+          mimeType: true,
+          extractionStatus: true,
+          expense: {
+            select: { submittedById: true },
+          },
+        },
+      });
+
+      if (!attachment) {
+        throw new Error("Attachment not found.");
+      }
+
+      const canAccess =
+        ctx.session.role === "admin"
+        || attachment.uploadedById === ctx.session.userId
+        || attachment.expense?.submittedById === ctx.session.userId;
+      if (!canAccess) {
+        throw new Error("Forbidden");
+      }
+
+      await ctx.prisma.expenseAttachment.update({
+        where: { id: attachment.id },
+        data: {
+          extractionStatus: "processing",
+          extractionError: null,
+          extractionStartedAt: new Date(),
+        },
+      });
+
+      try {
+        const object = await provider.download(attachment.storagePath);
+        const jobs = await ctx.prisma.job.findMany({
+          where: { deletedAt: null },
+          select: { id: true, name: true },
+          orderBy: { name: "asc" },
+          take: 500,
+        });
+
+        const extracted = await extractReceipt({
+          attachmentId: attachment.id,
+          originalFilename: attachment.originalFilename,
+          mimeType: attachment.mimeType,
+          fileData: object.data,
+          jobOptions: jobs,
+        });
+
+        const status = extracted.needsReview ? "needs_review" : "completed";
+        await ctx.prisma.expenseAttachment.update({
+          where: { id: attachment.id },
+          data: {
+            extractionStatus: status,
+            extractionRawText: extracted.normalized.rawText,
+            extractionStructured: extracted.normalized,
+            extractionConfidence: extracted.normalized.overallConfidence,
+            extractionConfidenceByField: buildConfidenceByField(extracted.normalized),
+            extractionProvider: extracted.provider,
+            extractionModel: extracted.model,
+            extractionError: null,
+            extractionProcessedAt: new Date(),
+          },
+        });
+
+        return {
+          status,
+          attachmentId: attachment.id,
+          message: status === "needs_review" ? "Receipt extracted with low confidence. Needs review." : "Receipt extracted successfully.",
+          data: extracted.normalized,
+          provider: extracted.provider,
+          model: extracted.model,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Receipt extraction failed.";
+        await ctx.prisma.expenseAttachment.update({
+          where: { id: attachment.id },
+          data: {
+            extractionStatus: "failed",
+            extractionError: message,
+            extractionProcessedAt: new Date(),
+          },
+        });
+
+        return {
+          status: "failed" as const,
+          attachmentId: attachment.id,
+          message,
+          data: null,
+          provider: process.env.RECEIPT_EXTRACTION_PROVIDER?.trim().toLowerCase() || "openai",
+          model: process.env.RECEIPT_EXTRACTION_OPENAI_MODEL?.trim() || "gpt-4.1-mini",
+        };
+      }
+    }),
 
   replaceAttachment: protectedProcedure
     .input(

@@ -185,6 +185,14 @@ enum ExpenseUploadStatus {
   failed
 }
 
+enum ReceiptExtractionStatus {
+  queued
+  processing
+  completed
+  failed
+  needs_review
+}
+
 enum InventoryCategory {
   paint
   primer
@@ -982,14 +990,24 @@ model Expense {
 }
 
 model ExpenseAttachment {
-  id               Int      @id @default(autoincrement())
-  expenseId        Int?
-  uploadedById     Int
-  originalFilename String
-  storagePath      String   @unique
-  mimeType         String   @db.VarChar(120)
-  sizeBytes        Int
-  uploadedAt       DateTime @default(now())
+  id                          Int                     @id @default(autoincrement())
+  expenseId                   Int?
+  uploadedById                Int
+  originalFilename            String
+  storagePath                 String                  @unique
+  mimeType                    String                  @db.VarChar(120)
+  sizeBytes                   Int
+  extractionStatus            ReceiptExtractionStatus @default(queued)
+  extractionRawText           String?                 @db.Text
+  extractionStructured        Json?
+  extractionConfidence        Decimal?                @db.Decimal(5, 4)
+  extractionConfidenceByField Json?
+  extractionProvider          String?                 @db.VarChar(80)
+  extractionModel             String?                 @db.VarChar(120)
+  extractionError             String?                 @db.Text
+  extractionStartedAt         DateTime?
+  extractionProcessedAt       DateTime?
+  uploadedAt                  DateTime                @default(now())
 
   expense    Expense? @relation(fields: [expenseId], references: [id], onDelete: SetNull)
   uploadedBy User     @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
@@ -997,6 +1015,8 @@ model ExpenseAttachment {
   @@index([expenseId])
   @@index([uploadedById])
   @@index([uploadedAt])
+  @@index([extractionStatus])
+  @@index([extractionProcessedAt])
 }
 
 model ExpenseReceiptUpload {

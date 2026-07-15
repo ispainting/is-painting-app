@@ -7,6 +7,7 @@ import { formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
 
 type UploadState = "queued" | "uploading" | "success" | "failed" | "canceled";
+type ExtractionStatus = "idle" | "queued" | "processing" | "completed" | "failed" | "needs_review";
 
 type UploadItem = {
   id: string;
@@ -15,6 +16,60 @@ type UploadItem = {
   progress: number;
   error?: string;
   attachmentId?: number;
+};
+
+type ExtractedValue<T> = {
+  value: T | null;
+  confidence: number;
+};
+
+type ExtractedLineItem = {
+  description: string;
+  quantity: number | null;
+  unitPrice: number | null;
+  totalPrice: number | null;
+  confidence: number;
+};
+
+type SuggestedJob = {
+  jobId: number | null;
+  jobName: string | null;
+  confidence: number;
+  reason: string | null;
+};
+
+type ExtractedReceiptData = {
+  vendor: ExtractedValue<string>;
+  date: ExtractedValue<string>;
+  subtotal: ExtractedValue<number>;
+  tax: ExtractedValue<number>;
+  total: ExtractedValue<number>;
+  paymentMethod: ExtractedValue<string>;
+  receiptNumber: ExtractedValue<string>;
+  category: ExtractedValue<string>;
+  description: ExtractedValue<string>;
+  items: ExtractedLineItem[];
+  rawText: string | null;
+  overallConfidence: number;
+  suggestedJob?: SuggestedJob;
+};
+
+type ExtractionState = {
+  status: ExtractionStatus;
+  message?: string;
+  attachmentId?: number;
+  data?: ExtractedReceiptData | null;
+  provider?: string;
+  model?: string;
+};
+
+type EditableLineItem = {
+  id: string;
+  description: string;
+  quantity: string;
+  unitPrice: string;
+  totalPrice: string;
+  confidence: number;
 };
 
 const ALLOWED_EXTENSIONS = ["pdf", "jpg", "jpeg", "png", "webp", "heic", "heif"];
@@ -51,12 +106,47 @@ const CATEGORY_OPTIONS = [
 const STATUS_OPTIONS = ["pending", "approved", "rejected"] as const;
 const UPLOAD_REQUEST_TIMEOUT_MS = 60_000;
 const SUCCESS_UPLOAD_ROW_TTL_MS = 1_200;
+const EXTRACTION_UI_TIMEOUT_MS = 75_000;
+
+function numberToInput(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) return "";
+  return String(value);
+}
+
+function inputToOptionalNumber(value: string) {
+  const parsed = Number(value);
+  if (!value.trim() || Number.isNaN(parsed)) return undefined;
+  return parsed;
+}
+
+function inputToNullableNumber(value: string) {
+  const parsed = Number(value);
+  if (!value.trim() || Number.isNaN(parsed)) return null;
+  return parsed;
+}
+
+function confidenceLabel(value: number) {
+  if (value >= 0.85) return "High";
+  if (value >= 0.65) return "Medium";
+  if (value > 0) return "Low";
+  return "Needs review";
+}
+
+function toExtractionStatus(value: string): ExtractionStatus {
+  if (value === "queued") return "queued";
+  if (value === "processing") return "processing";
+  if (value === "completed") return "completed";
+  if (value === "needs_review") return "needs_review";
+  if (value === "failed") return "failed";
+  return "failed";
+}
 
 export default function ExpensesPage() {
   const utils = api.useUtils();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const replaceInputRef = useRef<HTMLInputElement | null>(null);
   const xhrMap = useRef<Map<string, XMLHttpRequest>>(new Map());
+  const extractionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"" | (typeof STATUS_OPTIONS)[number]>("");
@@ -67,14 +157,20 @@ export default function ExpensesPage() {
   const [showAddExpense, setShowAddExpense] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
   const [dragActive, setDragActive] = useState(false);
+  const [jobSearch, setJobSearch] = useState("");
+  const [saveBehavior, setSaveBehavior] = useState<"close" | "next">("close");
   const [replacementTarget, setReplacementTarget] = useState<{ expenseId: number; oldAttachmentId?: number } | null>(null);
 
   const [form, setForm] = useState({
     vendor: "",
     expenseDate: new Date().toISOString().slice(0, 10),
     amount: "",
+    subtotal: "",
+    tax: "",
     category: "materials" as (typeof CATEGORY_OPTIONS)[number],
     paymentMethod: "",
+    receiptNumber: "",
+    invoiceNumber: "",
     jobId: "",
     employeeId: "",
     description: "",
@@ -84,6 +180,8 @@ export default function ExpensesPage() {
 
   const [selectedAttachmentIds, setSelectedAttachmentIds] = useState<number[]>([]);
   const [uploads, setUploads] = useState<UploadItem[]>([]);
+  const [extractionState, setExtractionState] = useState<ExtractionState>({ status: "idle" });
+  const [lineItems, setLineItems] = useState<EditableLineItem[]>([]);
 
   const listQuery = api.expenses.list.useQuery({
     search: search || undefined,
@@ -95,6 +193,50 @@ export default function ExpensesPage() {
   const statsQuery = api.expenses.stats.useQuery();
   const metaQuery = api.expenses.meta.useQuery();
 
+  const extractReceipt = api.expenses.extractReceipt.useMutation({
+    onSuccess: (result) => {
+      clearExtractionTimeout();
+
+      if (result.status === "failed" || !result.data) {
+        setExtractionState({
+          status: "failed",
+          message: result.message,
+          attachmentId: result.attachmentId,
+          data: null,
+          provider: result.provider,
+          model: result.model,
+        });
+        toast.error(result.message || "AI reading failed");
+        return;
+      }
+
+      applyExtractedData(result.data);
+      setExtractionState({
+        status: toExtractionStatus(result.status),
+        message: result.message,
+        attachmentId: result.attachmentId,
+        data: result.data,
+        provider: result.provider,
+        model: result.model,
+      });
+
+      if (result.status === "needs_review") {
+        toast.warning("Receipt read with low confidence. Please review all fields.");
+      } else {
+        toast.success("Receipt read successfully. Please review before saving.");
+      }
+    },
+    onError: (error) => {
+      clearExtractionTimeout();
+      setExtractionState((prev) => ({
+        ...prev,
+        status: "failed",
+        message: error.message || "AI reading failed.",
+      }));
+      toast.error(error.message || "AI reading failed");
+    },
+  });
+
   const approve = api.expenses.approve.useMutation({
     onSuccess: () => {
       void utils.expenses.list.invalidate();
@@ -102,6 +244,7 @@ export default function ExpensesPage() {
       toast.success("Approved");
     },
   });
+
   const reject = api.expenses.reject.useMutation({
     onSuccess: () => {
       void utils.expenses.list.invalidate();
@@ -117,12 +260,17 @@ export default function ExpensesPage() {
         utils.expenses.stats.invalidate(),
         utils.expenses.meta.invalidate(),
       ]);
+
       setForm({
         vendor: "",
         expenseDate: new Date().toISOString().slice(0, 10),
         amount: "",
+        subtotal: "",
+        tax: "",
         category: "materials",
         paymentMethod: "",
+        receiptNumber: "",
+        invoiceNumber: "",
         jobId: "",
         employeeId: "",
         description: "",
@@ -130,8 +278,14 @@ export default function ExpensesPage() {
         status: "pending",
       });
       setSelectedAttachmentIds([]);
-      setShowAddExpense(false);
-      toast.success("Expense created");
+      setLineItems([]);
+      setExtractionState({ status: "idle" });
+
+      if (saveBehavior === "close") {
+        setShowAddExpense(false);
+      }
+
+      toast.success(saveBehavior === "next" ? "Expense saved. Ready for next review." : "Expense created");
     },
     onError: (error) => toast.error(error.message || "Failed to create expense"),
   });
@@ -169,6 +323,90 @@ export default function ExpensesPage() {
     [...fromQueue, ...orphan].forEach((item) => map.set(item.id, item));
     return Array.from(map.values());
   }, [metaQuery.data?.orphanAttachments, uploads]);
+
+  const filteredJobs = useMemo(() => {
+    const jobs = metaQuery.data?.jobs ?? [];
+    const needle = jobSearch.trim().toLowerCase();
+    if (!needle) return jobs;
+    return jobs.filter((job) => job.name.toLowerCase().includes(needle));
+  }, [metaQuery.data?.jobs, jobSearch]);
+
+  const primaryAttachmentId = selectedAttachmentIds[0] ?? extractionState.attachmentId;
+  const viewReceiptHref = primaryAttachmentId
+    ? `/api/expenses/attachments/${primaryAttachmentId}/preview`
+    : null;
+
+  const possibleDuplicate = useMemo(() => {
+    const vendor = form.vendor.trim().toLowerCase();
+    const amount = Number(form.amount);
+    const date = form.expenseDate;
+    if (!vendor || Number.isNaN(amount) || !date) return null;
+
+    return (listQuery.data ?? []).find((expense) => {
+      const sameVendor = (expense.vendor || "").trim().toLowerCase() === vendor;
+      const sameTotal = Number(expense.amount) === amount;
+      const sameDate = new Date(expense.expenseDate).toISOString().slice(0, 10) === date;
+      return sameVendor && sameTotal && sameDate;
+    }) || null;
+  }, [form.vendor, form.amount, form.expenseDate, listQuery.data]);
+
+  function clearExtractionTimeout() {
+    if (!extractionTimeoutRef.current) return;
+    clearTimeout(extractionTimeoutRef.current);
+    extractionTimeoutRef.current = null;
+  }
+
+  function beginExtraction(attachmentId: number) {
+    clearExtractionTimeout();
+    setExtractionState({
+      status: "processing",
+      attachmentId,
+      message: "Reading receipt with AI...",
+      data: null,
+    });
+
+    extractionTimeoutRef.current = setTimeout(() => {
+      setExtractionState((prev) => {
+        if (prev.status !== "processing") return prev;
+        return {
+          ...prev,
+          status: "failed",
+          message: "AI timeout. Please retry AI reading.",
+        };
+      });
+      toast.error("AI timeout. Please retry AI reading.");
+    }, EXTRACTION_UI_TIMEOUT_MS);
+
+    extractReceipt.mutate({ attachmentId });
+  }
+
+  function applyExtractedData(data: ExtractedReceiptData) {
+    setForm((prev) => ({
+      ...prev,
+      vendor: data.vendor.value ?? prev.vendor,
+      expenseDate: data.date.value ?? prev.expenseDate,
+      amount: data.total.value != null ? numberToInput(data.total.value) : prev.amount,
+      subtotal: data.subtotal.value != null ? numberToInput(data.subtotal.value) : prev.subtotal,
+      tax: data.tax.value != null ? numberToInput(data.tax.value) : prev.tax,
+      category: data.category.value && CATEGORY_OPTIONS.includes(data.category.value as (typeof CATEGORY_OPTIONS)[number])
+        ? (data.category.value as (typeof CATEGORY_OPTIONS)[number])
+        : prev.category,
+      paymentMethod: data.paymentMethod.value ?? prev.paymentMethod,
+      receiptNumber: data.receiptNumber.value ?? prev.receiptNumber,
+      description: data.description.value ?? prev.description,
+    }));
+
+    setLineItems(
+      data.items.map((item) => ({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        description: item.description,
+        quantity: numberToInput(item.quantity),
+        unitPrice: numberToInput(item.unitPrice),
+        totalPrice: numberToInput(item.totalPrice),
+        confidence: item.confidence,
+      }))
+    );
+  }
 
   function queueFiles(fileList: FileList | File[]) {
     const next: UploadItem[] = [];
@@ -234,14 +472,13 @@ export default function ExpensesPage() {
               : u
           )
         );
-        setTimeout(() => removeUpload(item.id), SUCCESS_UPLOAD_ROW_TTL_MS);
+
         setSelectedAttachmentIds((prev) => Array.from(new Set([...prev, json.attachment!.id])));
         void Promise.all([
           utils.expenses.meta.invalidate(),
           utils.expenses.stats.invalidate(),
           utils.expenses.list.invalidate(),
         ]);
-        toast.success("Receipt uploaded. Review and save the expense details.");
 
         if (replacementTarget) {
           replaceAttachment.mutate({
@@ -251,7 +488,16 @@ export default function ExpensesPage() {
           });
         } else {
           setShowAddExpense(true);
+          setExtractionState({
+            status: "queued",
+            attachmentId: json.attachment.id,
+            message: "Receipt uploaded. Starting AI reading...",
+          });
+          beginExtraction(json.attachment.id);
         }
+
+        toast.success("Receipt uploaded. Review and save the expense details.");
+        setTimeout(() => removeUpload(item.id), SUCCESS_UPLOAD_ROW_TTL_MS);
       } else {
         setUploads((prev) =>
           prev.map((u) =>
@@ -317,25 +563,71 @@ export default function ExpensesPage() {
     }
   }
 
-  function submitExpense() {
+  function submitExpense(behavior: "close" | "next") {
     if (!form.amount || Number.isNaN(Number(form.amount)) || Number(form.amount) <= 0) {
-      toast.error("Enter a valid amount");
+      toast.error("Enter a valid total amount");
       return;
     }
 
+    setSaveBehavior(behavior);
     createExpense.mutate({
       vendor: form.vendor || undefined,
       expenseDate: new Date(form.expenseDate),
       description: form.description || undefined,
       amount: Number(form.amount),
+      subtotal: inputToOptionalNumber(form.subtotal),
+      tax: inputToOptionalNumber(form.tax),
       category: form.category,
       paymentMethod: form.paymentMethod || undefined,
+      receiptNumber: form.receiptNumber || undefined,
+      invoiceNumber: form.invoiceNumber || undefined,
       jobId: form.jobId ? Number(form.jobId) : undefined,
       employeeId: form.employeeId ? Number(form.employeeId) : undefined,
       notes: form.notes || undefined,
       status: form.status,
       attachmentIds: selectedAttachmentIds,
+      extractedRawText: extractionState.data?.rawText || undefined,
+      extractedStructured: extractionState.data || undefined,
+      extractedConfidence: extractionState.data?.overallConfidence,
+      lineItems: lineItems
+        .filter((item) => item.description.trim().length > 0)
+        .map((item) => ({
+          description: item.description.trim(),
+          quantity: inputToNullableNumber(item.quantity),
+          unitPrice: inputToNullableNumber(item.unitPrice),
+          totalPrice: inputToNullableNumber(item.totalPrice),
+        })),
     });
+  }
+
+  function addLineItem() {
+    setLineItems((prev) => [
+      ...prev,
+      {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        description: "",
+        quantity: "",
+        unitPrice: "",
+        totalPrice: "",
+        confidence: 0,
+      },
+    ]);
+  }
+
+  function clearExtractedData() {
+    setExtractionState({ status: "idle", data: null, attachmentId: primaryAttachmentId });
+    setLineItems([]);
+    setForm((prev) => ({
+      ...prev,
+      vendor: "",
+      amount: "",
+      subtotal: "",
+      tax: "",
+      paymentMethod: "",
+      receiptNumber: "",
+      description: "",
+      category: "materials",
+    }));
   }
 
   const expenses = listQuery.data ?? [];
@@ -442,7 +734,62 @@ export default function ExpensesPage() {
 
       {showAddExpense && (
         <section className="card p-4 mb-6">
-          <h2 className="text-base font-semibold">Add Expense</h2>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-base font-semibold">Add Expense</h2>
+            {extractionState.status === "processing" && (
+              <p className="text-sm text-brand-700">Reading receipt with AI...</p>
+            )}
+            {extractionState.status === "queued" && (
+              <p className="text-sm text-slate-600">Starting AI receipt reading...</p>
+            )}
+          </div>
+
+          {(extractionState.status === "failed" || extractionState.status === "needs_review") && (
+            <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+              <p className="font-medium">Needs review</p>
+              <p>{extractionState.message || "Receipt information could not be fully verified."}</p>
+            </div>
+          )}
+
+          {extractionState.data && (
+            <div className="mt-3 rounded-md border border-slate-200 p-3 text-sm">
+              <div className="flex flex-wrap gap-2 text-xs">
+                <span className="rounded-full bg-slate-100 px-2 py-1">Overall: {confidenceLabel(extractionState.data.overallConfidence)}</span>
+                <span className="rounded-full bg-slate-100 px-2 py-1">Vendor: {confidenceLabel(extractionState.data.vendor.confidence)}</span>
+                <span className="rounded-full bg-slate-100 px-2 py-1">Date: {confidenceLabel(extractionState.data.date.confidence)}</span>
+                <span className="rounded-full bg-slate-100 px-2 py-1">Total: {confidenceLabel(extractionState.data.total.confidence)}</span>
+                {extractionState.provider && (
+                  <span className="rounded-full bg-slate-100 px-2 py-1">Provider: {extractionState.provider}</span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {possibleDuplicate && (
+            <div className="mt-3 rounded-md border border-orange-300 bg-orange-50 p-3 text-sm text-orange-800">
+              <p className="font-medium">Possible duplicate</p>
+              <p>
+                Existing expense #{possibleDuplicate.id} has the same vendor, total, and date.
+              </p>
+            </div>
+          )}
+
+          {extractionState.data?.suggestedJob && extractionState.data.suggestedJob.confidence >= 0.85 && extractionState.data.suggestedJob.jobId && (
+            <div className="mt-3 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+              <p className="font-medium">
+                Suggested job: {extractionState.data.suggestedJob.jobName} ({confidenceLabel(extractionState.data.suggestedJob.confidence)})
+              </p>
+              <div className="mt-2">
+                <button
+                  className="btn btn-secondary text-xs"
+                  onClick={() => setForm((prev) => ({ ...prev, jobId: String(extractionState.data?.suggestedJob?.jobId || "") }))}
+                >
+                  Apply suggestion
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="grid gap-3 md:grid-cols-2 mt-4">
             <div>
               <label className="label">Vendor</label>
@@ -453,8 +800,16 @@ export default function ExpensesPage() {
               <input type="date" className="input" value={form.expenseDate} onChange={(e) => setForm((p) => ({ ...p, expenseDate: e.target.value }))} />
             </div>
             <div>
-              <label className="label">Amount</label>
+              <label className="label">Total Amount</label>
               <input type="number" step="0.01" className="input" value={form.amount} onChange={(e) => setForm((p) => ({ ...p, amount: e.target.value }))} />
+            </div>
+            <div>
+              <label className="label">Subtotal</label>
+              <input type="number" step="0.01" className="input" value={form.subtotal} onChange={(e) => setForm((p) => ({ ...p, subtotal: e.target.value }))} />
+            </div>
+            <div>
+              <label className="label">Tax</label>
+              <input type="number" step="0.01" className="input" value={form.tax} onChange={(e) => setForm((p) => ({ ...p, tax: e.target.value }))} />
             </div>
             <div>
               <label className="label">Category</label>
@@ -469,6 +824,14 @@ export default function ExpensesPage() {
               <input className="input" value={form.paymentMethod} onChange={(e) => setForm((p) => ({ ...p, paymentMethod: e.target.value }))} />
             </div>
             <div>
+              <label className="label">Receipt Number</label>
+              <input className="input" value={form.receiptNumber} onChange={(e) => setForm((p) => ({ ...p, receiptNumber: e.target.value }))} />
+            </div>
+            <div>
+              <label className="label">Invoice Number</label>
+              <input className="input" value={form.invoiceNumber} onChange={(e) => setForm((p) => ({ ...p, invoiceNumber: e.target.value }))} />
+            </div>
+            <div>
               <label className="label">Status</label>
               <select className="input" value={form.status} onChange={(e) => setForm((p) => ({ ...p, status: e.target.value as (typeof STATUS_OPTIONS)[number] }))}>
                 {STATUS_OPTIONS.map((opt) => (
@@ -476,11 +839,20 @@ export default function ExpensesPage() {
                 ))}
               </select>
             </div>
+            <div className="md:col-span-2">
+              <label className="label">Search Job</label>
+              <input
+                className="input"
+                placeholder="Search jobs..."
+                value={jobSearch}
+                onChange={(e) => setJobSearch(e.target.value)}
+              />
+            </div>
             <div>
               <label className="label">Job</label>
               <select className="input" value={form.jobId} onChange={(e) => setForm((p) => ({ ...p, jobId: e.target.value }))}>
                 <option value="">Unassigned</option>
-                {(metaQuery.data?.jobs ?? []).map((job) => (
+                {filteredJobs.map((job) => (
                   <option key={job.id} value={job.id}>{job.name}</option>
                 ))}
               </select>
@@ -502,6 +874,76 @@ export default function ExpensesPage() {
               <label className="label">Notes</label>
               <textarea className="input" rows={3} value={form.notes} onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))} />
             </div>
+          </div>
+
+          <div className="mt-4">
+            <div className="flex items-center justify-between">
+              <label className="label">Line Items</label>
+              <button className="btn btn-secondary text-xs" onClick={addLineItem}>Add Line</button>
+            </div>
+            {lineItems.length === 0 ? (
+              <p className="text-sm text-slate-500">No line items extracted yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {lineItems.map((item) => (
+                  <div key={item.id} className="grid gap-2 md:grid-cols-12 rounded-md border border-slate-200 p-2">
+                    <input
+                      className="input md:col-span-4"
+                      placeholder="Description"
+                      value={item.description}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setLineItems((prev) => prev.map((line) => line.id === item.id ? { ...line, description: next } : line));
+                      }}
+                    />
+                    <input
+                      className="input md:col-span-2"
+                      type="number"
+                      step="0.01"
+                      placeholder="Qty"
+                      value={item.quantity}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setLineItems((prev) => prev.map((line) => line.id === item.id ? { ...line, quantity: next } : line));
+                      }}
+                    />
+                    <input
+                      className="input md:col-span-2"
+                      type="number"
+                      step="0.01"
+                      placeholder="Unit"
+                      value={item.unitPrice}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setLineItems((prev) => prev.map((line) => line.id === item.id ? { ...line, unitPrice: next } : line));
+                      }}
+                    />
+                    <input
+                      className="input md:col-span-2"
+                      type="number"
+                      step="0.01"
+                      placeholder="Total"
+                      value={item.totalPrice}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setLineItems((prev) => prev.map((line) => line.id === item.id ? { ...line, totalPrice: next } : line));
+                      }}
+                    />
+                    <div className="md:col-span-1 text-xs text-slate-600 flex items-center justify-center">
+                      {confidenceLabel(item.confidence)}
+                    </div>
+                    <div className="md:col-span-1 flex items-center justify-end">
+                      <button
+                        className="btn btn-danger text-xs"
+                        onClick={() => setLineItems((prev) => prev.filter((line) => line.id !== item.id))}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="mt-4">
@@ -531,9 +973,31 @@ export default function ExpensesPage() {
             )}
           </div>
 
-          <div className="mt-4 flex gap-2">
-            <button className="btn btn-primary" onClick={submitExpense} disabled={createExpense.isPending}>
-              {createExpense.isPending ? "Saving..." : "Create Expense"}
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              className="btn btn-secondary"
+              onClick={() => {
+                if (!primaryAttachmentId) {
+                  toast.error("Select a receipt attachment first.");
+                  return;
+                }
+                beginExtraction(primaryAttachmentId);
+              }}
+              disabled={extractReceipt.isPending}
+            >
+              Retry AI Reading
+            </button>
+            <button className="btn btn-secondary" onClick={clearExtractedData}>Clear Extracted Data</button>
+            {viewReceiptHref && (
+              <a className="btn btn-secondary" href={viewReceiptHref} target="_blank" rel="noreferrer">
+                View Receipt
+              </a>
+            )}
+            <button className="btn btn-primary" onClick={() => submitExpense("close")} disabled={createExpense.isPending}>
+              {createExpense.isPending ? "Saving..." : "Save Expense"}
+            </button>
+            <button className="btn btn-primary" onClick={() => submitExpense("next")} disabled={createExpense.isPending}>
+              Save and Review Next
             </button>
             <button className="btn btn-secondary" onClick={() => setShowAddExpense(false)}>Cancel</button>
           </div>
@@ -561,7 +1025,7 @@ export default function ExpensesPage() {
             ))}
           </select>
           <div className="flex gap-2">
-            <select className="input" value={sortBy} onChange={(e) => setSortBy(e.target.value as "date" | "amount" | "vendor" | "status" | "createdAt")}>
+            <select className="input" value={sortBy} onChange={(e) => setSortBy(e.target.value as "date" | "amount" | "vendor" | "status" | "createdAt") }>
               <option value="date">Sort: Date</option>
               <option value="amount">Sort: Amount</option>
               <option value="vendor">Sort: Vendor</option>
