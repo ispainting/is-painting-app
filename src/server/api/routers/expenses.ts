@@ -347,6 +347,10 @@ export const expensesRouter = router({
           data: extracted.normalized,
           provider: extracted.provider,
           model: extracted.model,
+          runtime: {
+            vercelEnv: process.env.VERCEL_ENV ?? null,
+            manusApiKey: process.env.MANUS_API_KEY ? "FOUND" : "MISSING",
+          },
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : "Receipt extraction failed.";
@@ -379,6 +383,10 @@ export const expensesRouter = router({
           data: null,
           provider: "manus",
           model: "manus-1.6",
+          runtime: {
+            vercelEnv: process.env.VERCEL_ENV ?? null,
+            manusApiKey: process.env.MANUS_API_KEY ? "FOUND" : "MISSING",
+          },
         };
       }
     }),
