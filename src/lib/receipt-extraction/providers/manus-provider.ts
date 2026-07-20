@@ -675,6 +675,13 @@ export class ManusReceiptExtractionProvider implements ReceiptExtractionProvider
     const structured = await pollForStructuredResult(apiKey, taskId);
     const normalized = normalizeExtractionResponse(structured.value, input.jobOptions);
 
+    console.info("[receipt-extraction] raw-vs-parsed", {
+      attachmentId: input.attachmentId,
+      taskId,
+      rawStructuredOutputResult: structured.value,
+      parsedNormalizedOutput: normalized,
+    });
+
     return {
       normalized,
       provider: "manus",
@@ -686,6 +693,8 @@ export class ManusReceiptExtractionProvider implements ReceiptExtractionProvider
         durationMs: Date.now() - extractionStartedAt,
         success: true,
         status: structured.status,
+        rawStructuredOutput: structured.value,
+        parsedNormalizedOutput: normalized,
       },
     };
   }

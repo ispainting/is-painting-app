@@ -345,6 +345,8 @@ export const expensesRouter = router({
           attachmentId: attachment.id,
           message: status === "needs_review" ? "Receipt extracted with low confidence. Needs review." : "Receipt extracted successfully.",
           data: extracted.normalized,
+          rawStructuredOutput: extracted.metadata?.rawStructuredOutput ?? null,
+          parsedNormalizedOutput: extracted.metadata?.parsedNormalizedOutput ?? extracted.normalized,
           provider: extracted.provider,
           model: extracted.model,
           runtime: {

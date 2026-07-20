@@ -59,6 +59,8 @@ export type ReceiptExtractionResult = {
     durationMs: number;
     success: boolean;
     status: string | null;
+    rawStructuredOutput?: unknown;
+    parsedNormalizedOutput?: NormalizedReceiptExtraction;
   };
 };
 

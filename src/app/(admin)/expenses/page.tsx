@@ -46,6 +46,7 @@ type ExtractedReceiptData = {
   total: ExtractedValue<number>;
   paymentMethod: ExtractedValue<string>;
   receiptNumber: ExtractedValue<string>;
+  invoiceNumber: ExtractedValue<string>;
   category: ExtractedValue<string>;
   description: ExtractedValue<string>;
   items: ExtractedLineItem[];
@@ -393,6 +394,7 @@ export default function ExpensesPage() {
         : prev.category,
       paymentMethod: data.paymentMethod.value ?? prev.paymentMethod,
       receiptNumber: data.receiptNumber.value ?? prev.receiptNumber,
+      invoiceNumber: data.invoiceNumber.value ?? prev.invoiceNumber,
       description: data.description.value ?? prev.description,
     }));
 
