@@ -16,6 +16,7 @@ type ExtractionErrorCode =
   | "timeout"
   | "bad_request"
   | "network_error"
+  | "not_found"
   | "unknown";
 
 type UploadItem = {
@@ -207,8 +208,9 @@ export default function ExpensesPage() {
   const extractReceipt = api.expenses.extractReceipt.useMutation({
     onSuccess: (result) => {
       clearExtractionTimeout();
+      const extractedData = (result.data ?? null) as ExtractedReceiptData | null;
 
-      if (result.status === "failed" || !result.data) {
+      if (result.status === "failed" || !extractedData) {
         setExtractionState({
           status: "failed",
           message: result.message,
@@ -222,12 +224,12 @@ export default function ExpensesPage() {
         return;
       }
 
-      applyExtractedData(result.data);
+      applyExtractedData(extractedData);
       setExtractionState({
         status: toExtractionStatus(result.status),
         message: result.message,
         attachmentId: result.attachmentId,
-        data: result.data,
+        data: extractedData,
         provider: result.provider,
         model: result.model,
       });
@@ -369,7 +371,7 @@ export default function ExpensesPage() {
     extractionTimeoutRef.current = null;
   }
 
-  function beginExtraction(attachmentId: number) {
+  function beginExtraction(attachmentId: number, forceNewTask = false) {
     clearExtractionTimeout();
     setExtractionState({
       status: "processing",
@@ -390,7 +392,17 @@ export default function ExpensesPage() {
       toast.error("AI timeout. Please retry AI reading.");
     }, EXTRACTION_UI_TIMEOUT_MS);
 
-    extractReceipt.mutate({ attachmentId });
+    extractReceipt.mutate({ attachmentId, forceNewTask });
+  }
+
+  function beginExtractionWithConfirmation(attachmentId: number, forceNewTask = false) {
+    if (forceNewTask) {
+      const confirmed = window.confirm(
+        "Start a brand new AI extraction task for this receipt? This can consume additional Manus API credits.",
+      );
+      if (!confirmed) return;
+    }
+    beginExtraction(attachmentId, forceNewTask);
   }
 
   function applyExtractedData(data: ExtractedReceiptData) {
@@ -503,11 +515,10 @@ export default function ExpensesPage() {
         } else {
           setShowAddExpense(true);
           setExtractionState({
-            status: "queued",
+            status: "idle",
             attachmentId: json.attachment.id,
-            message: "Receipt uploaded. Starting AI reading...",
+            message: "Receipt uploaded. Click Extract with AI to start receipt reading.",
           });
-          beginExtraction(json.attachment.id);
         }
 
         toast.success("Receipt uploaded. Review and save the expense details.");
@@ -772,12 +783,12 @@ export default function ExpensesPage() {
                     className="btn btn-secondary text-xs"
                     onClick={() => {
                       if (extractionState.attachmentId) {
-                        beginExtraction(extractionState.attachmentId);
+                        beginExtractionWithConfirmation(extractionState.attachmentId, true);
                       }
                     }}
                     disabled={!extractionState.attachmentId || extractReceipt.isPending}
                   >
-                    Retry
+                    Start New Extraction
                   </button>
                   <button
                     className="btn text-xs"
@@ -1027,11 +1038,11 @@ export default function ExpensesPage() {
                   toast.error("Select a receipt attachment first.");
                   return;
                 }
-                beginExtraction(primaryAttachmentId);
+                beginExtractionWithConfirmation(primaryAttachmentId, false);
               }}
               disabled={extractReceipt.isPending}
             >
-              Retry AI Reading
+              Extract with AI
             </button>
             <button className="btn btn-secondary" onClick={clearExtractedData}>Clear Extracted Data</button>
             {viewReceiptHref && (

@@ -58,7 +58,13 @@ type ExtractionErrorCode =
   | "timeout"
   | "bad_request"
   | "network_error"
+  | "not_found"
   | "unknown";
+
+function isReceiptExtractionEnabled() {
+  const raw = (process.env.MANUS_RECEIPT_EXTRACTION_ENABLED || "false").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
 
 function mapExtractionErrorCode(error: unknown): ExtractionErrorCode {
   const code =
@@ -74,6 +80,7 @@ function mapExtractionErrorCode(error: unknown): ExtractionErrorCode {
     case "timeout":
     case "bad_request":
     case "network_error":
+    case "not_found":
       return code;
     default:
       return "unknown";
@@ -96,6 +103,8 @@ function getFriendlyExtractionErrorMessage(errorCode: ExtractionErrorCode) {
       return "AI receipt extraction could not process this file. Please review manually or try another receipt image.";
     case "network_error":
       return "AI receipt extraction is temporarily unavailable due to a network issue. Please retry.";
+    case "not_found":
+      return "AI receipt extraction could not locate the previous extraction task. You can retry manually.";
     default:
       return "AI receipt extraction failed. You can still enter the expense manually.";
   }
@@ -306,8 +315,14 @@ export const expensesRouter = router({
   }),
 
   extractReceipt: protectedProcedure
-    .input(z.object({ attachmentId: z.number().int().positive() }))
+    .input(
+      z.object({
+        attachmentId: z.number().int().positive(),
+        forceNewTask: z.boolean().optional(),
+      })
+    )
     .mutation(async ({ ctx, input }) => {
+      const forceNewTask = input.forceNewTask === true;
       const provider = getReceiptStorageProvider();
       const attachment = await ctx.prisma.expenseAttachment.findUnique({
         where: { id: input.attachmentId },
@@ -318,6 +333,12 @@ export const expensesRouter = router({
           originalFilename: true,
           mimeType: true,
           extractionStatus: true,
+          extractionStructured: true,
+          extractionRawText: true,
+          extractionConfidence: true,
+          manusTaskId: true,
+          providerErrorCode: true,
+          extractionAttemptCount: true,
           expense: {
             select: { submittedById: true },
           },
@@ -336,16 +357,68 @@ export const expensesRouter = router({
         throw new Error("Forbidden");
       }
 
+      if (!isReceiptExtractionEnabled()) {
+        return {
+          status: "failed" as const,
+          attachmentId: attachment.id,
+          message: "AI receipt extraction is currently disabled. You can enter this expense manually.",
+          errorCode: "bad_request" as const,
+          data: null,
+          provider: "manus",
+          model: "manus-1.6",
+        };
+      }
+
+      if (!forceNewTask && attachment.extractionStatus === "completed" && attachment.extractionStructured) {
+        return {
+          status: "completed" as const,
+          attachmentId: attachment.id,
+          message: "Receipt already extracted. Reusing saved AI result.",
+          data: attachment.extractionStructured,
+          provider: "manus",
+          model: "manus-1.6",
+        };
+      }
+
+      if (!forceNewTask && attachment.providerErrorCode === "resource_exhausted") {
+        return {
+          status: "failed" as const,
+          attachmentId: attachment.id,
+          message: getFriendlyExtractionErrorMessage("resource_exhausted"),
+          errorCode: "resource_exhausted" as const,
+          data: null,
+          provider: "manus",
+          model: "manus-1.6",
+        };
+      }
+
+      const MAX_DEFAULT_ATTEMPTS = 1;
+      if (!forceNewTask && !attachment.manusTaskId && attachment.extractionAttemptCount >= MAX_DEFAULT_ATTEMPTS) {
+        return {
+          status: "failed" as const,
+          attachmentId: attachment.id,
+          message: "AI receipt extraction has already been attempted for this upload. Choose Start New Extraction to run it again.",
+          errorCode: "bad_request" as const,
+          data: null,
+          provider: "manus",
+          model: "manus-1.6",
+        };
+      }
+
       await ctx.prisma.expenseAttachment.update({
         where: { id: attachment.id },
         data: {
           extractionStatus: "processing",
           extractionError: null,
+          providerErrorCode: null,
+          extractionCompletedAt: null,
+          ...(forceNewTask ? { manusTaskId: null } : {}),
           extractionStartedAt: new Date(),
         },
       });
 
       const extractionStartedAt = Date.now();
+      const shouldIncrementAttempt = forceNewTask || !attachment.manusTaskId;
       try {
         const object = await provider.download(attachment.storagePath);
         const jobs = await ctx.prisma.job.findMany({
@@ -361,6 +434,7 @@ export const expensesRouter = router({
           mimeType: attachment.mimeType,
           fileData: object.data,
           jobOptions: jobs,
+          existingTaskId: forceNewTask ? null : attachment.manusTaskId,
         });
 
         const status = extracted.needsReview ? "needs_review" : "completed";
@@ -375,6 +449,12 @@ export const expensesRouter = router({
             extractionProvider: extracted.provider,
             extractionModel: extracted.model,
             extractionError: null,
+            providerErrorCode: null,
+            manusTaskId: extracted.metadata?.taskId ?? attachment.manusTaskId,
+            extractionAttemptCount: shouldIncrementAttempt
+              ? { increment: 1 }
+              : attachment.extractionAttemptCount,
+            extractionCompletedAt: new Date(),
             extractionProcessedAt: new Date(),
           },
         });
@@ -388,6 +468,7 @@ export const expensesRouter = router({
           durationMs: extracted.metadata?.durationMs ?? (Date.now() - extractionStartedAt),
           success: extracted.metadata?.success ?? true,
           status: extracted.metadata?.status ?? status,
+          taskCreated: extracted.metadata?.taskCreated ?? false,
           overallConfidence: extracted.normalized.overallConfidence,
         });
 
@@ -408,6 +489,12 @@ export const expensesRouter = router({
           data: {
             extractionStatus: "failed",
             extractionError: internalMessage,
+            providerErrorCode: errorCode,
+            manusTaskId: errorCode === "not_found" ? null : attachment.manusTaskId,
+            extractionAttemptCount: shouldIncrementAttempt
+              ? { increment: 1 }
+              : attachment.extractionAttemptCount,
+            extractionCompletedAt: new Date(),
             extractionProcessedAt: new Date(),
           },
         });
@@ -424,6 +511,7 @@ export const expensesRouter = router({
           overallConfidence: null,
           error: internalMessage,
           errorCode,
+          providerErrorCode: errorCode,
         });
 
         return {

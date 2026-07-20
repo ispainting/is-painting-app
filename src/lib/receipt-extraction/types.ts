@@ -46,6 +46,7 @@ export type ReceiptExtractionInput = {
   mimeType: string;
   fileData: ArrayBuffer;
   jobOptions: Array<{ id: number; name: string }>;
+  existingTaskId?: string | null;
 };
 
 export type ReceiptExtractionResult = {
@@ -59,6 +60,8 @@ export type ReceiptExtractionResult = {
     durationMs: number;
     success: boolean;
     status: string | null;
+    taskCreated: boolean;
+    providerErrorCode?: string | null;
   };
 };
 

@@ -69,6 +69,11 @@ function getApiKey() {
   return key;
 }
 
+function isExtractionEnabled() {
+  const raw = (process.env.MANUS_RECEIPT_EXTRACTION_ENABLED || "false").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
 function maskApiKey(value: string) {
   if (!value) return "[empty]";
   if (value.length <= 8) return "***";
@@ -457,6 +462,13 @@ async function uploadFileToManus(
   apiKey: string,
   input: ReceiptExtractionInput,
 ): Promise<string> {
+  if (!isExtractionEnabled()) {
+    throw new ManusReceiptError(
+      "AI receipt extraction is currently disabled. You can enter this expense manually.",
+      "bad_request",
+    );
+  }
+
   const created = await fetchJsonWithRetry<FileUploadResponse>(
     FILE_UPLOAD_URL,
     {
@@ -537,6 +549,13 @@ async function createTask(
   input: ReceiptExtractionInput,
   fileId: string,
 ): Promise<string> {
+  if (!isExtractionEnabled()) {
+    throw new ManusReceiptError(
+      "AI receipt extraction is currently disabled. You can enter this expense manually.",
+      "bad_request",
+    );
+  }
+
   const payload = await fetchJsonWithRetry<TaskCreateResponse>(
     TASK_CREATE_URL,
     {
@@ -557,6 +576,7 @@ async function createTask(
       }),
     },
     TIMEOUT_MS,
+    1,
   );
 
   const taskId = payload.task_id?.trim();
@@ -664,12 +684,26 @@ async function pollForStructuredResult(apiKey: string, taskId: string) {
 
 export class ManusReceiptExtractionProvider implements ReceiptExtractionProvider {
   async extract(input: ReceiptExtractionInput): Promise<ReceiptExtractionResult> {
+    if (!isExtractionEnabled()) {
+      throw new ManusReceiptError(
+        "AI receipt extraction is currently disabled. You can enter this expense manually.",
+        "bad_request",
+      );
+    }
+
     ensureSupportedMime(input.mimeType);
     const apiKey = getApiKey();
 
     const extractionStartedAt = Date.now();
-    const fileId = await uploadFileToManus(apiKey, input);
-    const taskId = await createTask(apiKey, input, fileId);
+    const reusedTaskId = input.existingTaskId?.trim() || null;
+    let taskCreated = false;
+    let taskId = reusedTaskId;
+
+    if (!taskId) {
+      const fileId = await uploadFileToManus(apiKey, input);
+      taskId = await createTask(apiKey, input, fileId);
+      taskCreated = true;
+    }
 
     const structured = await pollForStructuredResult(apiKey, taskId);
     const normalized = normalizeExtractionResponse(structured.value, input.jobOptions);
@@ -692,6 +726,7 @@ export class ManusReceiptExtractionProvider implements ReceiptExtractionProvider
         durationMs: Date.now() - extractionStartedAt,
         success: true,
         status: structured.status,
+        taskCreated,
       },
     };
   }
