@@ -68,7 +68,17 @@ function toStringValue(value: unknown, maxLen: number): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   if (!trimmed) return null;
+  const lowered = trimmed.toLowerCase();
+  if (lowered === "null" || lowered === "none" || lowered === "n/a" || lowered === "na") return null;
   return trimmed.slice(0, maxLen);
+}
+
+function toNumberWithConfidence(value: unknown, confidence: unknown): number | null {
+  const numeric = toNumber(value);
+  const conf = clampConfidence(confidence, 0);
+  if (numeric == null) return null;
+  if (conf === 0 && numeric === 0) return null;
+  return numeric;
 }
 
 function toDateOnly(value: unknown): string | null {
@@ -181,15 +191,15 @@ export function normalizeExtractionResponse(input: unknown, jobs: Array<{ id: nu
       confidence: clampConfidence(dateField.confidence),
     },
     subtotal: {
-      value: toNumber(subtotalField.value),
+      value: toNumberWithConfidence(subtotalField.value, subtotalField.confidence),
       confidence: clampConfidence(subtotalField.confidence),
     },
     tax: {
-      value: toNumber(taxField.value),
+      value: toNumberWithConfidence(taxField.value, taxField.confidence),
       confidence: clampConfidence(taxField.confidence),
     },
     total: {
-      value: toNumber(totalField.value),
+      value: toNumberWithConfidence(totalField.value, totalField.confidence),
       confidence: clampConfidence(totalField.confidence),
     },
     paymentMethod: {
