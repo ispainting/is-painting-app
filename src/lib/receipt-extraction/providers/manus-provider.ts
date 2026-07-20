@@ -31,6 +31,8 @@ type ManusErrorPayload = {
   };
 };
 
+type DebugJson = Record<string, unknown>;
+
 class ManusReceiptError extends Error {
   code: string;
 
@@ -64,6 +66,70 @@ function getApiKey() {
     );
   }
   return key;
+}
+
+function maskApiKey(value: string) {
+  if (!value) return "[empty]";
+  if (value.length <= 8) return "***";
+  return `${value.slice(0, 4)}***${value.slice(-4)}`;
+}
+
+function normalizeHeaders(headers: HeadersInit | undefined): Record<string, string> {
+  if (!headers) return {};
+
+  const normalized: Record<string, string> = {};
+  if (headers instanceof Headers) {
+    headers.forEach((value, key) => {
+      normalized[key] = value;
+    });
+    return normalized;
+  }
+
+  if (Array.isArray(headers)) {
+    for (const [key, value] of headers) {
+      normalized[key] = value;
+    }
+    return normalized;
+  }
+
+  return { ...headers };
+}
+
+function maskSensitiveHeaders(headers: Record<string, string>): Record<string, string> {
+  const masked: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers)) {
+    const key = name.toLowerCase();
+    if (key === "x-manus-api-key") {
+      masked[name] = maskApiKey(value);
+      continue;
+    }
+    if (key === "authorization") {
+      masked[name] = `***${value.slice(-6)}`;
+      continue;
+    }
+    masked[name] = value;
+  }
+  return masked;
+}
+
+function headersToObject(headers: Headers): Record<string, string> {
+  const output: Record<string, string> = {};
+  headers.forEach((value, key) => {
+    output[key] = value;
+  });
+  return output;
+}
+
+function parseJsonSafely(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function debugHttpLog(stage: string, details: DebugJson) {
+  console.info("[receipt-extraction][manus-http]", stage, details);
 }
 
 function buildPrompt(jobOptions: Array<{ id: number; name: string }>) {
@@ -240,28 +306,86 @@ async function fetchJsonWithRetry<T>(
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      const headers = {
-        ...(init.headers || {}),
-      };
+      const headers = normalizeHeaders(init.headers);
+      const maskedHeaders = maskSensitiveHeaders(headers);
+      const method = (init.method || "GET").toUpperCase();
+      const bodyText = typeof init.body === "string" ? init.body : null;
+
+      debugHttpLog("request", {
+        attempt,
+        url,
+        method,
+        authorizationHeaderFormat: headers["x-manus-api-key"]
+          ? `x-manus-api-key: ${maskApiKey(headers["x-manus-api-key"])}`
+          : headers.authorization
+            ? `Authorization: ***${headers.authorization.slice(-6)}`
+            : "none",
+        requestHeaders: maskedHeaders,
+        requestJsonBody: bodyText,
+      });
+
       const response = await fetch(url, {
         ...init,
         headers,
         signal: controller.signal,
       });
 
+      const responseText = await response.text();
+      const responseHeaders = headersToObject(response.headers);
+      const responseJson = parseJsonSafely(responseText);
+
+      debugHttpLog("response", {
+        attempt,
+        url,
+        method,
+        status: response.status,
+        responseHeaders,
+        responseBodyText: responseText,
+        responseBodyJson: responseJson,
+      });
+
       if (!response.ok) {
-        const payload = (await response.json().catch(() => null)) as ManusErrorPayload | null;
+        const payload = (responseJson as ManusErrorPayload | null) || null;
         const message = getErrorMessage(payload, response.status);
+        const fullErrorContext = JSON.stringify({
+          url,
+          method,
+          status: response.status,
+          authorizationHeaderFormat: headers["x-manus-api-key"]
+            ? `x-manus-api-key: ${maskApiKey(headers["x-manus-api-key"])}`
+            : headers.authorization
+              ? `Authorization: ***${headers.authorization.slice(-6)}`
+              : "none",
+          requestHeaders: maskedHeaders,
+          requestJsonBody: bodyText,
+          responseHeaders,
+          fullErrorBody: responseText,
+          fullErrorJson: responseJson,
+        });
+
+        debugHttpLog("error", {
+          attempt,
+          url,
+          method,
+          status: response.status,
+          responseHeaders,
+          fullErrorBody: responseText,
+          fullErrorJson: responseJson,
+        });
 
         if (attempt < maxAttempts && (response.status === 429 || response.status >= 500)) {
           await wait(Math.min(500 * attempt, 1000));
           continue;
         }
 
-        throw new ManusReceiptError(message, payload?.error?.code || "http_error");
+        throw new ManusReceiptError(`${message} | debug: ${fullErrorContext}`, payload?.error?.code || "http_error");
       }
 
-      return (await response.json()) as T;
+      if (responseJson === null) {
+        throw new ManusReceiptError("AI provider unavailable: response was not valid JSON.", "invalid_json_response");
+      }
+
+      return responseJson as T;
     } catch (error) {
       lastError = error;
       if (error instanceof Error && error.name === "AbortError") {
@@ -361,6 +485,20 @@ async function uploadFileToManus(
       "Content-Type": input.mimeType,
     },
     body: Buffer.from(input.fileData),
+  });
+
+  const uploadResponseText = await uploadResponse.text();
+  const uploadResponseHeaders = headersToObject(uploadResponse.headers);
+  debugHttpLog("upload-put", {
+    url: uploadUrl,
+    method: "PUT",
+    authorizationHeaderFormat: "none (presigned URL)",
+    requestHeaders: { "Content-Type": input.mimeType },
+    requestJsonBody: null,
+    requestBodyBytes: input.fileData.byteLength,
+    status: uploadResponse.status,
+    responseHeaders: uploadResponseHeaders,
+    responseBodyText: uploadResponseText,
   });
 
   if (!uploadResponse.ok) {
