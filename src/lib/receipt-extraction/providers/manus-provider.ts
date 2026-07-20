@@ -574,28 +574,43 @@ async function pollForStructuredResult(apiKey: string, taskId: string) {
   let lastCreditsUsed: number | null = null;
 
   while (Date.now() - started < TIMEOUT_MS) {
-    const [messagesPayload, detailPayload] = await Promise.all([
-      fetchJsonWithRetry<TaskListMessagesResponse>(
-        `${TASK_LIST_MESSAGES_URL}?task_id=${encodeURIComponent(taskId)}&limit=100&order=desc`,
-        {
-          method: "GET",
-          headers: {
-            "x-manus-api-key": apiKey,
+    let messagesPayload: TaskListMessagesResponse;
+    let detailPayload: TaskDetailResponse;
+    try {
+      [messagesPayload, detailPayload] = await Promise.all([
+        fetchJsonWithRetry<TaskListMessagesResponse>(
+          `${TASK_LIST_MESSAGES_URL}?task_id=${encodeURIComponent(taskId)}&limit=100&order=desc`,
+          {
+            method: "GET",
+            headers: {
+              "x-manus-api-key": apiKey,
+            },
           },
-        },
-        TIMEOUT_MS,
-      ),
-      fetchJsonWithRetry<TaskDetailResponse>(
-        `${TASK_DETAIL_URL}?task_id=${encodeURIComponent(taskId)}`,
-        {
-          method: "GET",
-          headers: {
-            "x-manus-api-key": apiKey,
+          TIMEOUT_MS,
+        ),
+        fetchJsonWithRetry<TaskDetailResponse>(
+          `${TASK_DETAIL_URL}?task_id=${encodeURIComponent(taskId)}`,
+          {
+            method: "GET",
+            headers: {
+              "x-manus-api-key": apiKey,
+            },
           },
-        },
-        TIMEOUT_MS,
-      ),
-    ]);
+          TIMEOUT_MS,
+        ),
+      ]);
+    } catch (error) {
+      if (error instanceof ManusReceiptError && error.code === "not_found") {
+        debugHttpLog("poll-wait-not-found", {
+          taskId,
+          elapsedMs: Date.now() - started,
+          message: error.message,
+        });
+        await wait(Math.max(500, POLL_INTERVAL_MS));
+        continue;
+      }
+      throw error;
+    }
 
     lastStatus = detailPayload.task?.status || null;
     lastCreditsUsed = Number.isFinite(detailPayload.task?.credit_usage)
