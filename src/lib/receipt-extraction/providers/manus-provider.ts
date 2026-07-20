@@ -154,7 +154,7 @@ const STRUCTURED_OUTPUT_SCHEMA = {
       additionalProperties: false,
       properties: {
         value: { type: ["string", "null"] },
-        confidence: { type: "number", minimum: 0, maximum: 1 },
+        confidence: { type: "number" },
       },
       required: ["value", "confidence"],
     },
@@ -163,7 +163,7 @@ const STRUCTURED_OUTPUT_SCHEMA = {
       additionalProperties: false,
       properties: {
         value: { type: ["string", "null"] },
-        confidence: { type: "number", minimum: 0, maximum: 1 },
+        confidence: { type: "number" },
       },
       required: ["value", "confidence"],
     },
@@ -172,7 +172,7 @@ const STRUCTURED_OUTPUT_SCHEMA = {
       additionalProperties: false,
       properties: {
         value: { type: ["number", "null"] },
-        confidence: { type: "number", minimum: 0, maximum: 1 },
+        confidence: { type: "number" },
       },
       required: ["value", "confidence"],
     },
@@ -181,7 +181,7 @@ const STRUCTURED_OUTPUT_SCHEMA = {
       additionalProperties: false,
       properties: {
         value: { type: ["number", "null"] },
-        confidence: { type: "number", minimum: 0, maximum: 1 },
+        confidence: { type: "number" },
       },
       required: ["value", "confidence"],
     },
@@ -190,7 +190,7 @@ const STRUCTURED_OUTPUT_SCHEMA = {
       additionalProperties: false,
       properties: {
         value: { type: ["number", "null"] },
-        confidence: { type: "number", minimum: 0, maximum: 1 },
+        confidence: { type: "number" },
       },
       required: ["value", "confidence"],
     },
@@ -199,7 +199,7 @@ const STRUCTURED_OUTPUT_SCHEMA = {
       additionalProperties: false,
       properties: {
         value: { type: ["string", "null"] },
-        confidence: { type: "number", minimum: 0, maximum: 1 },
+        confidence: { type: "number" },
       },
       required: ["value", "confidence"],
     },
@@ -208,7 +208,7 @@ const STRUCTURED_OUTPUT_SCHEMA = {
       additionalProperties: false,
       properties: {
         value: { type: ["string", "null"] },
-        confidence: { type: "number", minimum: 0, maximum: 1 },
+        confidence: { type: "number" },
       },
       required: ["value", "confidence"],
     },
@@ -217,7 +217,7 @@ const STRUCTURED_OUTPUT_SCHEMA = {
       additionalProperties: false,
       properties: {
         value: { type: ["string", "null"] },
-        confidence: { type: "number", minimum: 0, maximum: 1 },
+        confidence: { type: "number" },
       },
       required: ["value", "confidence"],
     },
@@ -226,7 +226,7 @@ const STRUCTURED_OUTPUT_SCHEMA = {
       additionalProperties: false,
       properties: {
         value: { type: ["string", "null"] },
-        confidence: { type: "number", minimum: 0, maximum: 1 },
+        confidence: { type: "number" },
       },
       required: ["value", "confidence"],
     },
@@ -235,7 +235,7 @@ const STRUCTURED_OUTPUT_SCHEMA = {
       additionalProperties: false,
       properties: {
         value: { type: ["string", "null"] },
-        confidence: { type: "number", minimum: 0, maximum: 1 },
+        confidence: { type: "number" },
       },
       required: ["value", "confidence"],
     },
@@ -249,19 +249,19 @@ const STRUCTURED_OUTPUT_SCHEMA = {
           quantity: { type: ["number", "null"] },
           unitPrice: { type: ["number", "null"] },
           totalPrice: { type: ["number", "null"] },
-          confidence: { type: "number", minimum: 0, maximum: 1 },
+          confidence: { type: "number" },
         },
         required: ["description", "quantity", "unitPrice", "totalPrice", "confidence"],
       },
     },
     rawText: { type: ["string", "null"] },
-    overallConfidence: { type: "number", minimum: 0, maximum: 1 },
+    overallConfidence: { type: "number" },
     suggestedJob: {
       type: "object",
       additionalProperties: false,
       properties: {
         jobName: { type: ["string", "null"] },
-        confidence: { type: "number", minimum: 0, maximum: 1 },
+        confidence: { type: "number" },
         reason: { type: ["string", "null"] },
       },
       required: ["jobName", "confidence", "reason"],
