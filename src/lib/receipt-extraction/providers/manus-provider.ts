@@ -25,6 +25,7 @@ const SUPPORTED_MIME_TYPES = new Set([
 ]);
 
 type ManusErrorPayload = {
+  request_id?: string;
   error?: {
     code?: string;
     message?: string;
@@ -288,9 +289,21 @@ const STRUCTURED_OUTPUT_SCHEMA = {
 function getErrorMessage(payload: ManusErrorPayload | null, status: number) {
   const code = payload?.error?.code?.trim();
   const message = payload?.error?.message?.trim();
-  if (message) return `AI provider unavailable: ${status} ${message.slice(0, 300)}`;
+  if (message) return `AI provider unavailable: ${status} ${message.slice(0, 240)}`;
   if (code) return `AI provider unavailable: ${status} ${code}`;
   return `AI provider unavailable: ${status}`;
+}
+
+function normalizeProviderErrorCode(rawCode: string | undefined, status: number) {
+  const code = (rawCode || "").trim().toLowerCase();
+  if (code === "resource_exhausted" || code === "credit_limit_exceeded") return "resource_exhausted";
+  if (code === "invalid_api_key") return "invalid_api_key";
+  if (code === "unauthorized" || code === "unauthenticated" || status === 401 || status === 403) return "unauthorized";
+  if (code === "rate_limit" || code === "rate_limited" || status === 429) return "rate_limit";
+  if (code === "invalid_argument" || code === "bad_request" || status === 400) return "bad_request";
+  if (code === "not_found") return "not_found";
+  if (!code && status >= 500) return "network_error";
+  return code || "network_error";
 }
 
 async function fetchJsonWithRetry<T>(
@@ -347,21 +360,7 @@ async function fetchJsonWithRetry<T>(
       if (!response.ok) {
         const payload = (responseJson as ManusErrorPayload | null) || null;
         const message = getErrorMessage(payload, response.status);
-        const fullErrorContext = JSON.stringify({
-          url,
-          method,
-          status: response.status,
-          authorizationHeaderFormat: headers["x-manus-api-key"]
-            ? `x-manus-api-key: ${maskApiKey(headers["x-manus-api-key"])}`
-            : headers.authorization
-              ? `Authorization: ***${headers.authorization.slice(-6)}`
-              : "none",
-          requestHeaders: maskedHeaders,
-          requestJsonBody: bodyText,
-          responseHeaders,
-          fullErrorBody: responseText,
-          fullErrorJson: responseJson,
-        });
+        const errorCode = normalizeProviderErrorCode(payload?.error?.code, response.status);
 
         debugHttpLog("error", {
           attempt,
@@ -378,7 +377,7 @@ async function fetchJsonWithRetry<T>(
           continue;
         }
 
-        throw new ManusReceiptError(`${message} | debug: ${fullErrorContext}`, payload?.error?.code || "http_error");
+        throw new ManusReceiptError(message, errorCode);
       }
 
       if (responseJson === null) {
@@ -693,8 +692,6 @@ export class ManusReceiptExtractionProvider implements ReceiptExtractionProvider
         durationMs: Date.now() - extractionStartedAt,
         success: true,
         status: structured.status,
-        rawStructuredOutput: structured.value,
-        parsedNormalizedOutput: normalized,
       },
     };
   }

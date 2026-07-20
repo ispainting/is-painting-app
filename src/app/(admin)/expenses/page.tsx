@@ -8,6 +8,15 @@ import { toast } from "sonner";
 
 type UploadState = "queued" | "uploading" | "success" | "failed" | "canceled";
 type ExtractionStatus = "idle" | "queued" | "processing" | "completed" | "failed" | "needs_review";
+type ExtractionErrorCode =
+  | "resource_exhausted"
+  | "invalid_api_key"
+  | "unauthorized"
+  | "rate_limit"
+  | "timeout"
+  | "bad_request"
+  | "network_error"
+  | "unknown";
 
 type UploadItem = {
   id: string;
@@ -58,6 +67,7 @@ type ExtractedReceiptData = {
 type ExtractionState = {
   status: ExtractionStatus;
   message?: string;
+  errorCode?: ExtractionErrorCode;
   attachmentId?: number;
   data?: ExtractedReceiptData | null;
   provider?: string;
@@ -202,6 +212,7 @@ export default function ExpensesPage() {
         setExtractionState({
           status: "failed",
           message: result.message,
+          errorCode: (result.errorCode as ExtractionErrorCode | undefined) ?? "unknown",
           attachmentId: result.attachmentId,
           data: null,
           provider: result.provider,
@@ -233,6 +244,7 @@ export default function ExpensesPage() {
         ...prev,
         status: "failed",
         message: error.message || "AI reading failed.",
+        errorCode: "unknown",
       }));
       toast.error(error.message || "AI reading failed");
     },
@@ -749,7 +761,39 @@ export default function ExpensesPage() {
           {(extractionState.status === "failed" || extractionState.status === "needs_review") && (
             <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
               <p className="font-medium">Needs review</p>
-              <p>{extractionState.message || "Receipt information could not be fully verified."}</p>
+              <p>
+                {extractionState.errorCode === "resource_exhausted"
+                  ? "AI receipt extraction is temporarily unavailable because the Manus API credit limit has been reached. You can still enter the expense manually."
+                  : (extractionState.message || "Receipt information could not be fully verified.")}
+              </p>
+              {extractionState.status === "failed" && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    className="btn btn-secondary text-xs"
+                    onClick={() => {
+                      if (extractionState.attachmentId) {
+                        beginExtraction(extractionState.attachmentId);
+                      }
+                    }}
+                    disabled={!extractionState.attachmentId || extractReceipt.isPending}
+                  >
+                    Retry
+                  </button>
+                  <button
+                    className="btn text-xs"
+                    onClick={() => {
+                      setExtractionState((prev) => ({
+                        ...prev,
+                        status: "idle",
+                        message: undefined,
+                        errorCode: undefined,
+                      }));
+                    }}
+                  >
+                    Continue Manually
+                  </button>
+                </div>
+              )}
             </div>
           )}
 

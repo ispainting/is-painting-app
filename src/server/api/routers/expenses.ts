@@ -50,6 +50,57 @@ const createInput = z.object({
   ).default([]),
 });
 
+type ExtractionErrorCode =
+  | "resource_exhausted"
+  | "invalid_api_key"
+  | "unauthorized"
+  | "rate_limit"
+  | "timeout"
+  | "bad_request"
+  | "network_error"
+  | "unknown";
+
+function mapExtractionErrorCode(error: unknown): ExtractionErrorCode {
+  const code =
+    typeof error === "object" && error && "code" in error
+      ? String((error as { code?: unknown }).code ?? "")
+      : "";
+
+  switch (code) {
+    case "resource_exhausted":
+    case "invalid_api_key":
+    case "unauthorized":
+    case "rate_limit":
+    case "timeout":
+    case "bad_request":
+    case "network_error":
+      return code;
+    default:
+      return "unknown";
+  }
+}
+
+function getFriendlyExtractionErrorMessage(errorCode: ExtractionErrorCode) {
+  switch (errorCode) {
+    case "resource_exhausted":
+      return "AI receipt extraction is temporarily unavailable because the Manus API credit limit has been reached. You can still enter the expense manually.";
+    case "invalid_api_key":
+      return "AI receipt extraction is unavailable because the Manus API key is invalid.";
+    case "unauthorized":
+      return "AI receipt extraction is unavailable because Manus authorization failed.";
+    case "rate_limit":
+      return "AI receipt extraction is busy right now. Please retry in a moment.";
+    case "timeout":
+      return "AI receipt extraction took too long. Please retry.";
+    case "bad_request":
+      return "AI receipt extraction could not process this file. Please review manually or try another receipt image.";
+    case "network_error":
+      return "AI receipt extraction is temporarily unavailable due to a network issue. Please retry.";
+    default:
+      return "AI receipt extraction failed. You can still enter the expense manually.";
+  }
+}
+
 export const expensesRouter = router({
   list: protectedProcedure.input(listInput).query(async ({ ctx, input }) => {
     const search = input?.search?.trim();
@@ -345,22 +396,18 @@ export const expensesRouter = router({
           attachmentId: attachment.id,
           message: status === "needs_review" ? "Receipt extracted with low confidence. Needs review." : "Receipt extracted successfully.",
           data: extracted.normalized,
-          rawStructuredOutput: extracted.metadata?.rawStructuredOutput ?? null,
-          parsedNormalizedOutput: extracted.metadata?.parsedNormalizedOutput ?? extracted.normalized,
           provider: extracted.provider,
           model: extracted.model,
-          runtime: {
-            vercelEnv: process.env.VERCEL_ENV ?? null,
-            manusApiKey: process.env.MANUS_API_KEY ? "FOUND" : "MISSING",
-          },
         };
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Receipt extraction failed.";
+        const internalMessage = error instanceof Error ? error.message : "Receipt extraction failed.";
+        const errorCode = mapExtractionErrorCode(error);
+        const message = getFriendlyExtractionErrorMessage(errorCode);
         await ctx.prisma.expenseAttachment.update({
           where: { id: attachment.id },
           data: {
             extractionStatus: "failed",
-            extractionError: message,
+            extractionError: internalMessage,
             extractionProcessedAt: new Date(),
           },
         });
@@ -375,20 +422,18 @@ export const expensesRouter = router({
           success: false,
           status: "failed",
           overallConfidence: null,
-          error: message,
+          error: internalMessage,
+          errorCode,
         });
 
         return {
           status: "failed" as const,
           attachmentId: attachment.id,
           message,
+          errorCode,
           data: null,
           provider: "manus",
           model: "manus-1.6",
-          runtime: {
-            vercelEnv: process.env.VERCEL_ENV ?? null,
-            manusApiKey: process.env.MANUS_API_KEY ? "FOUND" : "MISSING",
-          },
         };
       }
     }),
