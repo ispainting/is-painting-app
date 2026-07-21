@@ -218,7 +218,12 @@ export const expensesRouter = router({
       }),
     ]);
 
-    return { jobs, employees, orphanAttachments };
+    return {
+      jobs,
+      employees,
+      orphanAttachments,
+      receiptExtractionEnabled: isReceiptExtractionEnabled(),
+    };
   }),
 
   create: protectedProcedure.input(createInput).mutation(async ({ ctx, input }) => {
@@ -358,6 +363,16 @@ export const expensesRouter = router({
       }
 
       if (!isReceiptExtractionEnabled()) {
+        await ctx.prisma.expenseAttachment.update({
+          where: { id: attachment.id },
+          data: {
+            extractionStatus: "failed",
+            providerErrorCode: "bad_request",
+            extractionError: "AI receipt extraction is disabled by MANUS_RECEIPT_EXTRACTION_ENABLED=false.",
+            extractionCompletedAt: new Date(),
+            extractionProcessedAt: new Date(),
+          },
+        });
         return {
           status: "failed" as const,
           attachmentId: attachment.id,
@@ -367,6 +382,33 @@ export const expensesRouter = router({
           provider: "manus",
           model: "manus-1.6",
         };
+      }
+
+      if (!forceNewTask && attachment.extractionStatus === "failed" && attachment.providerErrorCode === "bad_request") {
+        return {
+          status: "failed" as const,
+          attachmentId: attachment.id,
+          message: "AI receipt extraction is currently disabled. You can enter this expense manually.",
+          errorCode: "bad_request" as const,
+          data: null,
+          provider: "manus",
+          model: "manus-1.6",
+        };
+      }
+
+      if (!forceNewTask && (attachment.extractionStatus === "queued" || attachment.extractionStatus === "processing")) {
+        if (attachment.manusTaskId) {
+          // Continue by polling existing task; do not create another task.
+        } else if (attachment.extractionAttemptCount >= 1) {
+          return {
+            status: "processing" as const,
+            attachmentId: attachment.id,
+            message: "Receipt extraction is already in progress.",
+            data: null,
+            provider: "manus",
+            model: "manus-1.6",
+          };
+        }
       }
 
       if (!forceNewTask && attachment.extractionStatus === "completed" && attachment.extractionStructured) {
@@ -418,17 +460,6 @@ export const expensesRouter = router({
       });
 
       const extractionStartedAt = Date.now();
-
-      if (!forceNewTask && attachment.extractionStatus === "processing" && !attachment.manusTaskId) {
-        return {
-          status: "processing" as const,
-          attachmentId: attachment.id,
-          message: "Receipt extraction is already in progress.",
-          data: null,
-          provider: "manus",
-          model: "manus-1.6",
-        };
-      }
 
       try {
         const object = await provider.download(attachment.storagePath);

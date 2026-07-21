@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDate } from "@/lib/utils";
@@ -160,6 +160,13 @@ export default function ExpensesPage() {
   const xhrMap = useRef<Map<string, XMLHttpRequest>>(new Map());
   const extractionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const extractionInFlightForAttachmentRef = useRef<number | null>(null);
+  const extractionStartedAttachmentIdsRef = useRef<Set<number>>(new Set());
+
+  function showDisabledExtractionToast() {
+    toast.error("AI receipt extraction is currently disabled. You can enter this expense manually.", {
+      id: "receipt-ai-disabled",
+    });
+  }
 
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"" | (typeof STATUS_OPTIONS)[number]>("");
@@ -208,8 +215,6 @@ export default function ExpensesPage() {
 
   const extractReceipt = api.expenses.extractReceipt.useMutation({
     onSuccess: (result) => {
-      extractionInFlightForAttachmentRef.current = null;
-      clearExtractionTimeout();
       const extractedData = (result.data ?? null) as ExtractedReceiptData | null;
 
       if (result.status === "processing") {
@@ -225,6 +230,9 @@ export default function ExpensesPage() {
       }
 
       if (result.status === "failed" || !extractedData) {
+        if (result.errorCode === "bad_request" && result.message?.includes("currently disabled")) {
+          showDisabledExtractionToast();
+        }
         setExtractionState({
           status: "failed",
           message: result.message,
@@ -234,7 +242,9 @@ export default function ExpensesPage() {
           provider: result.provider,
           model: result.model,
         });
-        toast.error(result.message || "AI reading failed");
+        if (!(result.errorCode === "bad_request" && result.message?.includes("currently disabled"))) {
+          toast.error(result.message || "AI reading failed");
+        }
         return;
       }
 
@@ -255,8 +265,6 @@ export default function ExpensesPage() {
       }
     },
     onError: (error) => {
-      extractionInFlightForAttachmentRef.current = null;
-      clearExtractionTimeout();
       setExtractionState((prev) => ({
         ...prev,
         status: "failed",
@@ -264,6 +272,10 @@ export default function ExpensesPage() {
         errorCode: "unknown",
       }));
       toast.error(error.message || "AI reading failed");
+    },
+    onSettled: () => {
+      extractionInFlightForAttachmentRef.current = null;
+      clearExtractionTimeout();
     },
   });
 
@@ -387,8 +399,30 @@ export default function ExpensesPage() {
   }
 
   function beginExtraction(attachmentId: number, forceNewTask = false) {
+    if (!forceNewTask && extractionStartedAttachmentIdsRef.current.has(attachmentId)) {
+      return;
+    }
+
+    const extractionEnabled = metaQuery.data?.receiptExtractionEnabled !== false;
+    if (!extractionEnabled) {
+      extractionStartedAttachmentIdsRef.current.add(attachmentId);
+      setExtractionState({
+        status: "failed",
+        attachmentId,
+        message: "AI receipt extraction is currently disabled. You can enter this expense manually.",
+        errorCode: "bad_request",
+        data: null,
+      });
+      showDisabledExtractionToast();
+      return;
+    }
+
     if (!forceNewTask && extractReceipt.isPending && extractionInFlightForAttachmentRef.current === attachmentId) {
       return;
+    }
+
+    if (!forceNewTask) {
+      extractionStartedAttachmentIdsRef.current.add(attachmentId);
     }
 
     extractionInFlightForAttachmentRef.current = attachmentId;
@@ -414,35 +448,6 @@ export default function ExpensesPage() {
 
     extractReceipt.mutate({ attachmentId, forceNewTask });
   }
-
-  useEffect(() => {
-    if (!showAddExpense) return;
-    if (extractReceipt.isPending) return;
-
-    const selectedId = primaryAttachmentId;
-    if (!selectedId) return;
-
-    const orphanAttachments = metaQuery.data?.orphanAttachments ?? [];
-    const selectedAttachment = orphanAttachments.find((item) => item.id === selectedId);
-    if (!selectedAttachment) return;
-
-    if (selectedAttachment.extractionStatus !== "queued" && selectedAttachment.extractionStatus !== "processing") {
-      return;
-    }
-
-    if (extractionState.status === "processing" && extractionState.attachmentId === selectedId) {
-      return;
-    }
-
-    beginExtraction(selectedId);
-  }, [
-    showAddExpense,
-    extractReceipt.isPending,
-    primaryAttachmentId,
-    metaQuery.data?.orphanAttachments,
-    extractionState.status,
-    extractionState.attachmentId,
-  ]);
 
   function applyExtractedData(data: ExtractedReceiptData) {
     setForm((prev) => ({
@@ -553,6 +558,7 @@ export default function ExpensesPage() {
           });
         } else {
           setShowAddExpense(true);
+          extractionStartedAttachmentIdsRef.current.delete(json.attachment.id);
           setExtractionState({
             status: "queued",
             attachmentId: json.attachment.id,
