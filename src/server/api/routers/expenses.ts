@@ -418,7 +418,18 @@ export const expensesRouter = router({
       });
 
       const extractionStartedAt = Date.now();
-      const shouldIncrementAttempt = forceNewTask || !attachment.manusTaskId;
+
+      if (!forceNewTask && attachment.extractionStatus === "processing" && !attachment.manusTaskId) {
+        return {
+          status: "processing" as const,
+          attachmentId: attachment.id,
+          message: "Receipt extraction is already in progress.",
+          data: null,
+          provider: "manus",
+          model: "manus-1.6",
+        };
+      }
+
       try {
         const object = await provider.download(attachment.storagePath);
         const jobs = await ctx.prisma.job.findMany({
@@ -435,6 +446,15 @@ export const expensesRouter = router({
           fileData: object.data,
           jobOptions: jobs,
           existingTaskId: forceNewTask ? null : attachment.manusTaskId,
+          onTaskCreated: async (taskId) => {
+            await ctx.prisma.expenseAttachment.update({
+              where: { id: attachment.id },
+              data: {
+                manusTaskId: taskId,
+                extractionAttemptCount: { increment: 1 },
+              },
+            });
+          },
         });
 
         const status = extracted.needsReview ? "needs_review" : "completed";
@@ -451,9 +471,6 @@ export const expensesRouter = router({
             extractionError: null,
             providerErrorCode: null,
             manusTaskId: extracted.metadata?.taskId ?? attachment.manusTaskId,
-            extractionAttemptCount: shouldIncrementAttempt
-              ? { increment: 1 }
-              : attachment.extractionAttemptCount,
             extractionCompletedAt: new Date(),
             extractionProcessedAt: new Date(),
           },
@@ -491,9 +508,6 @@ export const expensesRouter = router({
             extractionError: internalMessage,
             providerErrorCode: errorCode,
             manusTaskId: errorCode === "not_found" ? null : attachment.manusTaskId,
-            extractionAttemptCount: shouldIncrementAttempt
-              ? { increment: 1 }
-              : attachment.extractionAttemptCount,
             extractionCompletedAt: new Date(),
             extractionProcessedAt: new Date(),
           },

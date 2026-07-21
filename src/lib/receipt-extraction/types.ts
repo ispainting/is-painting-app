@@ -47,6 +47,7 @@ export type ReceiptExtractionInput = {
   fileData: ArrayBuffer;
   jobOptions: Array<{ id: number; name: string }>;
   existingTaskId?: string | null;
+  onTaskCreated?: ((taskId: string) => Promise<void> | void) | null;
 };
 
 export type ReceiptExtractionResult = {

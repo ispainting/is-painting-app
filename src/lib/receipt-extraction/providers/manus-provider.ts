@@ -702,6 +702,9 @@ export class ManusReceiptExtractionProvider implements ReceiptExtractionProvider
     if (!taskId) {
       const fileId = await uploadFileToManus(apiKey, input);
       taskId = await createTask(apiKey, input, fileId);
+      if (input.onTaskCreated) {
+        await input.onTaskCreated(taskId);
+      }
       taskCreated = true;
     }
 

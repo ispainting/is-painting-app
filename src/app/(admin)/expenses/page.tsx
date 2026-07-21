@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDate } from "@/lib/utils";
@@ -159,6 +159,7 @@ export default function ExpensesPage() {
   const replaceInputRef = useRef<HTMLInputElement | null>(null);
   const xhrMap = useRef<Map<string, XMLHttpRequest>>(new Map());
   const extractionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const extractionInFlightForAttachmentRef = useRef<number | null>(null);
 
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"" | (typeof STATUS_OPTIONS)[number]>("");
@@ -207,8 +208,21 @@ export default function ExpensesPage() {
 
   const extractReceipt = api.expenses.extractReceipt.useMutation({
     onSuccess: (result) => {
+      extractionInFlightForAttachmentRef.current = null;
       clearExtractionTimeout();
       const extractedData = (result.data ?? null) as ExtractedReceiptData | null;
+
+      if (result.status === "processing") {
+        setExtractionState((prev) => ({
+          ...prev,
+          status: "processing",
+          attachmentId: result.attachmentId,
+          message: result.message || "Reading receipt with AI...",
+          provider: result.provider,
+          model: result.model,
+        }));
+        return;
+      }
 
       if (result.status === "failed" || !extractedData) {
         setExtractionState({
@@ -241,6 +255,7 @@ export default function ExpensesPage() {
       }
     },
     onError: (error) => {
+      extractionInFlightForAttachmentRef.current = null;
       clearExtractionTimeout();
       setExtractionState((prev) => ({
         ...prev,
@@ -372,6 +387,11 @@ export default function ExpensesPage() {
   }
 
   function beginExtraction(attachmentId: number, forceNewTask = false) {
+    if (!forceNewTask && extractReceipt.isPending && extractionInFlightForAttachmentRef.current === attachmentId) {
+      return;
+    }
+
+    extractionInFlightForAttachmentRef.current = attachmentId;
     clearExtractionTimeout();
     setExtractionState({
       status: "processing",
@@ -395,15 +415,34 @@ export default function ExpensesPage() {
     extractReceipt.mutate({ attachmentId, forceNewTask });
   }
 
-  function beginExtractionWithConfirmation(attachmentId: number, forceNewTask = false) {
-    if (forceNewTask) {
-      const confirmed = window.confirm(
-        "Start a brand new AI extraction task for this receipt? This can consume additional Manus API credits.",
-      );
-      if (!confirmed) return;
+  useEffect(() => {
+    if (!showAddExpense) return;
+    if (extractReceipt.isPending) return;
+
+    const selectedId = primaryAttachmentId;
+    if (!selectedId) return;
+
+    const orphanAttachments = metaQuery.data?.orphanAttachments ?? [];
+    const selectedAttachment = orphanAttachments.find((item) => item.id === selectedId);
+    if (!selectedAttachment) return;
+
+    if (selectedAttachment.extractionStatus !== "queued" && selectedAttachment.extractionStatus !== "processing") {
+      return;
     }
-    beginExtraction(attachmentId, forceNewTask);
-  }
+
+    if (extractionState.status === "processing" && extractionState.attachmentId === selectedId) {
+      return;
+    }
+
+    beginExtraction(selectedId);
+  }, [
+    showAddExpense,
+    extractReceipt.isPending,
+    primaryAttachmentId,
+    metaQuery.data?.orphanAttachments,
+    extractionState.status,
+    extractionState.attachmentId,
+  ]);
 
   function applyExtractedData(data: ExtractedReceiptData) {
     setForm((prev) => ({
@@ -515,10 +554,11 @@ export default function ExpensesPage() {
         } else {
           setShowAddExpense(true);
           setExtractionState({
-            status: "idle",
+            status: "queued",
             attachmentId: json.attachment.id,
-            message: "Receipt uploaded. Click Extract with AI to start receipt reading.",
+            message: "Receipt uploaded. Starting AI receipt reading...",
           });
+          beginExtraction(json.attachment.id);
         }
 
         toast.success("Receipt uploaded. Review and save the expense details.");
@@ -783,12 +823,12 @@ export default function ExpensesPage() {
                     className="btn btn-secondary text-xs"
                     onClick={() => {
                       if (extractionState.attachmentId) {
-                        beginExtractionWithConfirmation(extractionState.attachmentId, true);
+                        beginExtraction(extractionState.attachmentId, true);
                       }
                     }}
                     disabled={!extractionState.attachmentId || extractReceipt.isPending}
                   >
-                    Start New Extraction
+                    Retry AI Reading
                   </button>
                   <button
                     className="btn text-xs"
@@ -1031,19 +1071,6 @@ export default function ExpensesPage() {
           </div>
 
           <div className="mt-4 flex flex-wrap gap-2">
-            <button
-              className="btn btn-secondary"
-              onClick={() => {
-                if (!primaryAttachmentId) {
-                  toast.error("Select a receipt attachment first.");
-                  return;
-                }
-                beginExtractionWithConfirmation(primaryAttachmentId, false);
-              }}
-              disabled={extractReceipt.isPending}
-            >
-              Extract with AI
-            </button>
             <button className="btn btn-secondary" onClick={clearExtractedData}>Clear Extracted Data</button>
             {viewReceiptHref && (
               <a className="btn btn-secondary" href={viewReceiptHref} target="_blank" rel="noreferrer">
