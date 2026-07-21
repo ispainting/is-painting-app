@@ -1,15 +1,13 @@
-import { writeFileSync } from "node:fs";
 import { normalizeExtractionResponse, shouldMarkNeedsReview } from "../normalization";
 import type {
   ReceiptExtractionInput,
   ReceiptExtractionProvider,
   ReceiptExtractionResult,
 } from "../types";
-import { GoogleAuth } from "google-auth-library";
+import { getVercelOidcToken } from "@vercel/oidc";
+import { ExternalAccountClient } from "google-auth-library";
 
 const DEFAULT_LOCATION = "us";
-const DOC_AI_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
-const EXTERNAL_ACCOUNT_CONFIG_PATH = "/tmp/google-external-account-config.json";
 
 type DocAiEntity = {
   type?: string;
@@ -223,29 +221,71 @@ function mapDocAiToLooseExtraction(response: DocumentAiProcessResponse) {
   };
 }
 
-function ensureExternalAccountAdcFromEnv() {
-  if (process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim()) return;
-
-  const rawConfig = process.env.GOOGLE_EXTERNAL_ACCOUNT_CONFIG_JSON?.trim();
-  if (!rawConfig) return;
-
-  writeFileSync(EXTERNAL_ACCOUNT_CONFIG_PATH, rawConfig, { encoding: "utf8", mode: 0o600 });
-  process.env.GOOGLE_APPLICATION_CREDENTIALS = EXTERNAL_ACCOUNT_CONFIG_PATH;
-}
-
 function getProjectId() {
   const projectId =
-    process.env.GOOGLE_DOCUMENT_AI_PROJECT_ID?.trim()
+    process.env.GCP_PROJECT_ID?.trim()
+    || process.env.GOOGLE_DOCUMENT_AI_PROJECT_ID?.trim()
     || process.env.GOOGLE_CLOUD_PROJECT?.trim()
     || process.env.GCLOUD_PROJECT?.trim();
 
   if (!projectId) {
     throw new DocumentAiReceiptError(
-      "AI provider unavailable: missing GOOGLE_DOCUMENT_AI_PROJECT_ID (or GOOGLE_CLOUD_PROJECT).",
+      "AI provider unavailable: missing GCP_PROJECT_ID (or GOOGLE_DOCUMENT_AI_PROJECT_ID).",
       "bad_request",
     );
   }
   return projectId;
+}
+
+function getProjectNumber() {
+  const projectNumber = process.env.GCP_PROJECT_NUMBER?.trim();
+  if (!projectNumber) {
+    throw new DocumentAiReceiptError(
+      "AI provider unavailable: missing GCP_PROJECT_NUMBER.",
+      "bad_request",
+    );
+  }
+  return projectNumber;
+}
+
+function getServiceAccountEmail() {
+  const email = process.env.GCP_SERVICE_ACCOUNT_EMAIL?.trim();
+  if (!email) {
+    throw new DocumentAiReceiptError(
+      "AI provider unavailable: missing GCP_SERVICE_ACCOUNT_EMAIL.",
+      "bad_request",
+    );
+  }
+  return email;
+}
+
+function getPoolId() {
+  const poolId = process.env.GCP_WORKLOAD_IDENTITY_POOL_ID?.trim();
+  if (!poolId) {
+    throw new DocumentAiReceiptError(
+      "AI provider unavailable: missing GCP_WORKLOAD_IDENTITY_POOL_ID.",
+      "bad_request",
+    );
+  }
+  return poolId;
+}
+
+function getProviderId() {
+  const providerId = process.env.GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID?.trim();
+  if (!providerId) {
+    throw new DocumentAiReceiptError(
+      "AI provider unavailable: missing GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID.",
+      "bad_request",
+    );
+  }
+  return providerId;
+}
+
+function getAudience(projectNumber: string, poolId: string, providerId: string) {
+  return (
+    process.env.GCP_AUDIENCE?.trim()
+    || `https://iam.googleapis.com/projects/${projectNumber}/locations/global/workloadIdentityPools/${poolId}/providers/${providerId}`
+  );
 }
 
 function getLocation() {
@@ -263,13 +303,25 @@ function getProcessorId() {
   return processorId;
 }
 
-async function getAccessToken() {
-  ensureExternalAccountAdcFromEnv();
-
+async function getAccessToken(audience: string, serviceAccountEmail: string) {
   try {
-    const auth = new GoogleAuth({ scopes: [DOC_AI_SCOPE] });
-    const client = await auth.getClient();
-    const token = await client.getAccessToken();
+    const authClient = ExternalAccountClient.fromJSON({
+      type: "external_account",
+      audience,
+      subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+      token_url: "https://sts.googleapis.com/v1/token",
+      service_account_impersonation_url: `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${serviceAccountEmail}:generateAccessToken`,
+      subject_token_supplier: {
+        getSubjectToken: () => getVercelOidcToken({ audience }),
+      },
+    });
+
+    if (!authClient) {
+      throw new DocumentAiReceiptError("AI provider unavailable: failed to initialize Google external account client.", "unauthorized");
+    }
+
+    const tokenResponse = await authClient.getAccessToken();
+    const token = typeof tokenResponse === "string" ? tokenResponse : tokenResponse?.token;
     if (!token) {
       throw new DocumentAiReceiptError("AI provider unavailable: failed to obtain Google ADC access token.", "unauthorized");
     }
@@ -331,11 +383,16 @@ export class GoogleDocumentAiReceiptExtractionProvider implements ReceiptExtract
     }
 
     const projectId = getProjectId();
+    const projectNumber = getProjectNumber();
+    const poolId = getPoolId();
+    const providerId = getProviderId();
+    const serviceAccountEmail = getServiceAccountEmail();
     const location = getLocation();
     const processorId = getProcessorId();
     const processorResource = getProcessorResourceName(projectId, location, processorId);
 
-    const accessToken = await getAccessToken();
+    const audience = getAudience(projectNumber, poolId, providerId);
+    const accessToken = await getAccessToken(audience, serviceAccountEmail);
     const startedAt = Date.now();
 
     const endpoint = `https://${location}-documentai.googleapis.com/v1/${processorResource}:process`;
