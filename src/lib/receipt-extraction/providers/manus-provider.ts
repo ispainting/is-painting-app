@@ -70,7 +70,11 @@ function getApiKey() {
 }
 
 function isExtractionEnabled() {
-  const raw = (process.env.MANUS_RECEIPT_EXTRACTION_ENABLED || "false").trim().toLowerCase();
+  const raw = (
+    process.env.RECEIPT_EXTRACTION_ENABLED
+    ?? process.env.MANUS_RECEIPT_EXTRACTION_ENABLED
+    ?? "false"
+  ).trim().toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
 }
 

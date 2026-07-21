@@ -62,8 +62,27 @@ type ExtractionErrorCode =
   | "unknown";
 
 function isReceiptExtractionEnabled() {
-  const raw = (process.env.MANUS_RECEIPT_EXTRACTION_ENABLED || "false").trim().toLowerCase();
+  const raw = (
+    process.env.RECEIPT_EXTRACTION_ENABLED
+    ?? process.env.MANUS_RECEIPT_EXTRACTION_ENABLED
+    ?? "false"
+  ).trim().toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
+function getActiveReceiptProviderInfo() {
+  const configured = (process.env.RECEIPT_EXTRACTION_PROVIDER || "google_document_ai").trim().toLowerCase();
+  if (configured === "manus") {
+    return {
+      provider: "manus",
+      model: "manus-1.6",
+    } as const;
+  }
+
+  return {
+    provider: "google_document_ai",
+    model: process.env.GOOGLE_DOCUMENT_AI_PROCESSOR_VERSION_ID?.trim() || "document-ai-processor",
+  } as const;
 }
 
 function mapExtractionErrorCode(error: unknown): ExtractionErrorCode {
@@ -90,11 +109,11 @@ function mapExtractionErrorCode(error: unknown): ExtractionErrorCode {
 function getFriendlyExtractionErrorMessage(errorCode: ExtractionErrorCode) {
   switch (errorCode) {
     case "resource_exhausted":
-      return "AI receipt extraction is temporarily unavailable because the Manus API credit limit has been reached. You can still enter the expense manually.";
+      return "AI receipt extraction is temporarily unavailable because the provider credit limit has been reached. You can still enter the expense manually.";
     case "invalid_api_key":
-      return "AI receipt extraction is unavailable because the Manus API key is invalid.";
+      return "AI receipt extraction is unavailable because the provider credentials are invalid.";
     case "unauthorized":
-      return "AI receipt extraction is unavailable because Manus authorization failed.";
+      return "AI receipt extraction is unavailable because provider authorization failed.";
     case "rate_limit":
       return "AI receipt extraction is busy right now. Please retry in a moment.";
     case "timeout":
@@ -223,6 +242,7 @@ export const expensesRouter = router({
       employees,
       orphanAttachments,
       receiptExtractionEnabled: isReceiptExtractionEnabled(),
+      receiptExtractionProvider: getActiveReceiptProviderInfo().provider,
     };
   }),
 
@@ -327,6 +347,7 @@ export const expensesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      const providerInfo = getActiveReceiptProviderInfo();
       const forceNewTask = input.forceNewTask === true;
       const provider = getReceiptStorageProvider();
       const attachment = await ctx.prisma.expenseAttachment.findUnique({
@@ -368,7 +389,7 @@ export const expensesRouter = router({
           data: {
             extractionStatus: "failed",
             providerErrorCode: "bad_request",
-            extractionError: "AI receipt extraction is disabled by MANUS_RECEIPT_EXTRACTION_ENABLED=false.",
+            extractionError: "AI receipt extraction is disabled by RECEIPT_EXTRACTION_ENABLED=false.",
             extractionCompletedAt: new Date(),
             extractionProcessedAt: new Date(),
           },
@@ -379,8 +400,8 @@ export const expensesRouter = router({
           message: "AI receipt extraction is currently disabled. You can enter this expense manually.",
           errorCode: "bad_request" as const,
           data: null,
-          provider: "manus",
-          model: "manus-1.6",
+          provider: providerInfo.provider,
+          model: providerInfo.model,
         };
       }
 
@@ -391,8 +412,8 @@ export const expensesRouter = router({
           message: "AI receipt extraction is currently disabled. You can enter this expense manually.",
           errorCode: "bad_request" as const,
           data: null,
-          provider: "manus",
-          model: "manus-1.6",
+          provider: providerInfo.provider,
+          model: providerInfo.model,
         };
       }
 
@@ -405,8 +426,8 @@ export const expensesRouter = router({
             attachmentId: attachment.id,
             message: "Receipt extraction is already in progress.",
             data: null,
-            provider: "manus",
-            model: "manus-1.6",
+            provider: providerInfo.provider,
+            model: providerInfo.model,
           };
         }
       }
@@ -417,8 +438,8 @@ export const expensesRouter = router({
           attachmentId: attachment.id,
           message: "Receipt already extracted. Reusing saved AI result.",
           data: attachment.extractionStructured,
-          provider: "manus",
-          model: "manus-1.6",
+          provider: providerInfo.provider,
+          model: providerInfo.model,
         };
       }
 
@@ -429,8 +450,8 @@ export const expensesRouter = router({
           message: getFriendlyExtractionErrorMessage("resource_exhausted"),
           errorCode: "resource_exhausted" as const,
           data: null,
-          provider: "manus",
-          model: "manus-1.6",
+          provider: providerInfo.provider,
+          model: providerInfo.model,
         };
       }
 
@@ -442,8 +463,8 @@ export const expensesRouter = router({
           message: "AI receipt extraction has already been attempted for this upload. Choose Start New Extraction to run it again.",
           errorCode: "bad_request" as const,
           data: null,
-          provider: "manus",
-          model: "manus-1.6",
+          provider: providerInfo.provider,
+          model: providerInfo.model,
         };
       }
 
@@ -546,8 +567,8 @@ export const expensesRouter = router({
 
         console.warn("[receipt-extraction] failed", {
           attachmentId: attachment.id,
-          provider: "manus",
-          model: "manus-1.6",
+          provider: providerInfo.provider,
+          model: providerInfo.model,
           taskId: null,
           creditsUsed: null,
           durationMs: Date.now() - extractionStartedAt,
@@ -565,8 +586,8 @@ export const expensesRouter = router({
           message,
           errorCode,
           data: null,
-          provider: "manus",
-          model: "manus-1.6",
+          provider: providerInfo.provider,
+          model: providerInfo.model,
         };
       }
     }),

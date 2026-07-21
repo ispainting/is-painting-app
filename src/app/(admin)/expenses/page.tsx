@@ -820,7 +820,7 @@ export default function ExpensesPage() {
               <p className="font-medium">Needs review</p>
               <p>
                 {extractionState.errorCode === "resource_exhausted"
-                  ? "AI receipt extraction is temporarily unavailable because the Manus API credit limit has been reached. You can still enter the expense manually."
+                  ? "AI receipt extraction is temporarily unavailable because provider credits are currently unavailable. You can still enter the expense manually."
                   : (extractionState.message || "Receipt information could not be fully verified.")}
               </p>
               {extractionState.status === "failed" && (
