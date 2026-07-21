@@ -5,35 +5,40 @@ import {
   type NormalizedReceiptExtraction,
 } from "./types";
 
-const rawLineItemSchema = z.object({
-  description: z.string().optional().nullable(),
-  quantity: z.union([z.number(), z.string()]).optional().nullable(),
-  unitPrice: z.union([z.number(), z.string()]).optional().nullable(),
-  totalPrice: z.union([z.number(), z.string()]).optional().nullable(),
-  confidence: z.union([z.number(), z.string()]).optional().nullable(),
-});
+type LooseRecord = Record<string, unknown>;
 
-const rawExtractionSchema = z.object({
-  vendor: z.object({ value: z.union([z.string(), z.null()]).optional(), confidence: z.union([z.number(), z.string()]).optional() }).optional(),
-  date: z.object({ value: z.union([z.string(), z.null()]).optional(), confidence: z.union([z.number(), z.string()]).optional() }).optional(),
-  subtotal: z.object({ value: z.union([z.number(), z.string(), z.null()]).optional(), confidence: z.union([z.number(), z.string()]).optional() }).optional(),
-  tax: z.object({ value: z.union([z.number(), z.string(), z.null()]).optional(), confidence: z.union([z.number(), z.string()]).optional() }).optional(),
-  total: z.object({ value: z.union([z.number(), z.string(), z.null()]).optional(), confidence: z.union([z.number(), z.string()]).optional() }).optional(),
-  paymentMethod: z.object({ value: z.union([z.string(), z.null()]).optional(), confidence: z.union([z.number(), z.string()]).optional() }).optional(),
-  receiptNumber: z.object({ value: z.union([z.string(), z.null()]).optional(), confidence: z.union([z.number(), z.string()]).optional() }).optional(),
-  category: z.object({ value: z.union([z.string(), z.null()]).optional(), confidence: z.union([z.number(), z.string()]).optional() }).optional(),
-  description: z.object({ value: z.union([z.string(), z.null()]).optional(), confidence: z.union([z.number(), z.string()]).optional() }).optional(),
-  items: z.array(rawLineItemSchema).optional(),
-  rawText: z.union([z.string(), z.null()]).optional(),
-  overallConfidence: z.union([z.number(), z.string()]).optional(),
-  suggestedJob: z
-    .object({
-      jobName: z.union([z.string(), z.null()]).optional(),
-      confidence: z.union([z.number(), z.string()]).optional(),
-      reason: z.union([z.string(), z.null()]).optional(),
-    })
-    .optional(),
-});
+function toRecord(value: unknown): LooseRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as LooseRecord;
+}
+
+function readAlias(source: LooseRecord, aliases: string[]): unknown {
+  for (const key of aliases) {
+    if (Object.prototype.hasOwnProperty.call(source, key)) {
+      return source[key];
+    }
+  }
+  return undefined;
+}
+
+function unwrapValue(raw: unknown): { value: unknown; confidence: unknown } {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const obj = raw as LooseRecord;
+    const nestedValue = readAlias(obj, ["value", "val", "text", "amount", "data"]);
+    const nestedConfidence = readAlias(obj, ["confidence", "score", "probability", "conf"]);
+    if (nestedValue !== undefined || nestedConfidence !== undefined) {
+      return {
+        value: nestedValue,
+        confidence: nestedConfidence,
+      };
+    }
+  }
+
+  return {
+    value: raw,
+    confidence: null,
+  };
+}
 
 const CATEGORY_VALUES = Object.values(ExpenseCategory);
 
@@ -63,7 +68,17 @@ function toStringValue(value: unknown, maxLen: number): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   if (!trimmed) return null;
+  const lowered = trimmed.toLowerCase();
+  if (lowered === "null" || lowered === "none" || lowered === "n/a" || lowered === "na") return null;
   return trimmed.slice(0, maxLen);
+}
+
+function toNumberWithConfidence(value: unknown, confidence: unknown): number | null {
+  const numeric = toNumber(value);
+  const conf = clampConfidence(confidence, 0);
+  if (numeric == null) return null;
+  if (conf === 0 && numeric === 0) return null;
+  return numeric;
 }
 
 function toDateOnly(value: unknown): string | null {
@@ -75,6 +90,31 @@ function toDateOnly(value: unknown): string | null {
   const parsed = new Date(trimmed);
   if (Number.isNaN(parsed.getTime())) return null;
   return parsed.toISOString().slice(0, 10);
+}
+
+function normalizeLineItems(input: unknown) {
+  if (!Array.isArray(input)) return [];
+
+  return input
+    .map((item) => {
+      const row = toRecord(item);
+      const description = toStringValue(readAlias(row, ["description", "name", "title", "item"]), 300);
+
+      const quantityField = unwrapValue(readAlias(row, ["quantity", "qty"]));
+      const unitPriceField = unwrapValue(readAlias(row, ["unitPrice", "unit_price", "price", "unit"]));
+      const totalPriceField = unwrapValue(readAlias(row, ["totalPrice", "total_price", "amount", "lineTotal"]));
+
+      const confidenceField = unwrapValue(readAlias(row, ["confidence", "score", "probability"]));
+
+      return {
+        description: description ?? "Line item",
+        quantity: toNumber(quantityField.value),
+        unitPrice: toNumber(unitPriceField.value),
+        totalPrice: toNumber(totalPriceField.value),
+        confidence: clampConfidence(confidenceField.value ?? confidenceField.confidence, 0.2),
+      };
+    })
+    .slice(0, 100);
 }
 
 function normalizeCategory(value: unknown): string | null {
@@ -120,59 +160,74 @@ function inferSuggestedJob(
 }
 
 export function normalizeExtractionResponse(input: unknown, jobs: Array<{ id: number; name: string }>) {
-  const parsed = rawExtractionSchema.parse(input);
+  const parsed = toRecord(input);
+
+  const vendorField = unwrapValue(readAlias(parsed, ["vendor", "merchant", "supplier", "store"]));
+  const dateField = unwrapValue(readAlias(parsed, ["date", "expenseDate", "purchaseDate", "transactionDate"]));
+  const subtotalField = unwrapValue(readAlias(parsed, ["subtotal", "subTotal", "net", "pretax"]));
+  const taxField = unwrapValue(readAlias(parsed, ["tax", "totalTax", "vat", "gst"]));
+  const totalField = unwrapValue(readAlias(parsed, ["total", "grandTotal", "amount", "amountTotal"]));
+  const paymentMethodField = unwrapValue(readAlias(parsed, ["paymentMethod", "payment_method", "method", "paymentType"]));
+  const receiptNumberField = unwrapValue(readAlias(parsed, ["receiptNumber", "receipt_number", "referenceNumber", "reference_number", "transactionId", "transaction_id"]));
+  const invoiceNumberField = unwrapValue(readAlias(parsed, ["invoiceNumber", "invoice_number", "invoiceNo", "invoice_no"]));
+  const categoryField = unwrapValue(readAlias(parsed, ["category", "expenseCategory", "expense_category"]));
+  const descriptionField = unwrapValue(readAlias(parsed, ["description", "memo", "note", "summary"]));
+  const overallConfidenceField = unwrapValue(readAlias(parsed, ["overallConfidence", "overall_confidence", "confidence", "score"]));
+
+  const rawTextValue = readAlias(parsed, ["rawText", "raw_text", "ocrText", "ocr_text", "text"]);
+  const itemsValue = readAlias(parsed, ["items", "lineItems", "line_items"]);
+
+  const suggestedJobRaw = toRecord(readAlias(parsed, ["suggestedJob", "suggested_job", "jobSuggestion", "job"]));
+  const suggestedJobName = toStringValue(readAlias(suggestedJobRaw, ["jobName", "job_name", "name"]), 200);
+  const suggestedJobConfidence = clampConfidence(readAlias(suggestedJobRaw, ["confidence", "score", "probability"]));
 
   const normalized: NormalizedReceiptExtraction = {
     vendor: {
-      value: toStringValue(parsed.vendor?.value, 200),
-      confidence: clampConfidence(parsed.vendor?.confidence),
+      value: toStringValue(vendorField.value, 200),
+      confidence: clampConfidence(vendorField.confidence),
     },
     date: {
-      value: toDateOnly(parsed.date?.value),
-      confidence: clampConfidence(parsed.date?.confidence),
+      value: toDateOnly(dateField.value),
+      confidence: clampConfidence(dateField.confidence),
     },
     subtotal: {
-      value: toNumber(parsed.subtotal?.value),
-      confidence: clampConfidence(parsed.subtotal?.confidence),
+      value: toNumberWithConfidence(subtotalField.value, subtotalField.confidence),
+      confidence: clampConfidence(subtotalField.confidence),
     },
     tax: {
-      value: toNumber(parsed.tax?.value),
-      confidence: clampConfidence(parsed.tax?.confidence),
+      value: toNumberWithConfidence(taxField.value, taxField.confidence),
+      confidence: clampConfidence(taxField.confidence),
     },
     total: {
-      value: toNumber(parsed.total?.value),
-      confidence: clampConfidence(parsed.total?.confidence),
+      value: toNumberWithConfidence(totalField.value, totalField.confidence),
+      confidence: clampConfidence(totalField.confidence),
     },
     paymentMethod: {
-      value: toStringValue(parsed.paymentMethod?.value, 120),
-      confidence: clampConfidence(parsed.paymentMethod?.confidence),
+      value: toStringValue(paymentMethodField.value, 120),
+      confidence: clampConfidence(paymentMethodField.confidence),
     },
     receiptNumber: {
-      value: toStringValue(parsed.receiptNumber?.value, 120),
-      confidence: clampConfidence(parsed.receiptNumber?.confidence),
+      value: toStringValue(receiptNumberField.value, 120),
+      confidence: clampConfidence(receiptNumberField.confidence),
+    },
+    invoiceNumber: {
+      value: toStringValue(invoiceNumberField.value, 120),
+      confidence: clampConfidence(invoiceNumberField.confidence),
     },
     category: {
-      value: normalizeCategory(parsed.category?.value),
-      confidence: clampConfidence(parsed.category?.confidence),
+      value: normalizeCategory(categoryField.value),
+      confidence: clampConfidence(categoryField.confidence),
     },
     description: {
-      value: toStringValue(parsed.description?.value, 500),
-      confidence: clampConfidence(parsed.description?.confidence),
+      value: toStringValue(descriptionField.value, 500),
+      confidence: clampConfidence(descriptionField.confidence),
     },
-    items: (parsed.items ?? [])
-      .map((item) => ({
-        description: toStringValue(item.description, 300) ?? "Line item",
-        quantity: toNumber(item.quantity),
-        unitPrice: toNumber(item.unitPrice),
-        totalPrice: toNumber(item.totalPrice),
-        confidence: clampConfidence(item.confidence, 0.2),
-      }))
-      .slice(0, 100),
-    rawText: toStringValue(parsed.rawText, 20000),
-    overallConfidence: clampConfidence(parsed.overallConfidence),
+    items: normalizeLineItems(itemsValue),
+    rawText: toStringValue(rawTextValue, 20000),
+    overallConfidence: clampConfidence(overallConfidenceField.value ?? overallConfidenceField.confidence),
     suggestedJob: inferSuggestedJob(
-      toStringValue(parsed.suggestedJob?.jobName, 200),
-      clampConfidence(parsed.suggestedJob?.confidence),
+      suggestedJobName,
+      suggestedJobConfidence,
       jobs
     ),
   };
