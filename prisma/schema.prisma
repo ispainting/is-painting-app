@@ -935,7 +935,7 @@ model TimeEntry {
 model Expense {
   id                   Int                        @id @default(autoincrement())
   jobId                Int?
-  submittedById        Int
+  submittedById        Int?
   employeeId           Int?
   approvedById         Int?
   vendor               String?
@@ -952,6 +952,8 @@ model Expense {
   paymentMethodLast4   String?                    @db.VarChar(4)
   invoiceNumber        String?                    @db.VarChar(100)
   receiptNumber        String?                    @db.VarChar(100)
+  legacySubmittedById  String?
+  legacySubmittedByName String?
   taxDeductible        Boolean                    @default(false)
   reimbursable         Boolean                    @default(false)
   reimbursementStatus  ExpenseReimbursementStatus @default(not_applicable)
@@ -969,7 +971,7 @@ model Expense {
   updatedAt            DateTime                   @updatedAt
 
   job                 Job?                  @relation(fields: [jobId], references: [id])
-  submittedBy         User                  @relation("SubmittedExpenses", fields: [submittedById], references: [id])
+  submittedBy         User?                 @relation("SubmittedExpenses", fields: [submittedById], references: [id])
   employee            User?                 @relation("EmployeeExpenses", fields: [employeeId], references: [id])
   approvedBy          User?                 @relation("ApprovedExpenses", fields: [approvedById], references: [id])
   receiptUpload       ExpenseReceiptUpload? @relation(fields: [receiptUploadId], references: [id])
