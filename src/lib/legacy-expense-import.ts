@@ -144,12 +144,32 @@ function normalizeNullableString(value: string | number | null | undefined) {
   return normalized.length > 0 ? normalized : null;
 }
 
+function toRequiredAmountString(
+  value: string | number | null | undefined,
+  fieldName: string,
+  legacyExpenseId: string,
+): string {
+  const amount = toAmountString(value, fieldName, legacyExpenseId, false);
+  if (amount == null) {
+    throw new Error(`Legacy expense ${legacyExpenseId} has an invalid ${fieldName}.`);
+  }
+  return amount;
+}
+
+function toOptionalAmountString(
+  value: string | number | null | undefined,
+  fieldName: string,
+  legacyExpenseId: string,
+): string | null {
+  return toAmountString(value, fieldName, legacyExpenseId, true);
+}
+
 function toAmountString(
   value: string | number | null | undefined,
   fieldName: string,
   legacyExpenseId: string,
-  allowNull = false,
-) {
+  allowNull: boolean,
+): string | null {
   if (value == null || value === "") {
     if (allowNull) return null;
     throw new Error(`Legacy expense ${legacyExpenseId} has an invalid ${fieldName}.`);
@@ -213,9 +233,9 @@ export function buildLegacyExpenseImportPlan(
       throw new Error("Encountered a malformed legacy expense record with no submitter id.");
     }
 
-    const amount = toAmountString(row.amount, "amount", legacyExpenseId);
-    const subtotal = toAmountString(row.subtotal, "subtotal", legacyExpenseId, true);
-    const tax = toAmountString(row.tax, "tax", legacyExpenseId, true);
+    const amount = toRequiredAmountString(row.amount, "amount", legacyExpenseId);
+    const subtotal = toOptionalAmountString(row.subtotal, "subtotal", legacyExpenseId);
+    const tax = toOptionalAmountString(row.tax, "tax", legacyExpenseId);
     const expenseDate = toExpenseDate(row.expenseDate, legacyExpenseId);
     const projectReference = normalizeNullableString(row.projectReference);
     const submittedByLegacyName = normalizeNullableString(row.submittedByLegacyName);

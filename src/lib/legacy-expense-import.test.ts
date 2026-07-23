@@ -152,7 +152,7 @@ describe("buildLegacyExpenseImportPlan", () => {
     expect(mapped?.expense.legacySubmittedById).toBe("704");
     expect(mapped?.expense.legacySubmittedByName).toBe("Mapped Employee Three");
 
-    const allowedSubmittedByIds = new Set(Object.values(submitterMap));
+    const allowedSubmittedByIds = new Set<number>(Object.values(submitterMap));
     const unresolvedRows = plan.plannedExpenses.filter(
       (expense) => expense.classification === "imported_with_unresolved_submitter",
     );

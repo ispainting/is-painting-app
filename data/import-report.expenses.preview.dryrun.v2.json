@@ -1,0 +1,20 @@
+{
+  "sourceRows": 422,
+  "accountedRows": 422,
+  "simulatedImportedExpenses": 422,
+  "alreadyImportedExpenses": 0,
+  "silentSkips": 0,
+  "linkedImportableExpenses": 421,
+  "unresolvedSubmitterImports": 61,
+  "unlinkedGeneralExpenses": 1,
+  "duplicateLegacyExpenseIds": 0,
+  "invalidNonEmptyProjectReferences": 0,
+  "sourceTotal": "76232.60",
+  "simulatedImportedTotal": "76232.60",
+  "receiptMetadataPreserved": 205,
+  "rollbackConfirmed": true,
+  "liveDatabaseCountsUnchanged": true,
+  "mode": "local-simulation",
+  "basis": "accepted-reconciliation-fixture",
+  "note": "Generated in the sandbox from the accepted 422-row reconciliation fixture because Preview database credentials and the legacy import source are not available here."
+}
