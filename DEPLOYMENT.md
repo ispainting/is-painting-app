@@ -156,7 +156,7 @@ That's all you need from Neon. The schema and seed will be created automatically
 3. Framework Preset: **Next.js** (auto-detected).
 4. Root Directory: leave as `./`.
 5. Expand **Build & Output Settings** and set:
-   - **Build Command:** `prisma db push && prisma db seed && next build`
+   - **Build Command:** `npx prisma generate && next build`
    - Install Command, Output Directory: leave defaults.
 6. Expand **Environment Variables** and add the values from section 5 below.
 7. Click **Deploy**.
@@ -164,13 +164,21 @@ That's all you need from Neon. The schema and seed will be created automatically
 The build will:
 - Install dependencies
 - Generate the Prisma client (via `postinstall`)
-- Run `prisma db push` — syncs the schema directly to the existing database
-- Run `prisma db seed` — creates the admin user, sample data, and automation templates
 - Build Next.js
 
 When it's green, click **Visit** to open your live URL.
 
-> This project is not yet baselined for Prisma Migrate in production. Keep Vercel on `prisma db push` until you create a proper baseline migration procedure.
+Run database changes separately against the explicitly authorized environment:
+
+```bash
+npx prisma migrate deploy
+```
+
+If you are initializing a fresh database, run the seed separately after migrations:
+
+```bash
+npx prisma db seed
+```
 
 ---
 
@@ -229,7 +237,7 @@ Role enforcement: `protectedProcedure` requires login; `adminProcedure` requires
 ## 7. Troubleshooting
 
 - **"Can't reach database server"** during build: double-check `DIRECT_URL`. It must be the non-pooled host (no `-pooler`).
-- **"P3014: Prisma Migrate could not create the shadow database"**: Neon's free tier doesn't allow shadow DBs. Workaround: use `prisma migrate deploy` (which doesn't need one) — that's what the deploy command does. For local development, use a separate dev database or run `prisma db push` instead of `migrate dev`.
+- **"P3014: Prisma Migrate could not create the shadow database"**: Neon's free tier doesn't allow shadow DBs. Workaround: use `prisma migrate deploy` (which doesn't need one) for authorized deploy-time migrations. For local development, use a separate dev database or run `prisma db push` instead of `migrate dev`.
 - **Build runs `prisma migrate deploy` and says `No pending migrations to apply`** but the DB is empty: you forgot to commit `prisma/migrations/` — run the local `prisma migrate dev --name init` step from section 4.
 - **"Invalid `prisma.user.findUnique()`"** on first login: seed didn't run. Trigger a redeploy, or run `npx prisma db seed` locally pointing at your Neon DB.
 - **Cookies not persisting on iOS Safari**: confirm `NEXT_PUBLIC_APP_URL` is `https://...`, not `http://`.
