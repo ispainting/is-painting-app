@@ -8,6 +8,16 @@ import { toast } from "sonner";
 
 type UploadState = "queued" | "uploading" | "success" | "failed" | "canceled";
 type ExtractionStatus = "idle" | "queued" | "processing" | "completed" | "failed" | "needs_review";
+type ExtractionErrorCode =
+  | "resource_exhausted"
+  | "invalid_api_key"
+  | "unauthorized"
+  | "rate_limit"
+  | "timeout"
+  | "bad_request"
+  | "network_error"
+  | "not_found"
+  | "unknown";
 
 type UploadItem = {
   id: string;
@@ -46,6 +56,7 @@ type ExtractedReceiptData = {
   total: ExtractedValue<number>;
   paymentMethod: ExtractedValue<string>;
   receiptNumber: ExtractedValue<string>;
+  invoiceNumber: ExtractedValue<string>;
   category: ExtractedValue<string>;
   description: ExtractedValue<string>;
   items: ExtractedLineItem[];
@@ -57,6 +68,7 @@ type ExtractedReceiptData = {
 type ExtractionState = {
   status: ExtractionStatus;
   message?: string;
+  errorCode?: ExtractionErrorCode;
   attachmentId?: number;
   data?: ExtractedReceiptData | null;
   provider?: string;
@@ -147,6 +159,14 @@ export default function ExpensesPage() {
   const replaceInputRef = useRef<HTMLInputElement | null>(null);
   const xhrMap = useRef<Map<string, XMLHttpRequest>>(new Map());
   const extractionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const extractionInFlightForAttachmentRef = useRef<number | null>(null);
+  const extractionStartedAttachmentIdsRef = useRef<Set<number>>(new Set());
+
+  function showDisabledExtractionToast() {
+    toast.error("AI receipt extraction is currently disabled. You can enter this expense manually.", {
+      id: "receipt-ai-disabled",
+    });
+  }
 
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"" | (typeof STATUS_OPTIONS)[number]>("");
@@ -195,27 +215,45 @@ export default function ExpensesPage() {
 
   const extractReceipt = api.expenses.extractReceipt.useMutation({
     onSuccess: (result) => {
-      clearExtractionTimeout();
+      const extractedData = (result.data ?? null) as ExtractedReceiptData | null;
 
-      if (result.status === "failed" || !result.data) {
+      if (result.status === "processing") {
+        setExtractionState((prev) => ({
+          ...prev,
+          status: "processing",
+          attachmentId: result.attachmentId,
+          message: result.message || "Reading receipt with AI...",
+          provider: result.provider,
+          model: result.model,
+        }));
+        return;
+      }
+
+      if (result.status === "failed" || !extractedData) {
+        if (result.errorCode === "bad_request" && result.message?.includes("currently disabled")) {
+          showDisabledExtractionToast();
+        }
         setExtractionState({
           status: "failed",
           message: result.message,
+          errorCode: (result.errorCode as ExtractionErrorCode | undefined) ?? "unknown",
           attachmentId: result.attachmentId,
           data: null,
           provider: result.provider,
           model: result.model,
         });
-        toast.error(result.message || "AI reading failed");
+        if (!(result.errorCode === "bad_request" && result.message?.includes("currently disabled"))) {
+          toast.error(result.message || "AI reading failed");
+        }
         return;
       }
 
-      applyExtractedData(result.data);
+      applyExtractedData(extractedData);
       setExtractionState({
         status: toExtractionStatus(result.status),
         message: result.message,
         attachmentId: result.attachmentId,
-        data: result.data,
+        data: extractedData,
         provider: result.provider,
         model: result.model,
       });
@@ -227,13 +265,17 @@ export default function ExpensesPage() {
       }
     },
     onError: (error) => {
-      clearExtractionTimeout();
       setExtractionState((prev) => ({
         ...prev,
         status: "failed",
         message: error.message || "AI reading failed.",
+        errorCode: "unknown",
       }));
       toast.error(error.message || "AI reading failed");
+    },
+    onSettled: () => {
+      extractionInFlightForAttachmentRef.current = null;
+      clearExtractionTimeout();
     },
   });
 
@@ -356,7 +398,34 @@ export default function ExpensesPage() {
     extractionTimeoutRef.current = null;
   }
 
-  function beginExtraction(attachmentId: number) {
+  function beginExtraction(attachmentId: number, forceNewTask = false) {
+    if (!forceNewTask && extractionStartedAttachmentIdsRef.current.has(attachmentId)) {
+      return;
+    }
+
+    const extractionEnabled = metaQuery.data?.receiptExtractionEnabled !== false;
+    if (!extractionEnabled) {
+      extractionStartedAttachmentIdsRef.current.add(attachmentId);
+      setExtractionState({
+        status: "failed",
+        attachmentId,
+        message: "AI receipt extraction is currently disabled. You can enter this expense manually.",
+        errorCode: "bad_request",
+        data: null,
+      });
+      showDisabledExtractionToast();
+      return;
+    }
+
+    if (!forceNewTask && extractReceipt.isPending && extractionInFlightForAttachmentRef.current === attachmentId) {
+      return;
+    }
+
+    if (!forceNewTask) {
+      extractionStartedAttachmentIdsRef.current.add(attachmentId);
+    }
+
+    extractionInFlightForAttachmentRef.current = attachmentId;
     clearExtractionTimeout();
     setExtractionState({
       status: "processing",
@@ -377,7 +446,7 @@ export default function ExpensesPage() {
       toast.error("AI timeout. Please retry AI reading.");
     }, EXTRACTION_UI_TIMEOUT_MS);
 
-    extractReceipt.mutate({ attachmentId });
+    extractReceipt.mutate({ attachmentId, forceNewTask });
   }
 
   function applyExtractedData(data: ExtractedReceiptData) {
@@ -393,6 +462,7 @@ export default function ExpensesPage() {
         : prev.category,
       paymentMethod: data.paymentMethod.value ?? prev.paymentMethod,
       receiptNumber: data.receiptNumber.value ?? prev.receiptNumber,
+      invoiceNumber: data.invoiceNumber.value ?? prev.invoiceNumber,
       description: data.description.value ?? prev.description,
     }));
 
@@ -488,10 +558,11 @@ export default function ExpensesPage() {
           });
         } else {
           setShowAddExpense(true);
+          extractionStartedAttachmentIdsRef.current.delete(json.attachment.id);
           setExtractionState({
             status: "queued",
             attachmentId: json.attachment.id,
-            message: "Receipt uploaded. Starting AI reading...",
+            message: "Receipt uploaded. Starting AI receipt reading...",
           });
           beginExtraction(json.attachment.id);
         }
@@ -747,7 +818,39 @@ export default function ExpensesPage() {
           {(extractionState.status === "failed" || extractionState.status === "needs_review") && (
             <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
               <p className="font-medium">Needs review</p>
-              <p>{extractionState.message || "Receipt information could not be fully verified."}</p>
+              <p>
+                {extractionState.errorCode === "resource_exhausted"
+                  ? "AI receipt extraction is temporarily unavailable because provider credits are currently unavailable. You can still enter the expense manually."
+                  : (extractionState.message || "Receipt information could not be fully verified.")}
+              </p>
+              {extractionState.status === "failed" && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    className="btn btn-secondary text-xs"
+                    onClick={() => {
+                      if (extractionState.attachmentId) {
+                        beginExtraction(extractionState.attachmentId, true);
+                      }
+                    }}
+                    disabled={!extractionState.attachmentId || extractReceipt.isPending}
+                  >
+                    Retry AI Reading
+                  </button>
+                  <button
+                    className="btn text-xs"
+                    onClick={() => {
+                      setExtractionState((prev) => ({
+                        ...prev,
+                        status: "idle",
+                        message: undefined,
+                        errorCode: undefined,
+                      }));
+                    }}
+                  >
+                    Continue Manually
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -974,19 +1077,6 @@ export default function ExpensesPage() {
           </div>
 
           <div className="mt-4 flex flex-wrap gap-2">
-            <button
-              className="btn btn-secondary"
-              onClick={() => {
-                if (!primaryAttachmentId) {
-                  toast.error("Select a receipt attachment first.");
-                  return;
-                }
-                beginExtraction(primaryAttachmentId);
-              }}
-              disabled={extractReceipt.isPending}
-            >
-              Retry AI Reading
-            </button>
             <button className="btn btn-secondary" onClick={clearExtractedData}>Clear Extracted Data</button>
             {viewReceiptHref && (
               <a className="btn btn-secondary" href={viewReceiptHref} target="_blank" rel="noreferrer">

@@ -5,6 +5,7 @@ const COOKIE = "is_session";
 const PUBLIC = [
   "/login",
   "/api/trpc",
+  "/api/internal/blob-audit",
   "/_next",
   "/favicon.ico",
 ];

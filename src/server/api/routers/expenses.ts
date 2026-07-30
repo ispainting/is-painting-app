@@ -50,6 +50,85 @@ const createInput = z.object({
   ).default([]),
 });
 
+type ExtractionErrorCode =
+  | "resource_exhausted"
+  | "invalid_api_key"
+  | "unauthorized"
+  | "rate_limit"
+  | "timeout"
+  | "bad_request"
+  | "network_error"
+  | "not_found"
+  | "unknown";
+
+function isReceiptExtractionEnabled() {
+  const raw = (
+    process.env.RECEIPT_EXTRACTION_ENABLED
+    ?? process.env.MANUS_RECEIPT_EXTRACTION_ENABLED
+    ?? "false"
+  ).trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
+function getActiveReceiptProviderInfo() {
+  const configured = (process.env.RECEIPT_EXTRACTION_PROVIDER || "google_document_ai").trim().toLowerCase();
+  if (configured === "manus") {
+    return {
+      provider: "manus",
+      model: "manus-1.6",
+    } as const;
+  }
+
+  return {
+    provider: "google_document_ai",
+    model: process.env.GOOGLE_DOCUMENT_AI_PROCESSOR_VERSION_ID?.trim() || "document-ai-processor",
+  } as const;
+}
+
+function mapExtractionErrorCode(error: unknown): ExtractionErrorCode {
+  const code =
+    typeof error === "object" && error && "code" in error
+      ? String((error as { code?: unknown }).code ?? "")
+      : "";
+
+  switch (code) {
+    case "resource_exhausted":
+    case "invalid_api_key":
+    case "unauthorized":
+    case "rate_limit":
+    case "timeout":
+    case "bad_request":
+    case "network_error":
+    case "not_found":
+      return code;
+    default:
+      return "unknown";
+  }
+}
+
+function getFriendlyExtractionErrorMessage(errorCode: ExtractionErrorCode) {
+  switch (errorCode) {
+    case "resource_exhausted":
+      return "AI receipt extraction is temporarily unavailable because the provider credit limit has been reached. You can still enter the expense manually.";
+    case "invalid_api_key":
+      return "AI receipt extraction is unavailable because the provider credentials are invalid.";
+    case "unauthorized":
+      return "AI receipt extraction is unavailable because provider authorization failed.";
+    case "rate_limit":
+      return "AI receipt extraction is busy right now. Please retry in a moment.";
+    case "timeout":
+      return "AI receipt extraction took too long. Please retry.";
+    case "bad_request":
+      return "AI receipt extraction could not process this file. Please review manually or try another receipt image.";
+    case "network_error":
+      return "AI receipt extraction is temporarily unavailable due to a network issue. Please retry.";
+    case "not_found":
+      return "AI receipt extraction could not locate the previous extraction task. You can retry manually.";
+    default:
+      return "AI receipt extraction failed. You can still enter the expense manually.";
+  }
+}
+
 export const expensesRouter = router({
   list: protectedProcedure.input(listInput).query(async ({ ctx, input }) => {
     const search = input?.search?.trim();
@@ -158,7 +237,13 @@ export const expensesRouter = router({
       }),
     ]);
 
-    return { jobs, employees, orphanAttachments };
+    return {
+      jobs,
+      employees,
+      orphanAttachments,
+      receiptExtractionEnabled: isReceiptExtractionEnabled(),
+      receiptExtractionProvider: getActiveReceiptProviderInfo().provider,
+    };
   }),
 
   create: protectedProcedure.input(createInput).mutation(async ({ ctx, input }) => {
@@ -255,8 +340,15 @@ export const expensesRouter = router({
   }),
 
   extractReceipt: protectedProcedure
-    .input(z.object({ attachmentId: z.number().int().positive() }))
+    .input(
+      z.object({
+        attachmentId: z.number().int().positive(),
+        forceNewTask: z.boolean().optional(),
+      })
+    )
     .mutation(async ({ ctx, input }) => {
+      const providerInfo = getActiveReceiptProviderInfo();
+      const forceNewTask = input.forceNewTask === true;
       const provider = getReceiptStorageProvider();
       const attachment = await ctx.prisma.expenseAttachment.findUnique({
         where: { id: input.attachmentId },
@@ -267,6 +359,12 @@ export const expensesRouter = router({
           originalFilename: true,
           mimeType: true,
           extractionStatus: true,
+          extractionStructured: true,
+          extractionRawText: true,
+          extractionConfidence: true,
+          manusTaskId: true,
+          providerErrorCode: true,
+          extractionAttemptCount: true,
           expense: {
             select: { submittedById: true },
           },
@@ -285,14 +383,104 @@ export const expensesRouter = router({
         throw new Error("Forbidden");
       }
 
+      if (!isReceiptExtractionEnabled()) {
+        await ctx.prisma.expenseAttachment.update({
+          where: { id: attachment.id },
+          data: {
+            extractionStatus: "failed",
+            providerErrorCode: "bad_request",
+            extractionError: "AI receipt extraction is disabled by RECEIPT_EXTRACTION_ENABLED=false.",
+            extractionCompletedAt: new Date(),
+            extractionProcessedAt: new Date(),
+          },
+        });
+        return {
+          status: "failed" as const,
+          attachmentId: attachment.id,
+          message: "AI receipt extraction is currently disabled. You can enter this expense manually.",
+          errorCode: "bad_request" as const,
+          data: null,
+          provider: providerInfo.provider,
+          model: providerInfo.model,
+        };
+      }
+
+      if (!forceNewTask && attachment.extractionStatus === "failed" && attachment.providerErrorCode === "bad_request") {
+        return {
+          status: "failed" as const,
+          attachmentId: attachment.id,
+          message: "AI receipt extraction is currently disabled. You can enter this expense manually.",
+          errorCode: "bad_request" as const,
+          data: null,
+          provider: providerInfo.provider,
+          model: providerInfo.model,
+        };
+      }
+
+      if (!forceNewTask && (attachment.extractionStatus === "queued" || attachment.extractionStatus === "processing")) {
+        if (attachment.manusTaskId) {
+          // Continue by polling existing task; do not create another task.
+        } else if (attachment.extractionAttemptCount >= 1) {
+          return {
+            status: "processing" as const,
+            attachmentId: attachment.id,
+            message: "Receipt extraction is already in progress.",
+            data: null,
+            provider: providerInfo.provider,
+            model: providerInfo.model,
+          };
+        }
+      }
+
+      if (!forceNewTask && attachment.extractionStatus === "completed" && attachment.extractionStructured) {
+        return {
+          status: "completed" as const,
+          attachmentId: attachment.id,
+          message: "Receipt already extracted. Reusing saved AI result.",
+          data: attachment.extractionStructured,
+          provider: providerInfo.provider,
+          model: providerInfo.model,
+        };
+      }
+
+      if (!forceNewTask && attachment.providerErrorCode === "resource_exhausted") {
+        return {
+          status: "failed" as const,
+          attachmentId: attachment.id,
+          message: getFriendlyExtractionErrorMessage("resource_exhausted"),
+          errorCode: "resource_exhausted" as const,
+          data: null,
+          provider: providerInfo.provider,
+          model: providerInfo.model,
+        };
+      }
+
+      const MAX_DEFAULT_ATTEMPTS = 1;
+      if (!forceNewTask && !attachment.manusTaskId && attachment.extractionAttemptCount >= MAX_DEFAULT_ATTEMPTS) {
+        return {
+          status: "failed" as const,
+          attachmentId: attachment.id,
+          message: "AI receipt extraction has already been attempted for this upload. Choose Start New Extraction to run it again.",
+          errorCode: "bad_request" as const,
+          data: null,
+          provider: providerInfo.provider,
+          model: providerInfo.model,
+        };
+      }
+
       await ctx.prisma.expenseAttachment.update({
         where: { id: attachment.id },
         data: {
           extractionStatus: "processing",
           extractionError: null,
+          providerErrorCode: null,
+          extractionCompletedAt: null,
+          ...(forceNewTask ? { manusTaskId: null } : {}),
           extractionStartedAt: new Date(),
         },
       });
+
+      const extractionStartedAt = Date.now();
 
       try {
         const object = await provider.download(attachment.storagePath);
@@ -309,6 +497,16 @@ export const expensesRouter = router({
           mimeType: attachment.mimeType,
           fileData: object.data,
           jobOptions: jobs,
+          existingTaskId: forceNewTask ? null : attachment.manusTaskId,
+          onTaskCreated: async (taskId) => {
+            await ctx.prisma.expenseAttachment.update({
+              where: { id: attachment.id },
+              data: {
+                manusTaskId: taskId,
+                extractionAttemptCount: { increment: 1 },
+              },
+            });
+          },
         });
 
         const status = extracted.needsReview ? "needs_review" : "completed";
@@ -323,8 +521,24 @@ export const expensesRouter = router({
             extractionProvider: extracted.provider,
             extractionModel: extracted.model,
             extractionError: null,
+            providerErrorCode: null,
+            manusTaskId: extracted.metadata?.taskId ?? attachment.manusTaskId,
+            extractionCompletedAt: new Date(),
             extractionProcessedAt: new Date(),
           },
+        });
+
+        console.info("[receipt-extraction] completed", {
+          attachmentId: attachment.id,
+          provider: extracted.provider,
+          model: extracted.model,
+          taskId: extracted.metadata?.taskId ?? null,
+          creditsUsed: extracted.metadata?.creditsUsed ?? null,
+          durationMs: extracted.metadata?.durationMs ?? (Date.now() - extractionStartedAt),
+          success: extracted.metadata?.success ?? true,
+          status: extracted.metadata?.status ?? status,
+          taskCreated: extracted.metadata?.taskCreated ?? false,
+          overallConfidence: extracted.normalized.overallConfidence,
         });
 
         return {
@@ -336,23 +550,44 @@ export const expensesRouter = router({
           model: extracted.model,
         };
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Receipt extraction failed.";
+        const internalMessage = error instanceof Error ? error.message : "Receipt extraction failed.";
+        const errorCode = mapExtractionErrorCode(error);
+        const message = getFriendlyExtractionErrorMessage(errorCode);
         await ctx.prisma.expenseAttachment.update({
           where: { id: attachment.id },
           data: {
             extractionStatus: "failed",
-            extractionError: message,
+            extractionError: internalMessage,
+            providerErrorCode: errorCode,
+            manusTaskId: errorCode === "not_found" ? null : attachment.manusTaskId,
+            extractionCompletedAt: new Date(),
             extractionProcessedAt: new Date(),
           },
+        });
+
+        console.warn("[receipt-extraction] failed", {
+          attachmentId: attachment.id,
+          provider: providerInfo.provider,
+          model: providerInfo.model,
+          taskId: null,
+          creditsUsed: null,
+          durationMs: Date.now() - extractionStartedAt,
+          success: false,
+          status: "failed",
+          overallConfidence: null,
+          error: internalMessage,
+          errorCode,
+          providerErrorCode: errorCode,
         });
 
         return {
           status: "failed" as const,
           attachmentId: attachment.id,
           message,
+          errorCode,
           data: null,
-          provider: process.env.RECEIPT_EXTRACTION_PROVIDER?.trim().toLowerCase() || "openai",
-          model: process.env.RECEIPT_EXTRACTION_OPENAI_MODEL?.trim() || "gpt-4.1-mini",
+          provider: providerInfo.provider,
+          model: providerInfo.model,
         };
       }
     }),
