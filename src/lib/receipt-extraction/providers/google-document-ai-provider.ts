@@ -281,11 +281,82 @@ function getProviderId() {
   return providerId;
 }
 
-function getAudience(projectNumber: string, poolId: string, providerId: string) {
-  return (
-    process.env.GCP_AUDIENCE?.trim()
-    || `https://iam.googleapis.com/projects/${projectNumber}/locations/global/workloadIdentityPools/${poolId}/providers/${providerId}`
+function buildOidcAudience(projectNumber: string, poolId: string, providerId: string) {
+  return `https://iam.googleapis.com/projects/${projectNumber}/locations/global/workloadIdentityPools/${poolId}/providers/${providerId}`;
+}
+
+function buildStsAudience(projectNumber: string, poolId: string, providerId: string) {
+  return `//iam.googleapis.com/projects/${projectNumber}/locations/global/workloadIdentityPools/${poolId}/providers/${providerId}`;
+}
+
+function normalizeLegacyAudienceForOidc(legacyAudience: string) {
+  if (legacyAudience.startsWith("https://")) return legacyAudience;
+  if (legacyAudience.startsWith("//")) return `https:${legacyAudience}`;
+  throw new DocumentAiReceiptError(
+    "AI provider unavailable: invalid legacy GCP_AUDIENCE format.",
+    "bad_request",
   );
+}
+
+function normalizeLegacyAudienceForSts(legacyAudience: string) {
+  if (legacyAudience.startsWith("//")) return legacyAudience;
+  if (legacyAudience.startsWith("https://")) return legacyAudience.replace(/^https:/, "");
+  throw new DocumentAiReceiptError(
+    "AI provider unavailable: invalid legacy GCP_AUDIENCE format.",
+    "bad_request",
+  );
+}
+
+function getVercelOidcAudience(projectNumber: string, poolId: string, providerId: string) {
+  const explicit = process.env.VERCEL_OIDC_AUDIENCE?.trim();
+  if (explicit) {
+    if (explicit.startsWith("//")) {
+      throw new DocumentAiReceiptError(
+        "AI provider unavailable: VERCEL_OIDC_AUDIENCE must start with https://",
+        "bad_request",
+      );
+    }
+    if (!explicit.startsWith("https://")) {
+      throw new DocumentAiReceiptError(
+        "AI provider unavailable: VERCEL_OIDC_AUDIENCE must be a valid https:// audience URL.",
+        "bad_request",
+      );
+    }
+    return explicit;
+  }
+
+  const legacy = process.env.GCP_AUDIENCE?.trim();
+  if (legacy) {
+    return normalizeLegacyAudienceForOidc(legacy);
+  }
+
+  return buildOidcAudience(projectNumber, poolId, providerId);
+}
+
+function getGoogleStsAudience(projectNumber: string, poolId: string, providerId: string) {
+  const explicit = process.env.GOOGLE_STS_AUDIENCE?.trim();
+  if (explicit) {
+    if (explicit.startsWith("https://")) {
+      throw new DocumentAiReceiptError(
+        "AI provider unavailable: GOOGLE_STS_AUDIENCE must start with //iam.googleapis.com/...",
+        "bad_request",
+      );
+    }
+    if (!explicit.startsWith("//iam.googleapis.com/")) {
+      throw new DocumentAiReceiptError(
+        "AI provider unavailable: GOOGLE_STS_AUDIENCE must be a valid STS provider resource audience.",
+        "bad_request",
+      );
+    }
+    return explicit;
+  }
+
+  const legacy = process.env.GCP_AUDIENCE?.trim();
+  if (legacy) {
+    return normalizeLegacyAudienceForSts(legacy);
+  }
+
+  return buildStsAudience(projectNumber, poolId, providerId);
 }
 
 function getLocation() {
@@ -303,16 +374,16 @@ function getProcessorId() {
   return processorId;
 }
 
-async function getAccessToken(audience: string, serviceAccountEmail: string) {
+async function getAccessToken(stsAudience: string, oidcAudience: string, serviceAccountEmail: string) {
   try {
     const authClient = ExternalAccountClient.fromJSON({
       type: "external_account",
-      audience,
+      audience: stsAudience,
       subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
       token_url: "https://sts.googleapis.com/v1/token",
       service_account_impersonation_url: `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${serviceAccountEmail}:generateAccessToken`,
       subject_token_supplier: {
-        getSubjectToken: () => getVercelOidcToken({ audience }),
+        getSubjectToken: () => getVercelOidcToken({ audience: oidcAudience }),
       },
     });
 
@@ -391,8 +462,9 @@ export class GoogleDocumentAiReceiptExtractionProvider implements ReceiptExtract
     const processorId = getProcessorId();
     const processorResource = getProcessorResourceName(projectId, location, processorId);
 
-    const audience = getAudience(projectNumber, poolId, providerId);
-    const accessToken = await getAccessToken(audience, serviceAccountEmail);
+    const oidcAudience = getVercelOidcAudience(projectNumber, poolId, providerId);
+    const stsAudience = getGoogleStsAudience(projectNumber, poolId, providerId);
+    const accessToken = await getAccessToken(stsAudience, oidcAudience, serviceAccountEmail);
     const startedAt = Date.now();
 
     const endpoint = `https://${location}-documentai.googleapis.com/v1/${processorResource}:process`;

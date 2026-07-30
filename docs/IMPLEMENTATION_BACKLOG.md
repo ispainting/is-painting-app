@@ -356,3 +356,92 @@
 
 ### Suggested Commit Message For This Docs Update
 - `docs: add admin ux polish plan`
+
+---
+
+## UI/UX Improvement Backlog Added (2026-07-23)
+
+### Jobs Page - List View Redesign (Compact/Dense)
+**Problem**
+- Jobs list is visually oversized and hard to scan quickly.
+
+**Backlog requirements**
+- Redesign Jobs list as a compact table or dense list similar to the previous application.
+- Each row should show:
+	- job/estimate number
+	- job name
+	- customer
+	- status
+	- contract or estimate amount
+	- created date
+	- primary open/view action
+	- secondary actions
+- Reduce card height, vertical padding, decorative borders, whitespace, and horizontal distance between related fields.
+- Support rapid review of many jobs without excessive scrolling.
+
+**Recommended small commits**
+- `feat(jobs-ui): implement compact table/dense list row layout for jobs index`
+- `feat(jobs-ui): add row action hierarchy (primary open/view, secondary actions)`
+- `style(jobs-ui): reduce vertical padding and visual noise for high-density scanning`
+
+### Status Summary Filters - Functional Bug
+**Problem**
+- Status summary cards (Estimate/Sent/Approved/Active/Completed/On Hold/Cancelled) do not reliably filter list results.
+
+**Backlog bug requirements**
+- Clicking a status summary must filter to exact status.
+- Selected status must be visibly highlighted.
+- Count widgets and list results must remain consistent.
+- Preserve filter state in URL query params across refresh/navigation.
+- Provide an explicit `All` option to clear status filter.
+
+**Recommended small commits**
+- `fix(jobs-filters): apply exact status filter from summary card click`
+- `feat(jobs-filters): persist status filter in URL query state`
+- `fix(jobs-filters): synchronize summary counts with list query`
+- `feat(jobs-filters): add all-status clear action`
+
+### Active / Archived Filter - Server-Side Bug
+**Problem**
+- Active/Archived toggle currently allows mismatched statuses in results.
+
+**Intended behavior definition**
+- Active includes:
+	- estimate
+	- sent
+	- approved
+	- active
+	- on_hold
+- Archived includes:
+	- completed
+	- cancelled
+	- explicitly archived records
+
+**Backlog bug requirements**
+- Enforce Active/Archived filtering in DB/server query layer, not UI styling only.
+- Ensure status-card filtering composes correctly with Active/Archived and search.
+- Ensure counts use the exact same filter definitions as list results.
+
+**Required tests**
+- Active excludes completed/cancelled.
+- Archived excludes open/active statuses.
+- Status-card filter composes correctly with Active/Archived.
+- Search composes correctly with both filter sets.
+- Counts match filtered list definitions.
+
+**Recommended small commits**
+- `fix(jobs-filters): enforce active-archived status partitions in server query`
+- `test(jobs-filters): add composed filter coverage for status, active-archived, and search`
+- `fix(jobs-filters): align summary counts with shared query predicates`
+
+### Safety / Action Design
+**Backlog requirements**
+- Move delete action from always-visible icon to overflow menu.
+- Require confirmation before deletion.
+- Prefer archive over hard delete where appropriate.
+- Keep primary row action focused on opening the job.
+
+**Recommended small commits**
+- `feat(jobs-actions): move destructive actions into overflow menu`
+- `feat(jobs-actions): add confirm modal for delete/archive actions`
+- `refactor(jobs-actions): prioritize row primary action as open job`

@@ -1,0 +1,320 @@
+{
+  "mode": "dry-run",
+  "environment": "preview",
+  "databaseHost": "ep-dark-glitter-aj75jjtu-pooler.c-3.us-east-2.aws.neon.tech",
+  "databaseName": "neondb",
+  "requiredResetTarget": {
+    "host": "ep-dark-glitter-aj75jjtu-pooler.c-3.us-east-2.aws.neon.tech",
+    "database": "neondb",
+    "environment": "preview"
+  },
+  "preservedAdministrator": {
+    "id": 1,
+    "email": "admin@ispainting.com",
+    "name": "Italo Santos",
+    "role": "admin",
+    "isActive": true,
+    "createdAt": "2026-04-30T00:30:46.124Z",
+    "updatedAt": "2026-04-30T00:30:46.124Z"
+  },
+  "requiredPreservedAdministrator": {
+    "id": 1,
+    "email": "admin@ispainting.com",
+    "name": "Italo Santos"
+  },
+  "usersFound": [
+    {
+      "id": 1,
+      "email": "admin@ispainting.com",
+      "name": "Italo Santos",
+      "role": "admin",
+      "isActive": true,
+      "createdAt": "2026-04-30T00:30:46.124Z",
+      "updatedAt": "2026-04-30T00:30:46.124Z"
+    },
+    {
+      "id": 2,
+      "email": "painter@ispainting.com",
+      "name": "Sample Painter",
+      "role": "employee",
+      "isActive": true,
+      "createdAt": "2026-04-30T00:30:46.321Z",
+      "updatedAt": "2026-04-30T00:30:46.321Z"
+    },
+    {
+      "id": 3,
+      "email": "robert@gmail.com",
+      "name": "Robert Silva Ferreira",
+      "role": "employee",
+      "isActive": true,
+      "createdAt": "2026-05-31T18:11:51.531Z",
+      "updatedAt": "2026-05-31T18:11:51.531Z"
+    },
+    {
+      "id": 4,
+      "email": "test@test.com",
+      "name": "Test",
+      "role": "employee",
+      "isActive": true,
+      "createdAt": "2026-06-29T19:44:50.552Z",
+      "updatedAt": "2026-06-29T19:44:50.552Z"
+    }
+  ],
+  "schemaCheck": {
+    "migrationMapExists": true,
+    "readyForReset": true
+  },
+  "deletionPlan": [
+    {
+      "group": "Leaf records",
+      "tables": [
+        {
+          "table": "ExpenseLineItem",
+          "countBefore": 42
+        },
+        {
+          "table": "ExpenseAttachment",
+          "countBefore": 16
+        },
+        {
+          "table": "ExpenseReceiptUpload",
+          "countBefore": 0
+        },
+        {
+          "table": "InvoiceLineItem",
+          "countBefore": 0
+        },
+        {
+          "table": "ProposalAttachment",
+          "countBefore": 0
+        },
+        {
+          "table": "ProposalOption",
+          "countBefore": 0
+        },
+        {
+          "table": "ProposalSection",
+          "countBefore": 0
+        },
+        {
+          "table": "ProposalPaintColor",
+          "countBefore": 0
+        },
+        {
+          "table": "JobPaintColor",
+          "countBefore": 1
+        },
+        {
+          "table": "JobMaterial",
+          "countBefore": 0
+        },
+        {
+          "table": "JobLabor",
+          "countBefore": 0
+        },
+        {
+          "table": "ReviewSubmission",
+          "countBefore": 0
+        },
+        {
+          "table": "AutomationRun",
+          "countBefore": 0
+        },
+        {
+          "table": "CustomerTouchpoint",
+          "countBefore": 0
+        },
+        {
+          "table": "CustomerFile",
+          "countBefore": 0
+        },
+        {
+          "table": "EmployeeNote",
+          "countBefore": 0
+        },
+        {
+          "table": "EmployeeActivity",
+          "countBefore": 0
+        },
+        {
+          "table": "EmployeeCertification",
+          "countBefore": 0
+        },
+        {
+          "table": "EmployeeDocument",
+          "countBefore": 0
+        },
+        {
+          "table": "EmployeeJobAssignment",
+          "countBefore": 1
+        }
+      ]
+    },
+    {
+      "group": "Transactional records",
+      "tables": [
+        {
+          "table": "TimeEntry",
+          "countBefore": 9
+        },
+        {
+          "table": "Expense",
+          "countBefore": 6
+        },
+        {
+          "table": "Payment",
+          "countBefore": 0
+        },
+        {
+          "table": "Invoice",
+          "countBefore": 0
+        },
+        {
+          "table": "Opportunity",
+          "countBefore": 3
+        },
+        {
+          "table": "Proposal",
+          "countBefore": 3
+        }
+      ]
+    },
+    {
+      "group": "Parent records",
+      "tables": [
+        {
+          "table": "Job",
+          "countBefore": 4
+        },
+        {
+          "table": "Customer",
+          "countBefore": 7
+        }
+      ]
+    },
+    {
+      "group": "Supporting records",
+      "tables": [
+        {
+          "table": "InventoryItem",
+          "countBefore": 3
+        },
+        {
+          "table": "AuditLog",
+          "countBefore": 0
+        },
+        {
+          "table": "MigrationMap",
+          "countBefore": 0
+        }
+      ]
+    }
+  ],
+  "tablesToClear": [
+    "ExpenseLineItem",
+    "ExpenseAttachment",
+    "ExpenseReceiptUpload",
+    "InvoiceLineItem",
+    "ProposalAttachment",
+    "ProposalOption",
+    "ProposalSection",
+    "ProposalPaintColor",
+    "JobPaintColor",
+    "JobMaterial",
+    "JobLabor",
+    "ReviewSubmission",
+    "AutomationRun",
+    "CustomerTouchpoint",
+    "CustomerFile",
+    "EmployeeNote",
+    "EmployeeActivity",
+    "EmployeeCertification",
+    "EmployeeDocument",
+    "EmployeeJobAssignment",
+    "TimeEntry",
+    "Expense",
+    "Payment",
+    "Invoice",
+    "Opportunity",
+    "Proposal",
+    "Job",
+    "Customer",
+    "InventoryItem",
+    "AuditLog",
+    "MigrationMap"
+  ],
+  "preservedTables": [
+    "Config",
+    "AutomationTemplate",
+    "AutomationStep"
+  ],
+  "countsBefore": {
+    "ExpenseLineItem": 42,
+    "ExpenseAttachment": 16,
+    "ExpenseReceiptUpload": 0,
+    "InvoiceLineItem": 0,
+    "ProposalAttachment": 0,
+    "ProposalOption": 0,
+    "ProposalSection": 0,
+    "ProposalPaintColor": 0,
+    "JobPaintColor": 1,
+    "JobMaterial": 0,
+    "JobLabor": 0,
+    "ReviewSubmission": 0,
+    "AutomationRun": 0,
+    "CustomerTouchpoint": 0,
+    "CustomerFile": 0,
+    "EmployeeNote": 0,
+    "EmployeeActivity": 0,
+    "EmployeeCertification": 0,
+    "EmployeeDocument": 0,
+    "EmployeeJobAssignment": 1,
+    "TimeEntry": 9,
+    "Expense": 6,
+    "Payment": 0,
+    "Invoice": 0,
+    "Opportunity": 3,
+    "Proposal": 3,
+    "Job": 4,
+    "Customer": 7,
+    "InventoryItem": 3,
+    "AuditLog": 0,
+    "MigrationMap": 0,
+    "User": 4,
+    "Config": 1,
+    "AutomationTemplate": 4,
+    "AutomationStep": 8
+  },
+  "countsAfter": null,
+  "backup": {
+    "reference": "pre-legacy-import-backup-2026-07-22",
+    "manifestPath": "data/neon-backup.preview.verified.json",
+    "verifiedAt": "2026-07-23T00:22:50.920Z",
+    "neonProject": "is-painting-app",
+    "sourceBranch": "preview",
+    "sourceDatabaseHost": "ep-dark-glitter-aj75jjtu-pooler.c-3.us-east-2.aws.neon.tech",
+    "backupBranch": {
+      "id": "pre-legacy-import-backup-2026-07-22",
+      "name": "pre-legacy-import-backup-2026-07-22"
+    },
+    "createdAt": "2026-07-23T00:00:00.000Z",
+    "restoreProcedure": [
+      "In Neon dashboard, open branch pre-legacy-import-backup-2026-07-22.",
+      "Copy the branch connection string for database neondb.",
+      "Point DATABASE_URL and DIRECT_URL for the target environment to that branch host.",
+      "Redeploy application or restart processes so new connections use the restored branch.",
+      "Validate key counts and admin login after reconnecting."
+    ],
+    "rollbackViable": true,
+    "source": "verified-manifest"
+  },
+  "backupValidation": {
+    "ok": true,
+    "reason": null
+  },
+  "commandRequiredForReset": "npm run db:reset-business-data -- --confirm-reset --backup-ref <verified-backup-branch-id> --backup-manifest data/neon-backup.preview.verified.json",
+  "warnings": [],
+  "errors": [],
+  "deletionExecuted": false,
+  "verification": null
+}

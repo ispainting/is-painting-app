@@ -1,0 +1,56 @@
+PAYROLL EXPORT REPORT
+=====================
+
+Export Date: 2026-07-22T22:10:44.259Z
+
+EMPLOYEES
+=========
+Total Employees: 14
+Active Employees: 12
+Inactive Employees: 2
+Duplicate Employee IDs: No
+Employees Without Hourly Rate: 1
+
+TIME ENTRIES
+============
+Total Entries: 351
+Approved Entries: 351
+Pending Entries: 0
+Rejected Entries: 0
+Entries Without Employee: 0
+Entries Without Project: 0
+Duplicate Time Entry IDs: No
+
+PAYROLL TOTALS
+==============
+Total Payroll Amount: $74066.23
+Total Regular Hours: 3581.92
+Total Overtime Hours: 0.00
+Total Island Hours: 0.00
+Total Travel Hours: 0.00
+
+RELATIONSHIPS
+=============
+Orphan Employee References: 0
+Orphan Project References: 0
+Orphan Customer References: 0
+
+VALIDATION
+==========
+✓ Employees CSV Records: 14
+✓ Employees JSON Records: 14
+✓ Time Entries CSV Records: 351
+✓ Time Entries JSON Records: 351
+✓ All record counts match
+
+IMPORTANT NOTES
+===============
+- All historical values preserved exactly as stored
+- No payroll recalculations performed
+- No labor cost recomputations
+- No rates changed
+- No hours changed
+- No approvals changed
+- Ready for migration to new financial engine
+
+Export completed successfully!

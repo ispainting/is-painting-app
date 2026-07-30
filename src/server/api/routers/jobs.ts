@@ -1,7 +1,12 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
+import { Prisma } from "@prisma/client";
 import { router, protectedProcedure, adminProcedure } from "../trpc";
 import { computeEstimate, nextNumber } from "@/lib/utils";
+import { buildJobFinancialSummary } from "@/lib/job-financials/calculate-job-financials";
+import type { JobBudgetChangeHistoryItem } from "@/lib/job-financials/types";
+import { buildBudgetAuditRows, parseBudgetHistoryItem, type BudgetMap } from "@/lib/job-financials/budget-history";
+import { assertCanUpdateJobBudget } from "@/lib/job-financials/budget-update-auth";
 
 const JobStatusZ = z.enum([
   "estimate", "sent", "approved", "active", "completed", "on_hold", "cancelled",
@@ -9,6 +14,22 @@ const JobStatusZ = z.enum([
 const JobTypeZ = z.enum(["interior", "exterior", "both", "commercial", "other"]);
 const JobTravelRateTypeZ = z.enum(["regular", "island", "special", "custom"]);
 const JobVisibilityZ = z.enum(["active", "archived", "all"]);
+
+const BudgetDecimalZ = z
+  .union([z.number(), z.string()])
+  .transform((value) => Number(value))
+  .refine((value) => Number.isFinite(value), "Must be a valid number")
+  .refine((value) => value >= 0, "Budget cannot be negative")
+  .refine((value) => Math.round(value * 100) === value * 100, "Budget supports up to 2 decimal places");
+
+const budgetUpdateInput = z.object({
+  laborBudget: BudgetDecimalZ,
+  materialsBudget: BudgetDecimalZ,
+  equipmentBudget: BudgetDecimalZ,
+  subcontractorBudget: BudgetDecimalZ,
+  travelBudget: BudgetDecimalZ,
+  otherBudget: BudgetDecimalZ,
+});
 
 const jobInput = z.object({
   customerId: z.number(),
@@ -50,7 +71,278 @@ const paintColorInput = z.object({
   notes: z.string().optional(),
 });
 
+type JobAccessSession = { role: "admin" | "employee"; userId: number };
+
+function toNumber(value: Prisma.Decimal | number | null | undefined) {
+  return value == null ? 0 : Number(value);
+}
+
+async function getJobSummaryPayload(prisma: any, jobId: number) {
+  const job = await prisma.job.findUnique({
+    where: { id: jobId },
+    select: {
+      id: true,
+      contractAmount: true,
+      totalEstimate: true,
+      laborBudget: true,
+      materialsBudget: true,
+      equipmentBudget: true,
+      subcontractorBudget: true,
+      travelBudget: true,
+      otherBudget: true,
+      travelPayEnabled: true,
+      defaultTravelHours: true,
+      travelRateType: true,
+      customTravelRate: true,
+      createdAt: true,
+    },
+  });
+
+  if (!job) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Job not found" });
+  }
+
+  const [expenses, timeEntries, payments, budgetAuditLogs] = await Promise.all([
+    prisma.expense.findMany({
+      where: { jobId: job.id },
+      select: {
+        id: true,
+        jobId: true,
+        status: true,
+        category: true,
+        amount: true,
+        vendor: true,
+        receiptUrl: true,
+        invoiceNumber: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { expenseDate: "desc" },
+    }),
+    prisma.timeEntry.findMany({
+      where: { jobId: job.id },
+      select: {
+        id: true,
+        jobId: true,
+        userId: true,
+        updatedAt: true,
+        clockIn: true,
+        reviewStatus: true,
+        paidHours: true,
+        grossHours: true,
+        hoursWorked: true,
+        travelHours: true,
+        rateType: true,
+        isIslandJob: true,
+        specialPayEnabled: true,
+        hourlyRateAdjustment: true,
+        user: { select: { hourlyRate: true, name: true } },
+      },
+      orderBy: { clockIn: "desc" },
+    }),
+    prisma.payment.findMany({
+      where: { jobId: job.id, status: "received" },
+      select: {
+        id: true,
+        amount: true,
+        dateReceived: true,
+        method: true,
+      },
+      orderBy: { dateReceived: "desc" },
+      take: 200,
+    }),
+    prisma.auditLog.findMany({
+      where: {
+        entityType: "job",
+        entityId: job.id,
+        action: "job_budget_updated",
+      },
+      select: {
+        id: true,
+        userId: true,
+        createdAt: true,
+        before: true,
+        after: true,
+        user: {
+          select: { id: true, name: true },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 400,
+    }),
+  ]);
+
+  const budgetChangeHistory: JobBudgetChangeHistoryItem[] = budgetAuditLogs
+    .map(parseBudgetHistoryItem)
+    .filter((item: JobBudgetChangeHistoryItem | null): item is JobBudgetChangeHistoryItem => item !== null)
+    .sort((a: JobBudgetChangeHistoryItem, b: JobBudgetChangeHistoryItem) => b.at.getTime() - a.at.getTime());
+
+  const summary = buildJobFinancialSummary({
+    context: {
+      jobId: job.id,
+      contractAmount: toNumber(job.contractAmount),
+      totalEstimate: toNumber(job.totalEstimate),
+      laborBudget: toNumber(job.laborBudget),
+      materialsBudget: toNumber(job.materialsBudget),
+      equipmentBudget: toNumber(job.equipmentBudget),
+      subcontractorBudget: toNumber(job.subcontractorBudget),
+      travelBudget: toNumber(job.travelBudget),
+      otherBudget: toNumber(job.otherBudget),
+      travelPayEnabled: Boolean(job.travelPayEnabled),
+      defaultTravelHours: toNumber(job.defaultTravelHours),
+      travelRateType: job.travelRateType,
+      customTravelRate: toNumber(job.customTravelRate),
+    },
+    expenses: expenses.map((expense: any) => ({
+      id: expense.id,
+      jobId: expense.jobId,
+      status: expense.status,
+      category: expense.category,
+      amount: toNumber(expense.amount),
+      vendor: expense.vendor,
+      receiptUrl: expense.receiptUrl,
+      invoiceNumber: expense.invoiceNumber,
+      createdAt: expense.createdAt,
+      updatedAt: expense.updatedAt,
+    })),
+    timeEntries: timeEntries.map((entry: any) => ({
+      id: entry.id,
+      jobId: entry.jobId,
+      userId: entry.userId,
+      userName: entry.user?.name,
+      clockIn: entry.clockIn,
+      updatedAt: entry.updatedAt,
+      reviewStatus: entry.reviewStatus,
+      paidHours: entry.paidHours == null ? null : toNumber(entry.paidHours),
+      grossHours: entry.grossHours == null ? null : toNumber(entry.grossHours),
+      hoursWorked: entry.hoursWorked == null ? null : toNumber(entry.hoursWorked),
+      travelHours: entry.travelHours == null ? null : toNumber(entry.travelHours),
+      rateType: entry.rateType,
+      isIslandJob: Boolean(entry.isIslandJob),
+      specialPayEnabled: Boolean(entry.specialPayEnabled),
+      hourlyRateAdjustment: toNumber(entry.hourlyRateAdjustment),
+      userHourlyRate: toNumber(entry.user?.hourlyRate),
+    })),
+    budgetCreatedAt: job.createdAt,
+    budgetChangeHistory,
+    paymentEvents: payments.map((payment: any) => ({
+      id: payment.id,
+      at: payment.dateReceived,
+      amount: toNumber(payment.amount),
+      method: payment.method,
+    })),
+  });
+
+  return {
+    jobId: job.id,
+    budgets: {
+      laborBudget: toNumber(job.laborBudget),
+      materialsBudget: toNumber(job.materialsBudget),
+      equipmentBudget: toNumber(job.equipmentBudget),
+      subcontractorBudget: toNumber(job.subcontractorBudget),
+      travelBudget: toNumber(job.travelBudget),
+      otherBudget: toNumber(job.otherBudget),
+    },
+    summary,
+  };
+}
+
+async function assertJobAccess(prisma: any, session: JobAccessSession, jobId: number) {
+  if (session.role === "admin") {
+    const exists = await prisma.job.findUnique({ where: { id: jobId }, select: { id: true } });
+    if (!exists) throw new TRPCError({ code: "NOT_FOUND", message: "Job not found" });
+    return;
+  }
+
+  const assigned = await prisma.employeeJobAssignment.findFirst({
+    where: { jobId, userId: session.userId },
+    select: { id: true },
+  });
+  if (!assigned) throw new TRPCError({ code: "FORBIDDEN" });
+}
+
 export const jobsRouter = router({
+  budget: protectedProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      await assertJobAccess(ctx.prisma, { role: ctx.session!.role, userId: ctx.session!.userId }, input.id);
+      return getJobSummaryPayload(ctx.prisma, input.id);
+    }),
+
+  updateBudget: adminProcedure
+    .input(z.object({ id: z.number().int().positive(), data: budgetUpdateInput }))
+    .mutation(async ({ ctx, input }) => {
+      assertCanUpdateJobBudget(ctx.session);
+      await ctx.prisma.$transaction(async (tx) => {
+        const existing = await tx.job.findUnique({
+          where: { id: input.id },
+          select: {
+            id: true,
+            laborBudget: true,
+            materialsBudget: true,
+            equipmentBudget: true,
+            subcontractorBudget: true,
+            travelBudget: true,
+            otherBudget: true,
+          },
+        });
+        if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Job not found" });
+
+        const previousBudgets: BudgetMap = {
+          laborBudget: toNumber(existing.laborBudget),
+          materialsBudget: toNumber(existing.materialsBudget),
+          equipmentBudget: toNumber(existing.equipmentBudget),
+          subcontractorBudget: toNumber(existing.subcontractorBudget),
+          travelBudget: toNumber(existing.travelBudget),
+          otherBudget: toNumber(existing.otherBudget),
+        };
+
+        const nextBudgets: BudgetMap = {
+          laborBudget: input.data.laborBudget,
+          materialsBudget: input.data.materialsBudget,
+          equipmentBudget: input.data.equipmentBudget,
+          subcontractorBudget: input.data.subcontractorBudget,
+          travelBudget: input.data.travelBudget,
+          otherBudget: input.data.otherBudget,
+        };
+
+        await tx.job.update({
+          where: { id: input.id },
+          data: {
+            laborBudget: new Prisma.Decimal(input.data.laborBudget),
+            materialsBudget: new Prisma.Decimal(input.data.materialsBudget),
+            equipmentBudget: new Prisma.Decimal(input.data.equipmentBudget),
+            subcontractorBudget: new Prisma.Decimal(input.data.subcontractorBudget),
+            travelBudget: new Prisma.Decimal(input.data.travelBudget),
+            otherBudget: new Prisma.Decimal(input.data.otherBudget),
+          },
+        });
+
+        const changeSetId = `job-${input.id}-budget-${Date.now()}`;
+        const auditRows = buildBudgetAuditRows({
+          userId: ctx.session!.userId,
+          jobId: input.id,
+          previousBudgets,
+          nextBudgets,
+          changeSetId,
+        });
+
+        if (auditRows.length > 0) {
+          await tx.auditLog.createMany({ data: auditRows });
+        }
+      });
+
+      return getJobSummaryPayload(ctx.prisma, input.id);
+    }),
+
+  financialSummary: protectedProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      await assertJobAccess(ctx.prisma, { role: ctx.session!.role, userId: ctx.session!.userId }, input.id);
+      const payload = await getJobSummaryPayload(ctx.prisma, input.id);
+      return payload.summary;
+    }),
+
   list: protectedProcedure
     .input(z.object({ status: JobStatusZ.optional(), visibility: JobVisibilityZ.optional() }).optional())
     .query(async ({ ctx, input }) => {

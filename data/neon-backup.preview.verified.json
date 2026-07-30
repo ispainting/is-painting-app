@@ -1,0 +1,20 @@
+{
+  "verified": true,
+  "verificationSource": "user-confirmed",
+  "verificationNotes": "User confirmed Neon backup branch was successfully created and designated as verified.",
+  "neonProject": "is-painting-app",
+  "sourceBranch": "preview",
+  "sourceDatabaseHost": "ep-dark-glitter-aj75jjtu-pooler.c-3.us-east-2.aws.neon.tech",
+  "backupBranch": {
+    "id": "pre-legacy-import-backup-2026-07-22",
+    "name": "pre-legacy-import-backup-2026-07-22"
+  },
+  "createdAt": "2026-07-23T00:00:00.000Z",
+  "restoreProcedure": [
+    "In Neon dashboard, open branch pre-legacy-import-backup-2026-07-22.",
+    "Copy the branch connection string for database neondb.",
+    "Point DATABASE_URL and DIRECT_URL for the target environment to that branch host.",
+    "Redeploy application or restart processes so new connections use the restored branch.",
+    "Validate key counts and admin login after reconnecting."
+  ]
+}

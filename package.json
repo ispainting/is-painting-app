@@ -11,6 +11,8 @@
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
+    "db:import": "tsx src/lib/migration/cli.ts",
+    "db:reset-business-data": "tsx scripts/reset-business-data.ts",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate"
   },
@@ -25,8 +27,8 @@
     "@trpc/client": "^11.0.0-rc.593",
     "@trpc/react-query": "^11.0.0-rc.593",
     "@trpc/server": "^11.0.0-rc.593",
-    "@vercel/oidc": "^3.0.0",
     "@vercel/blob": "^2.6.1",
+    "@vercel/oidc": "^3.0.0",
     "bcryptjs": "^2.4.3",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
@@ -46,6 +48,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/bcryptjs": "^2.4.6",
     "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^22.7.5",

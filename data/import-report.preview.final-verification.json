@@ -1,0 +1,374 @@
+{
+  "generatedAt": "2026-07-23T14:35:53.484Z",
+  "target": {
+    "environment": "preview",
+    "host": "ep-dark-glitter-aj75jjtu-pooler.c-3.us-east-2.aws.neon.tech",
+    "database": "neondb"
+  },
+  "backupReference": {
+    "verified": true,
+    "verificationSource": "user-confirmed",
+    "verificationNotes": "User confirmed Neon backup branch was successfully created and designated as verified.",
+    "neonProject": "is-painting-app",
+    "sourceBranch": "preview",
+    "sourceDatabaseHost": "ep-dark-glitter-aj75jjtu-pooler.c-3.us-east-2.aws.neon.tech",
+    "backupBranch": {
+      "id": "pre-legacy-import-backup-2026-07-22",
+      "name": "pre-legacy-import-backup-2026-07-22"
+    },
+    "createdAt": "2026-07-23T00:00:00.000Z",
+    "restoreProcedure": [
+      "In Neon dashboard, open branch pre-legacy-import-backup-2026-07-22.",
+      "Copy the branch connection string for database neondb.",
+      "Point DATABASE_URL and DIRECT_URL for the target environment to that branch host.",
+      "Redeploy application or restart processes so new connections use the restored branch.",
+      "Validate key counts and admin login after reconnecting."
+    ]
+  },
+  "firstRun": {
+    "counts": {
+      "customer": {
+        "imported": 165,
+        "skipped": 0,
+        "duplicates": 0,
+        "merged": 0
+      },
+      "project": {
+        "imported": 62,
+        "skipped": 0,
+        "duplicates": 0,
+        "merged": 0
+      },
+      "employee": {
+        "imported": 13,
+        "skipped": 0,
+        "duplicates": 0,
+        "merged": 1
+      },
+      "time_entry": {
+        "imported": 351,
+        "skipped": 0,
+        "duplicates": 0,
+        "merged": 0
+      },
+      "expense": {
+        "imported": 0,
+        "skipped": 0,
+        "duplicates": 0,
+        "merged": 0
+      },
+      "payment": {
+        "imported": 0,
+        "skipped": 0,
+        "duplicates": 0,
+        "merged": 0
+      },
+      "opportunity": {
+        "imported": 0,
+        "skipped": 0,
+        "duplicates": 0,
+        "merged": 0
+      },
+      "receipt": {
+        "imported": 0,
+        "skipped": 0,
+        "duplicates": 0,
+        "merged": 0
+      },
+      "job_material": {
+        "imported": 0,
+        "skipped": 0,
+        "duplicates": 0,
+        "merged": 0
+      }
+    },
+    "employeeImportSummary": {
+      "sourceEmployeeRecords": 14,
+      "distinctUsersRepresented": 13,
+      "createdEmployees": 13,
+      "explicitlyMergedEmployees": 1,
+      "unresolvedDuplicateEmailConflicts": 0
+    },
+    "employeeMerges": [
+      {
+        "canonicalLegacyId": "750006",
+        "canonicalName": "Robert Silva Ferreira",
+        "mergedLegacyId": "2760001",
+        "mergedName": "Robert Ferreira",
+        "email": "robert786ferreira@gmail.com"
+      }
+    ],
+    "databaseCounts": {
+      "customer": 165,
+      "project": 62,
+      "employee": 14,
+      "time_entry": 351,
+      "expense": 0,
+      "payment": 0,
+      "opportunity": 0,
+      "receipt": 0,
+      "job_material": 0
+    },
+    "dashboardMetrics": {
+      "revenueBaseTotal": 1179302.04,
+      "actualCostTotal": 75143.48,
+      "committedCostTotal": 75143.48,
+      "actualProfitTotal": 1104158.56,
+      "committedProfitTotal": 1104158.56,
+      "actualMarginPct": 93.63,
+      "committedMarginPct": 93.63
+    }
+  },
+  "secondRun": {
+    "counts": {
+      "customer": {
+        "imported": 0,
+        "skipped": 165,
+        "duplicates": 0,
+        "merged": 0
+      },
+      "project": {
+        "imported": 0,
+        "skipped": 62,
+        "duplicates": 0,
+        "merged": 0
+      },
+      "employee": {
+        "imported": 0,
+        "skipped": 14,
+        "duplicates": 0,
+        "merged": 0
+      },
+      "time_entry": {
+        "imported": 0,
+        "skipped": 351,
+        "duplicates": 0,
+        "merged": 0
+      },
+      "expense": {
+        "imported": 0,
+        "skipped": 0,
+        "duplicates": 0,
+        "merged": 0
+      },
+      "payment": {
+        "imported": 0,
+        "skipped": 0,
+        "duplicates": 0,
+        "merged": 0
+      },
+      "opportunity": {
+        "imported": 0,
+        "skipped": 0,
+        "duplicates": 0,
+        "merged": 0
+      },
+      "receipt": {
+        "imported": 0,
+        "skipped": 0,
+        "duplicates": 0,
+        "merged": 0
+      },
+      "job_material": {
+        "imported": 0,
+        "skipped": 0,
+        "duplicates": 0,
+        "merged": 0
+      }
+    },
+    "employeeImportSummary": {
+      "sourceEmployeeRecords": 14,
+      "distinctUsersRepresented": 0,
+      "createdEmployees": 0,
+      "explicitlyMergedEmployees": 0,
+      "unresolvedDuplicateEmailConflicts": 0
+    },
+    "employeeMerges": [],
+    "databaseCounts": {
+      "customer": 165,
+      "project": 62,
+      "employee": 14,
+      "time_entry": 351,
+      "expense": 0,
+      "payment": 0,
+      "opportunity": 0,
+      "receipt": 0,
+      "job_material": 0
+    },
+    "dashboardMetrics": {
+      "revenueBaseTotal": 1179302.04,
+      "actualCostTotal": 75143.48,
+      "committedCostTotal": 75143.48,
+      "actualProfitTotal": 1104158.56,
+      "committedProfitTotal": 1104158.56,
+      "actualMarginPct": 93.63,
+      "committedMarginPct": 93.63
+    }
+  },
+  "finalDatabaseCounts": {
+    "Customer": 167,
+    "Job": 62,
+    "User": 14,
+    "TimeEntry": 351,
+    "Expense": 0,
+    "Payment": 0,
+    "Opportunity": 0,
+    "Proposal": 0,
+    "ExpenseAttachment": 0,
+    "ExpenseReceiptUpload": 0,
+    "MigrationMap": 592,
+    "Config": 1,
+    "AutomationTemplate": 4,
+    "AutomationStep": 8
+  },
+  "relationshipChecks": {
+    "jobsWithoutCustomer": 0,
+    "timeEntriesWithoutJob": 0,
+    "timeEntriesWithoutUser": 0,
+    "duplicateMigrationMapKeys": 0,
+    "duplicateUserEmails": 0
+  },
+  "robertMergeReconciliation": {
+    "canonicalLegacyId": "750006",
+    "mergedLegacyId": "2760001",
+    "mappedUserId": 45,
+    "migrationMapRows": [
+      {
+        "id": 1661,
+        "entityType": "employee",
+        "legacyId": "2760001",
+        "newId": 45,
+        "createdAt": "2026-07-23T14:00:02.392Z"
+      },
+      {
+        "id": 1655,
+        "entityType": "employee",
+        "legacyId": "750006",
+        "newId": 45,
+        "createdAt": "2026-07-23T14:00:01.363Z"
+      }
+    ],
+    "combinedTimeEntries": 100,
+    "combinedHours": 847.41
+  },
+  "preserved": {
+    "admin": {
+      "id": 1,
+      "email": "admin@ispainting.com",
+      "name": "Italo Santos",
+      "role": "admin",
+      "isActive": true
+    },
+    "configCount": 1,
+    "automationTemplateCount": 4,
+    "automationStepCount": 8
+  },
+  "reconciliation": {
+    "status": "fully_reconciled",
+    "legacyCustomersImported": 165,
+    "manualCustomersCreatedAfterImport": 2,
+    "totalCustomersCurrentlyInDatabase": 167,
+    "notes": [
+      "Two customer records were manually created in the application after the legacy import completed.",
+      "These records are intentionally not represented in MigrationMap because they were never part of the legacy export.",
+      "They are excluded from migration discrepancies, reconciliation failures, and idempotency issues."
+    ]
+  },
+  "postImportManualData": {
+    "sectionTitle": "Post-Import Manual Data",
+    "excludedFromMigrationReconciliationTotals": true,
+    "customers": [
+      {
+        "id": 661,
+        "name": "Colleen Meehan",
+        "email": "cmeehan2014@gmail.com",
+        "createdAt": "2026-07-23T14:30:41.317Z",
+        "reason": "manually created after migration"
+      },
+      {
+        "id": 662,
+        "name": "Julie Trudel",
+        "email": "rjtrudel2@gmail.com",
+        "createdAt": "2026-07-23T14:32:57.956Z",
+        "reason": "manually created after migration"
+      }
+    ]
+  },
+  "migrationCompleteSummary": {
+    "title": "Migration Complete",
+    "importedLegacyCustomers": 165,
+    "importedJobs": 62,
+    "importedEmployees": 13,
+    "employeeMergeSummary": {
+      "mergedEmployeeRecords": 1,
+      "mergeDetails": [
+        {
+          "canonicalLegacyId": "750006",
+          "canonicalName": "Robert Silva Ferreira",
+          "mergedLegacyId": "2760001",
+          "mergedName": "Robert Ferreira",
+          "email": "robert786ferreira@gmail.com"
+        }
+      ]
+    },
+    "importedTimeEntries": 351,
+    "migrationMapSummary": {
+      "totalRows": 592,
+      "expectedFromImportedEntities": 592,
+      "status": "matched"
+    },
+    "integrityCheckResults": {
+      "jobsWithoutCustomer": 0,
+      "timeEntriesWithoutJob": 0,
+      "timeEntriesWithoutUser": 0,
+      "duplicateMigrationMapKeys": 0,
+      "duplicateUserEmails": 0,
+      "status": "passed"
+    },
+    "idempotencyResults": {
+      "secondRunImportedCounts": {
+        "customer": 0,
+        "project": 0,
+        "employee": 0,
+        "time_entry": 0
+      },
+      "secondRunSkippedCounts": {
+        "customer": 165,
+        "project": 62,
+        "employee": 14,
+        "time_entry": 351
+      },
+      "status": "passed"
+    },
+    "validationResults": {
+      "firstRun": {
+        "validationErrors": 0,
+        "missingRelationships": 0,
+        "duplicates": 0
+      },
+      "secondRun": {
+        "validationErrors": 0,
+        "missingRelationships": 0,
+        "duplicates": 0
+      },
+      "status": "passed"
+    },
+    "remainingEntitiesStillPendingImport": [
+      "Expenses",
+      "Payments",
+      "Opportunities",
+      "Receipts (if available)"
+    ]
+  },
+  "uiUxImprovementBacklogAdded": {
+    "backlogFile": "docs/IMPLEMENTATION_BACKLOG.md",
+    "sections": [
+      "Jobs Page - List View Redesign (Compact/Dense)",
+      "Status Summary Filters - Functional Bug",
+      "Active / Archived Filter - Server-Side Bug",
+      "Safety / Action Design"
+    ],
+    "implementedNow": false,
+    "notes": "Backlog items were added only; no broad UI redesign was implemented in this import/reconciliation cycle."
+  }
+}

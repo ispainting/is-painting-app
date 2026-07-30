@@ -1,0 +1,358 @@
+{
+  "generatedAt": "2026-07-23T00:49:46.613Z",
+  "conflictEmail": "robert786ferreira@gmail.com",
+  "employeeA": {
+    "legacyEmployeeId": "750006",
+    "record": {
+      "employee_id": "750006",
+      "employee_number": "750006",
+      "first_name": "Robert",
+      "last_name": "Silva Ferreira",
+      "full_name": "Robert Silva Ferreira",
+      "email": "robert786ferreira@gmail.com",
+      "phone": "5083605008",
+      "role": "user",
+      "position": "Painter",
+      "department": "",
+      "employment_status": "active",
+      "hire_date": "2026-02-18T12:44:22.000Z",
+      "termination_date": "",
+      "hourly_rate": "20.00",
+      "overtime_rate": "",
+      "island_rate": "",
+      "travel_rate": "",
+      "special_rate": "",
+      "payroll_adjustments": "",
+      "active": "true",
+      "notes": "",
+      "created_at": "2026-02-18T12:44:22.000Z",
+      "updated_at": "2026-06-24T00:53:53.000Z"
+    },
+    "timeEntryCount": 34,
+    "totalHours": 297.9,
+    "dateRange": {
+      "start": "2026-02-18",
+      "end": "2026-06-19"
+    },
+    "projectsWorked": [
+      {
+        "projectId": "390001",
+        "projectName": "14 Overlook Dr - Kitchen, Dinning Room, Laundry, Half Bath"
+      },
+      {
+        "projectId": "780001",
+        "projectName": "9 Waterside Dr - Kitchen Cab and Others"
+      },
+      {
+        "projectId": "840001",
+        "projectName": "24 Coffins Field Rd - Exterior Trims and Pergola"
+      },
+      {
+        "projectId": "870001",
+        "projectName": "64 Tiasquam Rd - Exterior Painting"
+      },
+      {
+        "projectId": "900001",
+        "projectName": "91 Commercial St - Interior Painting"
+      },
+      {
+        "projectId": "90009",
+        "projectName": "35 Mass Ct - Exterior Trims"
+      },
+      {
+        "projectId": "90012",
+        "projectName": "CASEY BUILDERS - 18 SAVERY LN FALMOUTH"
+      },
+      {
+        "projectId": "90016",
+        "projectName": "Cameron - Interior"
+      },
+      {
+        "projectId": "90017",
+        "projectName": "Michael Morgan - Interior Vineyard"
+      }
+    ]
+  },
+  "employeeB": {
+    "legacyEmployeeId": "2760001",
+    "record": {
+      "employee_id": "2760001",
+      "employee_number": "2760001",
+      "first_name": "Robert",
+      "last_name": "Ferreira",
+      "full_name": "Robert Ferreira",
+      "email": "robert786ferreira@gmail.com",
+      "phone": "(508) 360-5008",
+      "role": "user",
+      "position": "Painter",
+      "department": "",
+      "employment_status": "active",
+      "hire_date": "2026-03-04T13:08:44.000Z",
+      "termination_date": "",
+      "hourly_rate": "20.00",
+      "overtime_rate": "",
+      "island_rate": "",
+      "travel_rate": "",
+      "special_rate": "",
+      "payroll_adjustments": "",
+      "active": "true",
+      "notes": "",
+      "created_at": "2026-03-04T13:08:44.000Z",
+      "updated_at": "2026-05-30T17:22:32.000Z"
+    },
+    "timeEntryCount": 66,
+    "totalHours": 549.51,
+    "dateRange": {
+      "start": "2026-03-04",
+      "end": "2026-06-27"
+    },
+    "projectsWorked": [
+      {
+        "projectId": "1020001",
+        "projectName": "51 Manchester Ave - Exterior and Partial Interior"
+      },
+      {
+        "projectId": "360002",
+        "projectName": "175 MA-28: EXTERIOR PAINTING"
+      },
+      {
+        "projectId": "750001",
+        "projectName": "1 Bumble Bee Ln - Interior Painting"
+      },
+      {
+        "projectId": "780001",
+        "projectName": "9 Waterside Dr - Kitchen Cab and Others"
+      },
+      {
+        "projectId": "810001",
+        "projectName": "Upper Level Nantucket - 12 Nichols Rd"
+      },
+      {
+        "projectId": "840001",
+        "projectName": "24 Coffins Field Rd - Exterior Trims and Pergola"
+      },
+      {
+        "projectId": "900001",
+        "projectName": "91 Commercial St - Interior Painting"
+      },
+      {
+        "projectId": "90009",
+        "projectName": "35 Mass Ct - Exterior Trims"
+      },
+      {
+        "projectId": "90010",
+        "projectName": "Bob Mcghee - Exterior Partial"
+      },
+      {
+        "projectId": "90012",
+        "projectName": "CASEY BUILDERS - 18 SAVERY LN FALMOUTH"
+      },
+      {
+        "projectId": "90016",
+        "projectName": "Cameron - Interior"
+      },
+      {
+        "projectId": "990001",
+        "projectName": "SAVERY TOUCH UPS"
+      }
+    ]
+  },
+  "fieldComparisons": [
+    {
+      "field": "first_name",
+      "a": "Robert",
+      "b": "Robert",
+      "equal": true
+    },
+    {
+      "field": "last_name",
+      "a": "Silva Ferreira",
+      "b": "Ferreira",
+      "equal": false
+    },
+    {
+      "field": "full_name",
+      "a": "Robert Silva Ferreira",
+      "b": "Robert Ferreira",
+      "equal": false
+    },
+    {
+      "field": "email",
+      "a": "robert786ferreira@gmail.com",
+      "b": "robert786ferreira@gmail.com",
+      "equal": true
+    },
+    {
+      "field": "phone",
+      "a": "5083605008",
+      "b": "(508) 360-5008",
+      "equal": false
+    },
+    {
+      "field": "position",
+      "a": "Painter",
+      "b": "Painter",
+      "equal": true
+    },
+    {
+      "field": "hourly_rate",
+      "a": "20.00",
+      "b": "20.00",
+      "equal": true
+    },
+    {
+      "field": "overtime_rate",
+      "a": "",
+      "b": "",
+      "equal": true
+    },
+    {
+      "field": "hire_date",
+      "a": "2026-02-18T12:44:22.000Z",
+      "b": "2026-03-04T13:08:44.000Z",
+      "equal": false
+    },
+    {
+      "field": "employment_status",
+      "a": "active",
+      "b": "active",
+      "equal": true
+    },
+    {
+      "field": "created_at",
+      "a": "2026-02-18T12:44:22.000Z",
+      "b": "2026-03-04T13:08:44.000Z",
+      "equal": false
+    },
+    {
+      "field": "updated_at",
+      "a": "2026-06-24T00:53:53.000Z",
+      "b": "2026-05-30T17:22:32.000Z",
+      "equal": false
+    },
+    {
+      "field": "payroll_adjustments",
+      "a": "",
+      "b": "",
+      "equal": true
+    },
+    {
+      "field": "role",
+      "a": "user",
+      "b": "user",
+      "equal": true
+    },
+    {
+      "field": "active",
+      "a": "true",
+      "b": "true",
+      "equal": true
+    },
+    {
+      "field": "department",
+      "a": "",
+      "b": "",
+      "equal": true
+    },
+    {
+      "field": "employee_number",
+      "a": "750006",
+      "b": "2760001",
+      "equal": false
+    }
+  ],
+  "conflictingIdentityOrPayrollFields": [
+    {
+      "field": "last_name",
+      "a": "Silva Ferreira",
+      "b": "Ferreira",
+      "equal": false
+    },
+    {
+      "field": "full_name",
+      "a": "Robert Silva Ferreira",
+      "b": "Robert Ferreira",
+      "equal": false
+    },
+    {
+      "field": "phone",
+      "a": "5083605008",
+      "b": "(508) 360-5008",
+      "equal": false
+    },
+    {
+      "field": "hire_date",
+      "a": "2026-02-18T12:44:22.000Z",
+      "b": "2026-03-04T13:08:44.000Z",
+      "equal": false
+    },
+    {
+      "field": "created_at",
+      "a": "2026-02-18T12:44:22.000Z",
+      "b": "2026-03-04T13:08:44.000Z",
+      "equal": false
+    },
+    {
+      "field": "updated_at",
+      "a": "2026-06-24T00:53:53.000Z",
+      "b": "2026-05-30T17:22:32.000Z",
+      "equal": false
+    },
+    {
+      "field": "employee_number",
+      "a": "750006",
+      "b": "2760001",
+      "equal": false
+    }
+  ],
+  "overlapAnalysis": {
+    "sameEmail": true,
+    "samePhoneNormalized": true,
+    "nameSimilarity": {
+      "firstNameEqual": true,
+      "lastNameContains": true
+    },
+    "dateRangesOverlap": true,
+    "sharedProjects": [
+      {
+        "projectId": "780001",
+        "projectName": "9 Waterside Dr - Kitchen Cab and Others"
+      },
+      {
+        "projectId": "840001",
+        "projectName": "24 Coffins Field Rd - Exterior Trims and Pergola"
+      },
+      {
+        "projectId": "900001",
+        "projectName": "91 Commercial St - Interior Painting"
+      },
+      {
+        "projectId": "90009",
+        "projectName": "35 Mass Ct - Exterior Trims"
+      },
+      {
+        "projectId": "90012",
+        "projectName": "CASEY BUILDERS - 18 SAVERY LN FALMOUTH"
+      },
+      {
+        "projectId": "90016",
+        "projectName": "Cameron - Interior"
+      }
+    ]
+  },
+  "recommendation": {
+    "verdict": "likely_same_person_duplicate_legacy_records",
+    "rationale": [
+      "Exact same non-empty email across both records.",
+      "Phone normalizes to the same digits.",
+      "First name is identical and last name appears as shortened variant.",
+      "Hourly rate and employment status match.",
+      "Work histories overlap and share multiple projects."
+    ],
+    "requiredActionBeforeImport": [
+      "Decide canonical legacy employee ID to keep (e.g., 750006 or 2760001).",
+      "Create an explicit mapping rule for the non-canonical ID to canonical ID, or update source export upstream.",
+      "Re-run dry-run and confirm zero duplicate-email conflicts."
+    ]
+  }
+}

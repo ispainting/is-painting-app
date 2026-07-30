@@ -1,0 +1,687 @@
+{
+  "preview": "https://is-painting-app-git-feature-replace-e0c170-ispaintings-projects.vercel.app",
+  "results": [
+    {
+      "fileName": "expense_us_receipt.jpg",
+      "attachmentId": 25,
+      "extractionStatus": "completed",
+      "provider": "manus",
+      "model": "manus-1.6",
+      "message": "Receipt extracted successfully.",
+      "populated": {
+        "vendor": "Logans 3:14",
+        "date": "2014-07-07",
+        "subtotal": 43.82,
+        "tax": 3.34,
+        "total": 53.82,
+        "paymentMethod": "VISA",
+        "receiptNumber": null,
+        "invoiceNumber": null,
+        "lineItemsCount": 1,
+        "overallConfidence": 0.92
+      },
+      "rawStructuredOutput": {
+        "category": {
+          "confidence": 0.99,
+          "value": "meals"
+        },
+        "date": {
+          "confidence": 0.99,
+          "value": "2014-07-07"
+        },
+        "description": {
+          "confidence": 0,
+          "value": null
+        },
+        "invoiceNumber": {
+          "confidence": 0,
+          "value": null
+        },
+        "items": [
+          {
+            "confidence": 0,
+            "description": "null",
+            "quantity": null,
+            "totalPrice": null,
+            "unitPrice": null
+          }
+        ],
+        "overallConfidence": 0.92,
+        "paymentMethod": {
+          "confidence": 0.99,
+          "value": "VISA"
+        },
+        "rawText": "DATE 7/07/14 MID 354\\nLogans 3:14\\n2513 S. Stemmons Freeway\\nLewisville TX 75067\\n972-459-6142\\nGratuity not included\\nThank you for your patronage\\nVISA ************8612\\nAUTH 287522\\nSUBTOTAL 43.82\\nTIP 10.00\\nTOTAL 53.82",
+        "receiptNumber": {
+          "confidence": 0,
+          "value": null
+        },
+        "subtotal": {
+          "confidence": 0.99,
+          "value": 43.82
+        },
+        "suggestedJob": {
+          "confidence": 1,
+          "jobName": null,
+          "reason": null
+        },
+        "tax": {
+          "confidence": 0.99,
+          "value": 3.34
+        },
+        "total": {
+          "confidence": 0.99,
+          "value": 53.82
+        },
+        "vendor": {
+          "confidence": 0.84,
+          "value": "Logans 3:14"
+        }
+      },
+      "parsedNormalizedOutput": {
+        "vendor": {
+          "value": "Logans 3:14",
+          "confidence": 0.84
+        },
+        "date": {
+          "value": "2014-07-07",
+          "confidence": 0.99
+        },
+        "subtotal": {
+          "value": 43.82,
+          "confidence": 0.99
+        },
+        "tax": {
+          "value": 3.34,
+          "confidence": 0.99
+        },
+        "total": {
+          "value": 53.82,
+          "confidence": 0.99
+        },
+        "paymentMethod": {
+          "value": "VISA",
+          "confidence": 0.99
+        },
+        "receiptNumber": {
+          "value": null,
+          "confidence": 0
+        },
+        "invoiceNumber": {
+          "value": null,
+          "confidence": 0
+        },
+        "category": {
+          "value": "meals",
+          "confidence": 0.99
+        },
+        "description": {
+          "value": null,
+          "confidence": 0
+        },
+        "items": [
+          {
+            "description": "null",
+            "quantity": null,
+            "unitPrice": null,
+            "totalPrice": null,
+            "confidence": 0
+          }
+        ],
+        "rawText": "DATE 7/07/14 MID 354\\nLogans 3:14\\n2513 S. Stemmons Freeway\\nLewisville TX 75067\\n972-459-6142\\nGratuity not included\\nThank you for your patronage\\nVISA ************8612\\nAUTH 287522\\nSUBTOTAL 43.82\\nTIP 10.00\\nTOTAL 53.82",
+        "overallConfidence": 0.92,
+        "suggestedJob": {
+          "jobId": null,
+          "jobName": null,
+          "confidence": 1,
+          "reason": null
+        }
+      }
+    },
+    {
+      "fileName": "expense_default_sample.jpg",
+      "attachmentId": 26,
+      "extractionStatus": "completed",
+      "provider": "manus",
+      "model": "manus-1.6",
+      "message": "Receipt extracted successfully.",
+      "populated": {
+        "vendor": "Clachan",
+        "date": "2016-02-26",
+        "subtotal": 8.5,
+        "tax": 1.7,
+        "total": 10.2,
+        "paymentMethod": "card",
+        "receiptNumber": "54/7500",
+        "invoiceNumber": null,
+        "lineItemsCount": 1,
+        "overallConfidence": 0.99
+      },
+      "rawStructuredOutput": {
+        "category": {
+          "confidence": 0.82,
+          "value": "meals"
+        },
+        "date": {
+          "confidence": 0.99,
+          "value": "2016-02-26"
+        },
+        "description": {
+          "confidence": 0.97,
+          "value": "Meantime Pale"
+        },
+        "invoiceNumber": {
+          "confidence": 0,
+          "value": null
+        },
+        "items": [
+          {
+            "confidence": 0.98,
+            "description": "Meantime Pale",
+            "quantity": 2,
+            "totalPrice": 10.2,
+            "unitPrice": null
+          }
+        ],
+        "overallConfidence": 0.99,
+        "paymentMethod": {
+          "confidence": 0.99,
+          "value": "card"
+        },
+        "rawText": null,
+        "receiptNumber": {
+          "confidence": 0.98,
+          "value": "54/7500"
+        },
+        "subtotal": {
+          "confidence": 0.99,
+          "value": 8.5
+        },
+        "suggestedJob": {
+          "confidence": 0,
+          "jobName": null,
+          "reason": null
+        },
+        "tax": {
+          "confidence": 0.99,
+          "value": 1.7
+        },
+        "total": {
+          "confidence": 0.99,
+          "value": 10.2
+        },
+        "vendor": {
+          "confidence": 0.99,
+          "value": "Clachan"
+        }
+      },
+      "parsedNormalizedOutput": {
+        "vendor": {
+          "value": "Clachan",
+          "confidence": 0.99
+        },
+        "date": {
+          "value": "2016-02-26",
+          "confidence": 0.99
+        },
+        "subtotal": {
+          "value": 8.5,
+          "confidence": 0.99
+        },
+        "tax": {
+          "value": 1.7,
+          "confidence": 0.99
+        },
+        "total": {
+          "value": 10.2,
+          "confidence": 0.99
+        },
+        "paymentMethod": {
+          "value": "card",
+          "confidence": 0.99
+        },
+        "receiptNumber": {
+          "value": "54/7500",
+          "confidence": 0.98
+        },
+        "invoiceNumber": {
+          "value": null,
+          "confidence": 0
+        },
+        "category": {
+          "value": "meals",
+          "confidence": 0.82
+        },
+        "description": {
+          "value": "Meantime Pale",
+          "confidence": 0.97
+        },
+        "items": [
+          {
+            "description": "Meantime Pale",
+            "quantity": 2,
+            "unitPrice": null,
+            "totalPrice": 10.2,
+            "confidence": 0.98
+          }
+        ],
+        "rawText": null,
+        "overallConfidence": 0.99,
+        "suggestedJob": {
+          "jobId": null,
+          "jobName": null,
+          "confidence": 0,
+          "reason": null
+        }
+      }
+    },
+    {
+      "fileName": "invoice_default_sample.jpg",
+      "attachmentId": 27,
+      "extractionStatus": "completed",
+      "provider": "manus",
+      "model": "manus-1.6",
+      "message": "Receipt extracted successfully.",
+      "populated": {
+        "vendor": "Turnpike Designs Co.",
+        "date": "2018-09-25",
+        "subtotal": 2145,
+        "tax": 193.2,
+        "total": 2608.2,
+        "paymentMethod": null,
+        "receiptNumber": null,
+        "invoiceNumber": "14",
+        "lineItemsCount": 3,
+        "overallConfidence": 0.98
+      },
+      "rawStructuredOutput": {
+        "category": {
+          "confidence": 0.84,
+          "value": "advertising"
+        },
+        "date": {
+          "confidence": 0.99,
+          "value": "2018-09-25"
+        },
+        "description": {
+          "confidence": 0.99,
+          "value": "Invoice from Turnpike Designs Co."
+        },
+        "invoiceNumber": {
+          "confidence": 0.99,
+          "value": "14"
+        },
+        "items": [
+          {
+            "confidence": 0.98,
+            "description": "Platinum web hosting package",
+            "quantity": 1,
+            "totalPrice": 65,
+            "unitPrice": 65
+          },
+          {
+            "confidence": 0.98,
+            "description": "2 page website design",
+            "quantity": 3,
+            "totalPrice": 2100,
+            "unitPrice": 2100
+          },
+          {
+            "confidence": 0.98,
+            "description": "Mobile designs",
+            "quantity": 1,
+            "totalPrice": 250,
+            "unitPrice": 250
+          }
+        ],
+        "overallConfidence": 0.98,
+        "paymentMethod": {
+          "confidence": 0,
+          "value": null
+        },
+        "rawText": null,
+        "receiptNumber": {
+          "confidence": 0,
+          "value": null
+        },
+        "subtotal": {
+          "confidence": 0.99,
+          "value": 2145
+        },
+        "suggestedJob": {
+          "confidence": 0,
+          "jobName": null,
+          "reason": null
+        },
+        "tax": {
+          "confidence": 0.99,
+          "value": 193.2
+        },
+        "total": {
+          "confidence": 0.99,
+          "value": 2608.2
+        },
+        "vendor": {
+          "confidence": 0.99,
+          "value": "Turnpike Designs Co."
+        }
+      },
+      "parsedNormalizedOutput": {
+        "vendor": {
+          "value": "Turnpike Designs Co.",
+          "confidence": 0.99
+        },
+        "date": {
+          "value": "2018-09-25",
+          "confidence": 0.99
+        },
+        "subtotal": {
+          "value": 2145,
+          "confidence": 0.99
+        },
+        "tax": {
+          "value": 193.2,
+          "confidence": 0.99
+        },
+        "total": {
+          "value": 2608.2,
+          "confidence": 0.99
+        },
+        "paymentMethod": {
+          "value": null,
+          "confidence": 0
+        },
+        "receiptNumber": {
+          "value": null,
+          "confidence": 0
+        },
+        "invoiceNumber": {
+          "value": "14",
+          "confidence": 0.99
+        },
+        "category": {
+          "value": "advertising",
+          "confidence": 0.84
+        },
+        "description": {
+          "value": "Invoice from Turnpike Designs Co.",
+          "confidence": 0.99
+        },
+        "items": [
+          {
+            "description": "Platinum web hosting package",
+            "quantity": 1,
+            "unitPrice": 65,
+            "totalPrice": 65,
+            "confidence": 0.98
+          },
+          {
+            "description": "2 page website design",
+            "quantity": 3,
+            "unitPrice": 2100,
+            "totalPrice": 2100,
+            "confidence": 0.98
+          },
+          {
+            "description": "Mobile designs",
+            "quantity": 1,
+            "unitPrice": 250,
+            "totalPrice": 250,
+            "confidence": 0.98
+          }
+        ],
+        "rawText": null,
+        "overallConfidence": 0.98,
+        "suggestedJob": {
+          "jobId": null,
+          "jobName": null,
+          "confidence": 0,
+          "reason": null
+        }
+      }
+    },
+    {
+      "fileName": "petrol_default_sample.jpg",
+      "attachmentId": 28,
+      "extractionStatus": "failed",
+      "provider": "manus",
+      "model": "manus-1.6",
+      "message": "AI provider unavailable: 500 node server request failed | debug: {\"url\":\"https://api.manus.ai/v2/task.listMessages?task_id=67QKUrd8UoMbvSwJWm7Lnp&limit=100&order=desc\",\"method\":\"GET\",\"status\":500,\"authorizationHeaderFormat\":\"x-manus-api-key: sk-k***lQ8m\",\"requestHeaders\":{\"x-manus-api-key\":\"sk-k***lQ8m\"},\"requestJsonBody\":null,\"responseHeaders\":{\"accept-encoding\":\"gzip\",\"connection\":\"keep-alive\",\"content-length\":\"127\",\"content-type\":\"application/json\",\"date\":\"Mon, 20 Jul 2026 18:30:20 GMT\",\"server\":\"APISIX/3.11.0\",\"vary\":\"Origin\",\"x-apisix-upstream-status\":\"500\",\"x-ratelimit-limit\":\"200\",\"x-ratelimit-remaining\":\"199\",\"x-ratelimit-reset\":\"60\"},\"fullErrorBody\":\"{\\\"error\\\":{\\\"code\\\":\\\"internal\\\",\\\"message\\\":\\\"node server request failed\\\"},\\\"ok\\\":false,\\\"request_id\\\":\\\"1e72d09cad56688ef854831ec699fd73\\\"}\",\"fullErrorJson\":{\"error\":{\"code\":\"internal\",\"message\":\"node server request failed\"},\"ok\":false,\"request_id\":\"1e72d09cad56688ef854831ec699fd73\"}}",
+      "populated": {
+        "vendor": null,
+        "date": null,
+        "subtotal": null,
+        "tax": null,
+        "total": null,
+        "paymentMethod": null,
+        "receiptNumber": null,
+        "invoiceNumber": null,
+        "lineItemsCount": 0,
+        "overallConfidence": null
+      },
+      "rawStructuredOutput": null,
+      "parsedNormalizedOutput": null
+    },
+    {
+      "fileName": "items_classifier_default_sample.jpg",
+      "attachmentId": 29,
+      "extractionStatus": "completed",
+      "provider": "manus",
+      "model": "manus-1.6",
+      "message": "Receipt extracted successfully.",
+      "populated": {
+        "vendor": "012 Lifestyle Brooklyn",
+        "date": "2022-08-01",
+        "subtotal": 1249950,
+        "tax": 163036.96,
+        "total": 1374945,
+        "paymentMethod": null,
+        "receiptNumber": "30936",
+        "invoiceNumber": "30936",
+        "lineItemsCount": 7,
+        "overallConfidence": 0.99
+      },
+      "rawStructuredOutput": {
+        "category": {
+          "confidence": 0.99,
+          "value": "meals"
+        },
+        "date": {
+          "confidence": 0.88,
+          "value": "2022-08-01"
+        },
+        "description": {
+          "confidence": 0,
+          "value": null
+        },
+        "invoiceNumber": {
+          "confidence": 0.99,
+          "value": "30936"
+        },
+        "items": [
+          {
+            "confidence": 0.97,
+            "description": "Mix Masala Yummy Platter Full",
+            "quantity": 1,
+            "totalPrice": 650,
+            "unitPrice": 650
+          },
+          {
+            "confidence": 0.97,
+            "description": "012 Lifestyle Platter Full",
+            "quantity": 1,
+            "totalPrice": 550,
+            "unitPrice": 550
+          },
+          {
+            "confidence": 0.96,
+            "description": "Ace of Spade Rose",
+            "quantity": 100,
+            "totalPrice": 1000000,
+            "unitPrice": 10000
+          },
+          {
+            "confidence": 0.96,
+            "description": "Veuve Rich",
+            "quantity": 50,
+            "totalPrice": 100000,
+            "unitPrice": 2000
+          },
+          {
+            "confidence": 0.96,
+            "description": "Dom Perignon Luminous",
+            "quantity": 20,
+            "totalPrice": 120000,
+            "unitPrice": 6000
+          },
+          {
+            "confidence": 0.98,
+            "description": "Coke 300ml",
+            "quantity": 10,
+            "totalPrice": 250,
+            "unitPrice": 25
+          },
+          {
+            "confidence": 0.96,
+            "description": "Glenfiddich 23yrs 750ml",
+            "quantity": 3,
+            "totalPrice": 28500,
+            "unitPrice": 9500
+          }
+        ],
+        "overallConfidence": 0.99,
+        "paymentMethod": {
+          "confidence": 0.99,
+          "value": null
+        },
+        "rawText": null,
+        "receiptNumber": {
+          "confidence": 0.99,
+          "value": "30936"
+        },
+        "subtotal": {
+          "confidence": 0.99,
+          "value": 1249950
+        },
+        "suggestedJob": {
+          "confidence": 0,
+          "jobName": null,
+          "reason": null
+        },
+        "tax": {
+          "confidence": 0.97,
+          "value": 163036.96
+        },
+        "total": {
+          "confidence": 0.99,
+          "value": 1374945
+        },
+        "vendor": {
+          "confidence": 0.99,
+          "value": "012 Lifestyle Brooklyn"
+        }
+      },
+      "parsedNormalizedOutput": {
+        "vendor": {
+          "value": "012 Lifestyle Brooklyn",
+          "confidence": 0.99
+        },
+        "date": {
+          "value": "2022-08-01",
+          "confidence": 0.88
+        },
+        "subtotal": {
+          "value": 1249950,
+          "confidence": 0.99
+        },
+        "tax": {
+          "value": 163036.96,
+          "confidence": 0.97
+        },
+        "total": {
+          "value": 1374945,
+          "confidence": 0.99
+        },
+        "paymentMethod": {
+          "value": null,
+          "confidence": 0.99
+        },
+        "receiptNumber": {
+          "value": "30936",
+          "confidence": 0.99
+        },
+        "invoiceNumber": {
+          "value": "30936",
+          "confidence": 0.99
+        },
+        "category": {
+          "value": "meals",
+          "confidence": 0.99
+        },
+        "description": {
+          "value": null,
+          "confidence": 0
+        },
+        "items": [
+          {
+            "description": "Mix Masala Yummy Platter Full",
+            "quantity": 1,
+            "unitPrice": 650,
+            "totalPrice": 650,
+            "confidence": 0.97
+          },
+          {
+            "description": "012 Lifestyle Platter Full",
+            "quantity": 1,
+            "unitPrice": 550,
+            "totalPrice": 550,
+            "confidence": 0.97
+          },
+          {
+            "description": "Ace of Spade Rose",
+            "quantity": 100,
+            "unitPrice": 10000,
+            "totalPrice": 1000000,
+            "confidence": 0.96
+          },
+          {
+            "description": "Veuve Rich",
+            "quantity": 50,
+            "unitPrice": 2000,
+            "totalPrice": 100000,
+            "confidence": 0.96
+          },
+          {
+            "description": "Dom Perignon Luminous",
+            "quantity": 20,
+            "unitPrice": 6000,
+            "totalPrice": 120000,
+            "confidence": 0.96
+          },
+          {
+            "description": "Coke 300ml",
+            "quantity": 10,
+            "unitPrice": 25,
+            "totalPrice": 250,
+            "confidence": 0.98
+          },
+          {
+            "description": "Glenfiddich 23yrs 750ml",
+            "quantity": 3,
+            "unitPrice": 9500,
+            "totalPrice": 28500,
+            "confidence": 0.96
+          }
+        ],
+        "rawText": null,
+        "overallConfidence": 0.99,
+        "suggestedJob": {
+          "jobId": null,
+          "jobName": null,
+          "confidence": 0,
+          "reason": null
+        }
+      }
+    }
+  ]
+}

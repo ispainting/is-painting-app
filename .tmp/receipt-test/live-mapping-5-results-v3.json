@@ -1,0 +1,214 @@
+{
+  "preview": "https://is-painting-app-git-feature-replace-e0c170-ispaintings-projects.vercel.app",
+  "results": [
+    {
+      "fileName": "expense_us_receipt.jpg",
+      "attachmentId": 35,
+      "extractionStatus": "completed",
+      "provider": "manus",
+      "model": "manus-1.6",
+      "message": "Receipt extracted successfully.",
+      "populated": {
+        "vendor": "Logans 3:4",
+        "date": "2014-07-07",
+        "subtotal": 43.82,
+        "tax": 3.34,
+        "total": 53.82,
+        "paymentMethod": "VISA",
+        "receiptNumber": null,
+        "invoiceNumber": null,
+        "lineItemsCount": 0,
+        "overallConfidence": 0.92
+      },
+      "rawStructuredOutput": {
+        "category": {
+          "confidence": 0.99,
+          "value": "meals"
+        },
+        "date": {
+          "confidence": 0.99,
+          "value": "2014-07-07"
+        },
+        "description": {
+          "confidence": 0.85,
+          "value": "Gratuity not included"
+        },
+        "invoiceNumber": {
+          "confidence": 0.99,
+          "value": null
+        },
+        "items": [],
+        "overallConfidence": 0.92,
+        "paymentMethod": {
+          "confidence": 0.99,
+          "value": "VISA"
+        },
+        "rawText": null,
+        "receiptNumber": {
+          "confidence": 0.95,
+          "value": null
+        },
+        "subtotal": {
+          "confidence": 0.99,
+          "value": 43.82
+        },
+        "suggestedJob": {
+          "confidence": 0.99,
+          "jobName": null,
+          "reason": null
+        },
+        "tax": {
+          "confidence": 0.99,
+          "value": 3.34
+        },
+        "total": {
+          "confidence": 0.99,
+          "value": 53.82
+        },
+        "vendor": {
+          "confidence": 0.99,
+          "value": "Logans 3:4"
+        }
+      },
+      "parsedNormalizedOutput": {
+        "vendor": {
+          "value": "Logans 3:4",
+          "confidence": 0.99
+        },
+        "date": {
+          "value": "2014-07-07",
+          "confidence": 0.99
+        },
+        "subtotal": {
+          "value": 43.82,
+          "confidence": 0.99
+        },
+        "tax": {
+          "value": 3.34,
+          "confidence": 0.99
+        },
+        "total": {
+          "value": 53.82,
+          "confidence": 0.99
+        },
+        "paymentMethod": {
+          "value": "VISA",
+          "confidence": 0.99
+        },
+        "receiptNumber": {
+          "value": null,
+          "confidence": 0.95
+        },
+        "invoiceNumber": {
+          "value": null,
+          "confidence": 0.99
+        },
+        "category": {
+          "value": "meals",
+          "confidence": 0.99
+        },
+        "description": {
+          "value": "Gratuity not included",
+          "confidence": 0.85
+        },
+        "items": [],
+        "rawText": null,
+        "overallConfidence": 0.92,
+        "suggestedJob": {
+          "jobId": null,
+          "jobName": null,
+          "confidence": 0.99,
+          "reason": null
+        }
+      }
+    },
+    {
+      "fileName": "expense_default_sample.jpg",
+      "attachmentId": 36,
+      "extractionStatus": "failed",
+      "provider": "manus",
+      "model": "manus-1.6",
+      "message": "You don't have enough credits. Please upgrade via the below link to continue.\nhttps://manus.go.link/iW6sB?action=open-subscription",
+      "populated": {
+        "vendor": null,
+        "date": null,
+        "subtotal": null,
+        "tax": null,
+        "total": null,
+        "paymentMethod": null,
+        "receiptNumber": null,
+        "invoiceNumber": null,
+        "lineItemsCount": 0,
+        "overallConfidence": null
+      },
+      "rawStructuredOutput": null,
+      "parsedNormalizedOutput": null
+    },
+    {
+      "fileName": "invoice_default_sample.jpg",
+      "attachmentId": 37,
+      "extractionStatus": "failed",
+      "provider": "manus",
+      "model": "manus-1.6",
+      "message": "AI provider unavailable: 429 credit limit exceeded | debug: {\"url\":\"https://api.manus.ai/v2/task.create\",\"method\":\"POST\",\"status\":429,\"authorizationHeaderFormat\":\"x-manus-api-key: sk-k***lQ8m\",\"requestHeaders\":{\"Content-Type\":\"application/json\",\"x-manus-api-key\":\"sk-k***lQ8m\"},\"requestJsonBody\":\"{\\\"agent_profile\\\":\\\"manus-1.6\\\",\\\"message\\\":{\\\"content\\\":[{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\"Extract data from this receipt document.\\\\nNever invent values. If a value is not visible, return null.\\\\nUse YYYY-MM-DD for dates.\\\\nConfidence values must be between 0 and 1.\\\\nSuggested category should be one of: paint, materials, labor, tools, equipment, rentals, fuel, subcontractor, travel, ferry, payroll_related, office, advertising, insurance, vehicle, meals, other.\\\\nSuggest a job only when strong evidence exists in receipt text.\\\\nKnown jobs: Interior repaint — Maple St | TEST | TEST\\\"},{\\\"type\\\":\\\"file\\\",\\\"file_id\\\":\\\"file-hyz3pVePkBhC35j9BPCJQT\\\"}]},\\\"structured_output_schema\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"vendor\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"date\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"subtotal\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"number\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"tax\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"number\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"total\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"number\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"paymentMethod\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"receiptNumber\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"invoiceNumber\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"category\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"description\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"items\\\":{\\\"type\\\":\\\"array\\\",\\\"items\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"description\\\":{\\\"type\\\":\\\"string\\\"},\\\"quantity\\\":{\\\"type\\\":[\\\"number\\\",\\\"null\\\"]},\\\"unitPrice\\\":{\\\"type\\\":[\\\"number\\\",\\\"null\\\"]},\\\"totalPrice\\\":{\\\"type\\\":[\\\"number\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"description\\\",\\\"quantity\\\",\\\"unitPrice\\\",\\\"totalPrice\\\",\\\"confidence\\\"]}},\\\"rawText\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"overallConfidence\\\":{\\\"type\\\":\\\"number\\\"},\\\"suggestedJob\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"jobName\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"},\\\"reason\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]}},\\\"required\\\":[\\\"jobName\\\",\\\"confidence\\\",\\\"reason\\\"]}},\\\"required\\\":[\\\"vendor\\\",\\\"date\\\",\\\"subtotal\\\",\\\"tax\\\",\\\"total\\\",\\\"paymentMethod\\\",\\\"receiptNumber\\\",\\\"invoiceNumber\\\",\\\"category\\\",\\\"description\\\",\\\"items\\\",\\\"rawText\\\",\\\"overallConfidence\\\",\\\"suggestedJob\\\"]}}\",\"responseHeaders\":{\"accept-encoding\":\"gzip\",\"connection\":\"keep-alive\",\"content-length\":\"132\",\"content-type\":\"application/json\",\"date\":\"Mon, 20 Jul 2026 18:40:55 GMT\",\"server\":\"APISIX/3.11.0\",\"vary\":\"Origin\",\"x-ratelimit-limit\":\"200\",\"x-ratelimit-remaining\":\"199\",\"x-ratelimit-reset\":\"60\"},\"fullErrorBody\":\"{\\\"error\\\":{\\\"code\\\":\\\"resource_exhausted\\\",\\\"message\\\":\\\"credit limit exceeded\\\"},\\\"ok\\\":false,\\\"request_id\\\":\\\"ff13ac601c65d83b72dfe007d086fd3f\\\"}\",\"fullErrorJson\":{\"error\":{\"code\":\"resource_exhausted\",\"message\":\"credit limit exceeded\"},\"ok\":false,\"request_id\":\"ff13ac601c65d83b72dfe007d086fd3f\"}}",
+      "populated": {
+        "vendor": null,
+        "date": null,
+        "subtotal": null,
+        "tax": null,
+        "total": null,
+        "paymentMethod": null,
+        "receiptNumber": null,
+        "invoiceNumber": null,
+        "lineItemsCount": 0,
+        "overallConfidence": null
+      },
+      "rawStructuredOutput": null,
+      "parsedNormalizedOutput": null
+    },
+    {
+      "fileName": "petrol_default_sample.jpg",
+      "attachmentId": 38,
+      "extractionStatus": "failed",
+      "provider": "manus",
+      "model": "manus-1.6",
+      "message": "AI provider unavailable: 429 credit limit exceeded | debug: {\"url\":\"https://api.manus.ai/v2/task.create\",\"method\":\"POST\",\"status\":429,\"authorizationHeaderFormat\":\"x-manus-api-key: sk-k***lQ8m\",\"requestHeaders\":{\"Content-Type\":\"application/json\",\"x-manus-api-key\":\"sk-k***lQ8m\"},\"requestJsonBody\":\"{\\\"agent_profile\\\":\\\"manus-1.6\\\",\\\"message\\\":{\\\"content\\\":[{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\"Extract data from this receipt document.\\\\nNever invent values. If a value is not visible, return null.\\\\nUse YYYY-MM-DD for dates.\\\\nConfidence values must be between 0 and 1.\\\\nSuggested category should be one of: paint, materials, labor, tools, equipment, rentals, fuel, subcontractor, travel, ferry, payroll_related, office, advertising, insurance, vehicle, meals, other.\\\\nSuggest a job only when strong evidence exists in receipt text.\\\\nKnown jobs: Interior repaint — Maple St | TEST | TEST\\\"},{\\\"type\\\":\\\"file\\\",\\\"file_id\\\":\\\"file-FLgzh8BLntv4TfX5Q6uFdJ\\\"}]},\\\"structured_output_schema\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"vendor\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"date\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"subtotal\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"number\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"tax\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"number\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"total\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"number\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"paymentMethod\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"receiptNumber\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"invoiceNumber\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"category\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"description\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"items\\\":{\\\"type\\\":\\\"array\\\",\\\"items\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"description\\\":{\\\"type\\\":\\\"string\\\"},\\\"quantity\\\":{\\\"type\\\":[\\\"number\\\",\\\"null\\\"]},\\\"unitPrice\\\":{\\\"type\\\":[\\\"number\\\",\\\"null\\\"]},\\\"totalPrice\\\":{\\\"type\\\":[\\\"number\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"description\\\",\\\"quantity\\\",\\\"unitPrice\\\",\\\"totalPrice\\\",\\\"confidence\\\"]}},\\\"rawText\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"overallConfidence\\\":{\\\"type\\\":\\\"number\\\"},\\\"suggestedJob\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"jobName\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"},\\\"reason\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]}},\\\"required\\\":[\\\"jobName\\\",\\\"confidence\\\",\\\"reason\\\"]}},\\\"required\\\":[\\\"vendor\\\",\\\"date\\\",\\\"subtotal\\\",\\\"tax\\\",\\\"total\\\",\\\"paymentMethod\\\",\\\"receiptNumber\\\",\\\"invoiceNumber\\\",\\\"category\\\",\\\"description\\\",\\\"items\\\",\\\"rawText\\\",\\\"overallConfidence\\\",\\\"suggestedJob\\\"]}}\",\"responseHeaders\":{\"accept-encoding\":\"gzip\",\"connection\":\"keep-alive\",\"content-length\":\"132\",\"content-type\":\"application/json\",\"date\":\"Mon, 20 Jul 2026 18:40:57 GMT\",\"server\":\"APISIX/3.11.0\",\"vary\":\"Origin\",\"x-ratelimit-limit\":\"200\",\"x-ratelimit-remaining\":\"199\",\"x-ratelimit-reset\":\"60\"},\"fullErrorBody\":\"{\\\"error\\\":{\\\"code\\\":\\\"resource_exhausted\\\",\\\"message\\\":\\\"credit limit exceeded\\\"},\\\"ok\\\":false,\\\"request_id\\\":\\\"688ce8499456c2bc18467dcf032b79ee\\\"}\",\"fullErrorJson\":{\"error\":{\"code\":\"resource_exhausted\",\"message\":\"credit limit exceeded\"},\"ok\":false,\"request_id\":\"688ce8499456c2bc18467dcf032b79ee\"}}",
+      "populated": {
+        "vendor": null,
+        "date": null,
+        "subtotal": null,
+        "tax": null,
+        "total": null,
+        "paymentMethod": null,
+        "receiptNumber": null,
+        "invoiceNumber": null,
+        "lineItemsCount": 0,
+        "overallConfidence": null
+      },
+      "rawStructuredOutput": null,
+      "parsedNormalizedOutput": null
+    },
+    {
+      "fileName": "items_classifier_default_sample.jpg",
+      "attachmentId": 39,
+      "extractionStatus": "failed",
+      "provider": "manus",
+      "model": "manus-1.6",
+      "message": "AI provider unavailable: 429 credit limit exceeded | debug: {\"url\":\"https://api.manus.ai/v2/task.create\",\"method\":\"POST\",\"status\":429,\"authorizationHeaderFormat\":\"x-manus-api-key: sk-k***lQ8m\",\"requestHeaders\":{\"Content-Type\":\"application/json\",\"x-manus-api-key\":\"sk-k***lQ8m\"},\"requestJsonBody\":\"{\\\"agent_profile\\\":\\\"manus-1.6\\\",\\\"message\\\":{\\\"content\\\":[{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\"Extract data from this receipt document.\\\\nNever invent values. If a value is not visible, return null.\\\\nUse YYYY-MM-DD for dates.\\\\nConfidence values must be between 0 and 1.\\\\nSuggested category should be one of: paint, materials, labor, tools, equipment, rentals, fuel, subcontractor, travel, ferry, payroll_related, office, advertising, insurance, vehicle, meals, other.\\\\nSuggest a job only when strong evidence exists in receipt text.\\\\nKnown jobs: Interior repaint — Maple St | TEST | TEST\\\"},{\\\"type\\\":\\\"file\\\",\\\"file_id\\\":\\\"file-7GFxcH9fCGphPVuuMfi2ie\\\"}]},\\\"structured_output_schema\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"vendor\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"date\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"subtotal\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"number\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"tax\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"number\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"total\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"number\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"paymentMethod\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"receiptNumber\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"invoiceNumber\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"category\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"description\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"value\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"value\\\",\\\"confidence\\\"]},\\\"items\\\":{\\\"type\\\":\\\"array\\\",\\\"items\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"description\\\":{\\\"type\\\":\\\"string\\\"},\\\"quantity\\\":{\\\"type\\\":[\\\"number\\\",\\\"null\\\"]},\\\"unitPrice\\\":{\\\"type\\\":[\\\"number\\\",\\\"null\\\"]},\\\"totalPrice\\\":{\\\"type\\\":[\\\"number\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"}},\\\"required\\\":[\\\"description\\\",\\\"quantity\\\",\\\"unitPrice\\\",\\\"totalPrice\\\",\\\"confidence\\\"]}},\\\"rawText\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"overallConfidence\\\":{\\\"type\\\":\\\"number\\\"},\\\"suggestedJob\\\":{\\\"type\\\":\\\"object\\\",\\\"additionalProperties\\\":false,\\\"properties\\\":{\\\"jobName\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]},\\\"confidence\\\":{\\\"type\\\":\\\"number\\\"},\\\"reason\\\":{\\\"type\\\":[\\\"string\\\",\\\"null\\\"]}},\\\"required\\\":[\\\"jobName\\\",\\\"confidence\\\",\\\"reason\\\"]}},\\\"required\\\":[\\\"vendor\\\",\\\"date\\\",\\\"subtotal\\\",\\\"tax\\\",\\\"total\\\",\\\"paymentMethod\\\",\\\"receiptNumber\\\",\\\"invoiceNumber\\\",\\\"category\\\",\\\"description\\\",\\\"items\\\",\\\"rawText\\\",\\\"overallConfidence\\\",\\\"suggestedJob\\\"]}}\",\"responseHeaders\":{\"accept-encoding\":\"gzip\",\"connection\":\"keep-alive\",\"content-length\":\"132\",\"content-type\":\"application/json\",\"date\":\"Mon, 20 Jul 2026 18:40:58 GMT\",\"server\":\"APISIX/3.11.0\",\"vary\":\"Origin\",\"x-ratelimit-limit\":\"200\",\"x-ratelimit-remaining\":\"195\",\"x-ratelimit-reset\":\"37\"},\"fullErrorBody\":\"{\\\"error\\\":{\\\"code\\\":\\\"resource_exhausted\\\",\\\"message\\\":\\\"credit limit exceeded\\\"},\\\"ok\\\":false,\\\"request_id\\\":\\\"c98db06e3924d232ab8b55c0752d43bd\\\"}\",\"fullErrorJson\":{\"error\":{\"code\":\"resource_exhausted\",\"message\":\"credit limit exceeded\"},\"ok\":false,\"request_id\":\"c98db06e3924d232ab8b55c0752d43bd\"}}",
+      "populated": {
+        "vendor": null,
+        "date": null,
+        "subtotal": null,
+        "tax": null,
+        "total": null,
+        "paymentMethod": null,
+        "receiptNumber": null,
+        "invoiceNumber": null,
+        "lineItemsCount": 0,
+        "overallConfidence": null
+      },
+      "rawStructuredOutput": null,
+      "parsedNormalizedOutput": null
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+PROJECTS EXPORT REPORT
+======================
+
+Export Date: 2026-07-22T22:07:14.334Z
+
+SUMMARY
+=======
+Total Projects: 62
+Projects Without Customer: 0
+Duplicate IDs: No
+Orphan Relationships: 0
+Missing Addresses: 14
+Missing Status: 0
+
+VALIDATION
+==========
+✓ CSV Records: 62
+✓ JSON Records: 62
+✓ Record counts match
+
+RELATIONSHIPS SUMMARY
+====================
+Total Expenses Linked: 421
+Total Payments Linked: 18
+Total Estimates Linked: 21
+Total Invoices Linked: 1
+Total Opportunities Linked: 44
+
+FIELDS EXPORTED
+===============
+1. project_id
+2. customer_id
+3. customer_name
+4. project_name
+5. status
+6. address
+7. city
+8. state
+9. zip_code
+10. description
+11. proposal_reference
+12. contract_value
+13. budget_materials
+14. budget_labor
+15. budget_markup
+16. total_estimate
+17. actual_materials_cost
+18. actual_labor_cost
+19. actual_profit
+20. profit_margin
+21. created_at
+22. updated_at
+23. completed_at
+24. linked_expense_ids
+25. linked_expense_count
+26. linked_payment_ids
+27. linked_payment_count
+28. linked_estimate_ids
+29. linked_estimate_count
+30. linked_invoice_ids
+31. linked_invoice_count
+32. linked_opportunity_ids
+33. linked_opportunity_count
+
+STATUS BREAKDOWN
+================
+completed: 19
+cancelled: 27
+active: 7
+on-hold: 5
+approved: 2
+sent: 2
+
+Export completed successfully!

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -13,6 +14,7 @@ const STATUSES = ["draft", "ready", "sent", "viewed", "approved", "declined", "c
 
 export default function ProposalsPage() {
   const utils = api.useUtils();
+  const router = useRouter();
   const [visibility, setVisibility] = useState<"active" | "archived" | "all">("active");
   const { data, isLoading } = api.proposals.list.useQuery({ visibility });
   const [open, setOpen] = useState(false);
@@ -138,13 +140,26 @@ export default function ProposalsPage() {
               <tr><td colSpan={7} className="px-4 py-6 text-slate-500">No proposals yet.</td></tr>
             ) : (
               data?.map((p) => (
-                <tr key={p.id} className="border-t border-slate-100 hover:bg-slate-50">
+                <tr
+                  key={p.id}
+                  className="border-t border-slate-100 cursor-pointer transition-colors duration-150 hover:bg-slate-50 focus-visible:bg-slate-50"
+                  onClick={() => router.push(`/proposals/${p.id}`)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      router.push(`/proposals/${p.id}`);
+                    }
+                  }}
+                  tabIndex={0}
+                  role="link"
+                  aria-label={`Open proposal ${p.projectName}`}
+                >
                   <td className="px-4 py-2 font-mono text-xs">{p.proposalNumber}</td>
                   <td className="px-4 py-2">
-                    <Link href={`/customers/${p.customerId}`} className="text-brand-700 hover:underline">{p.customer.name}</Link>
+                    <span className="text-brand-700">{p.customer.name}</span>
                   </td>
                   <td className="px-4 py-2">
-                    <Link href={`/proposals/${p.id}`} className="text-brand-700 hover:underline">{p.projectName}</Link>
+                    <span className="text-slate-900">{p.projectName}</span>
                   </td>
                   <td className="px-4 py-2">
                     <span className="badge bg-slate-100 text-slate-700 capitalize">{p.status}</span>
@@ -153,13 +168,18 @@ export default function ProposalsPage() {
                   <td className="px-4 py-2 text-slate-500">{formatDate(p.createdAt)}</td>
                   <td className="px-4 py-2 text-right">
                     <div className="inline-flex items-center gap-2">
-                      <Link href={`/proposals/${p.id}`} className="btn btn-secondary">
+                      <Link
+                        href={`/proposals/${p.id}`}
+                        className="btn btn-secondary"
+                        onClick={(event) => event.stopPropagation()}
+                      >
                         Edit
                       </Link>
                       <button
                         type="button"
                         className="btn bg-rose-600 text-white hover:bg-rose-700"
-                        onClick={() => {
+                        onClick={(event) => {
+                          event.stopPropagation();
                           setSelectedProposal({ id: p.id, projectName: p.projectName });
                           setConfirmDeleteOpen(true);
                         }}

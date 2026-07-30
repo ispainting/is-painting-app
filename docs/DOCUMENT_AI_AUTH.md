@@ -23,9 +23,17 @@ Set these values for the OIDC federation flow:
 - `GCP_SERVICE_ACCOUNT_EMAIL=is-painting-document-ai@project-46d21ab8-fbfe-427e-965.iam.gserviceaccount.com`
 - `GCP_WORKLOAD_IDENTITY_POOL_ID=vercel`
 - `GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID=vercel`
-- `GCP_AUDIENCE=https://iam.googleapis.com/projects/620122133023/locations/global/workloadIdentityPools/vercel/providers/vercel`
+- `VERCEL_OIDC_AUDIENCE=https://iam.googleapis.com/projects/620122133023/locations/global/workloadIdentityPools/vercel/providers/vercel`
+- `GOOGLE_STS_AUDIENCE=//iam.googleapis.com/projects/620122133023/locations/global/workloadIdentityPools/vercel/providers/vercel`
 
-The provider uses `@vercel/oidc` to obtain a runtime OIDC token for `GCP_AUDIENCE`, then exchanges it through Google STS and impersonates `GCP_SERVICE_ACCOUNT_EMAIL`.
+The provider uses `@vercel/oidc` to obtain a runtime OIDC token using `VERCEL_OIDC_AUDIENCE`, then exchanges that token through Google STS using `GOOGLE_STS_AUDIENCE`, and finally impersonates `GCP_SERVICE_ACCOUNT_EMAIL`.
+
+Temporary backward compatibility:
+
+- `GCP_AUDIENCE` is still accepted as a legacy fallback.
+- If `GCP_AUDIENCE` starts with `https://`, it is used as OIDC audience and converted to STS audience by replacing `https:` with an empty scheme (`//iam.googleapis.com/...`).
+- If `GCP_AUDIENCE` starts with `//`, it is used as STS audience and converted to OIDC audience by prefixing `https:`.
+- For safety, `GOOGLE_STS_AUDIENCE` is rejected when it starts with `https://` and `VERCEL_OIDC_AUDIENCE` is rejected when it starts with `//`.
 
 ## Minimum IAM Roles
 

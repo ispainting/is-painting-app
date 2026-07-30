@@ -1,0 +1,30 @@
+CUSTOMER EXPORT REPORT
+=======================
+
+Export Date: 2026-07-22T22:00:54.867Z
+Total Customers: 165
+
+VALIDATION
+==========
+CSV Records: 165
+JSON Records: 165
+✓ Record counts match
+
+FIELDS EXPORTED
+===============
+1. source_id
+2. record_type
+3. name
+4. email
+5. phone
+6. address
+7. city
+8. state
+9. postal_code
+10. notes
+11. tags
+12. source
+13. created_at
+14. updated_at
+
+Export completed successfully!

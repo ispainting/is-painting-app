@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { ExpenseIntakePanel } from "@/components/expenses/ExpenseIntakePanel";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { toast } from "sonner";
@@ -24,8 +25,20 @@ export default function JobDetailPage() {
   const params = useParams<{ id: string }>();
   const id = Number(params.id);
   const utils = api.useUtils();
+  const { data: me } = api.auth.me.useQuery();
   const { data: job, isLoading } = api.jobs.byId.useQuery({ id });
+  const { data: budgetPayload, isLoading: isBudgetLoading } = api.jobs.budget.useQuery({ id });
+  const { data: financialSummary, isLoading: isFinancialSummaryLoading } = api.jobs.financialSummary.useQuery({ id });
   const [isEditOpen, setIsEditOpen] = useState(false);
+  const [isBudgetEditOpen, setIsBudgetEditOpen] = useState(false);
+  const [budgetForm, setBudgetForm] = useState({
+    laborBudget: 0,
+    materialsBudget: 0,
+    equipmentBudget: 0,
+    subcontractorBudget: 0,
+    travelBudget: 0,
+    otherBudget: 0,
+  });
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustomerResults, setShowCustomerResults] = useState(false);
   const customers = api.customers.list.useQuery(
@@ -33,7 +46,20 @@ export default function JobDetailPage() {
     { enabled: isEditOpen }
   );
 
+  useEffect(() => {
+    if (!budgetPayload) return;
+    setBudgetForm({
+      laborBudget: Number(budgetPayload.budgets.laborBudget || 0),
+      materialsBudget: Number(budgetPayload.budgets.materialsBudget || 0),
+      equipmentBudget: Number(budgetPayload.budgets.equipmentBudget || 0),
+      subcontractorBudget: Number(budgetPayload.budgets.subcontractorBudget || 0),
+      travelBudget: Number(budgetPayload.budgets.travelBudget || 0),
+      otherBudget: Number(budgetPayload.budgets.otherBudget || 0),
+    });
+  }, [budgetPayload]);
+
   const [activeTab, setActiveTab] = useState<WorkspaceTab>("overview");
+  const [showAddExpensePanel, setShowAddExpensePanel] = useState(false);
   const [editForm, setEditForm] = useState({
     customerId: 0,
     name: "",
@@ -127,12 +153,34 @@ export default function JobDetailPage() {
 
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
+  const updateBudget = api.jobs.updateBudget.useMutation({
+    onSuccess: () => {
+      toast.success("Budget updated");
+      utils.jobs.budget.invalidate({ id });
+      utils.jobs.financialSummary.invalidate({ id });
+      utils.jobs.byId.invalidate({ id });
+      setIsBudgetEditOpen(false);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
   if (isLoading || !job) return <div className="text-slate-500">Loading…</div>;
   const jobData = job as typeof job & {
     customer: { name: string };
     assignments: Array<{ id: number; user: { name: string }; userId: number }>;
-    expenses: Array<{ id: number; status: string; category: string; amount: string | number; receiptUrl: string | null; vendor: string | null }>;
-    timeEntries: Array<{ id: number; paidHours: string | number | null; hoursWorked: string | number | null; grossHours: string | number | null; clockOut: string | null; clockIn: string; user: { name: string; hourlyRate: string | number | null } }>;
+    expenses: Array<{ id: number; status: string; category: string; amount: string | number; receiptUrl: string | null; vendor: string | null; description: string | null; expenseDate: string | Date }>;
+    timeEntries: Array<{
+      id: number;
+      paidHours: string | number | null;
+      hoursWorked: string | number | null;
+      grossHours: string | number | null;
+      travelHours: string | number | null;
+      reviewStatus: "pending" | "approved" | "rejected";
+      rateType: "regular" | "island" | "special" | "travel" | "overtime";
+      clockOut: string | null;
+      clockIn: string;
+      user: { name: string; hourlyRate: string | number | null };
+    }>;
     invoices: Array<{ id: number; total: string | number; invoiceNumber: string | null; title: string | null }>;
     payments: Array<{ id: number; amount: string | number; dateReceived: string; attachmentUrl: string | null; method: string | null }>;
     paintColors: Array<{ id: number; area: string; colorName: string; brand: string | null; finish: string | null; notes: string | null }>;
@@ -209,6 +257,14 @@ export default function JobDetailPage() {
   const estimatedMarginPct = contractOrTotalAmount > 0
     ? (estimatedGrossProfit / contractOrTotalAmount) * 100
     : 0;
+
+  const categoryRows = financialSummary?.budgetHealth ?? [];
+  const summaryCategoryRows = financialSummary?.categoryBreakdown ?? [];
+  const totalBudget = Number(financialSummary?.totalBudget ?? 0);
+  const hasNoBudgetConfigured = totalBudget === 0;
+  const totalActualSpent = Number(financialSummary?.actualTotalCost ?? 0);
+  const totalCommitted = Number(financialSummary?.committedTotalCost ?? 0);
+  const remainingBudget = Number(financialSummary?.remainingBudget ?? 0);
 
   const nonRejectedExpenses = jobData.expenses.filter((e) => e.status !== "rejected");
   const subcontractorExpenses = nonRejectedExpenses.filter((e) => e.category === "subcontractor");
@@ -439,21 +495,114 @@ export default function JobDetailPage() {
       {activeTab === "budget" && (
         <div className="space-y-4">
           <div className="card p-5">
-            <h2 className="text-base font-semibold mb-3">Budget</h2>
-            <div className="grid md:grid-cols-3 gap-4">
-              <Stat label="Materials budget" value={formatCurrency(estimatedMaterials)} />
-              <Stat label="Labor budget" value={formatCurrency(estimatedLabor)} />
-              <Stat label="Subcontractor budget" value={estimatedSubcontractorPending ? `${formatCurrency(estimatedSubcontractor)} (Pending)` : formatCurrency(estimatedSubcontractor)} />
-              <Stat label="Estimated total cost" value={formatCurrency(estimatedTotalCost)} />
-              <Stat label="Contract amount" value={formatCurrency(contractOrTotalAmount)} />
-              <Stat label="ROI estimate" value={`${estimatedMarginPct.toFixed(1)}%`} />
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-base font-semibold">Budget</h2>
+              {me?.role === "admin" ? (
+                <button className="btn btn-primary" type="button" onClick={() => setIsBudgetEditOpen((open) => !open)}>
+                  {hasNoBudgetConfigured ? "Set Budget" : "Edit Budget"}
+                </button>
+              ) : null}
             </div>
+
+            {isBudgetLoading || isFinancialSummaryLoading ? (
+              <p className="text-sm text-slate-500">Loading budget...</p>
+            ) : (
+              <>
+                <div className="grid md:grid-cols-4 gap-4 mb-4">
+                  <Stat label="Total Budget" value={formatCurrency(totalBudget)} />
+                  <Stat label="Actual Spent" value={formatCurrency(totalActualSpent)} />
+                  <Stat label="Committed Cost" value={formatCurrency(totalCommitted)} />
+                  <Stat label="Remaining Budget" value={formatCurrency(remainingBudget)} />
+                </div>
+
+                {hasNoBudgetConfigured ? (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-sm text-slate-700">No budget configured yet.</p>
+                    {me?.role === "admin" ? (
+                      <button className="btn btn-primary mt-3" type="button" onClick={() => setIsBudgetEditOpen(true)}>
+                        Set Budget
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="text-left bg-slate-50">
+                      <tr>
+                        <th className="px-3 py-2 font-medium">Category</th>
+                        <th className="px-3 py-2 font-medium">Budget</th>
+                        <th className="px-3 py-2 font-medium">Actual Spent</th>
+                        <th className="px-3 py-2 font-medium">Pending/Committed</th>
+                        <th className="px-3 py-2 font-medium">Remaining</th>
+                        <th className="px-3 py-2 font-medium">Percentage Used</th>
+                        <th className="px-3 py-2 font-medium">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {categoryRows.map((row) => {
+                        const progress = row.committedUtilizationPct;
+                        const status = budgetStatusLabel(row.status);
+                        const statusClass = budgetStatusClass(row.status);
+                        const progressClass = budgetProgressClass(row.status);
+                        return (
+                          <tr key={row.category} className="border-t border-slate-100 align-top">
+                            <td className="px-3 py-2 font-medium text-slate-800">{budgetCategoryLabel(row.category)}</td>
+                            <td className="px-3 py-2">{formatCurrency(row.budgetAmount)}</td>
+                            <td className="px-3 py-2">{formatCurrency(row.actualCost)}</td>
+                            <td className="px-3 py-2">
+                              <div>{formatCurrency(row.pendingCost)} pending</div>
+                              <div className="text-xs text-slate-500">{formatCurrency(row.committedCost)} committed</div>
+                            </td>
+                            <td className="px-3 py-2">{formatCurrency(row.remainingCommittedBudget)}</td>
+                            <td className="px-3 py-2 min-w-44">
+                              <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
+                                <span>{progress.toFixed(1)}%</span>
+                              </div>
+                              <div className="h-2 rounded-full bg-slate-200">
+                                <div
+                                  className={`h-2 rounded-full ${progressClass}`}
+                                  style={{ width: `${Math.max(0, Math.min(100, progress))}%` }}
+                                />
+                              </div>
+                            </td>
+                            <td className="px-3 py-2">
+                              <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusClass}`}>{status}</span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
           </div>
 
-          <div className="grid md:grid-cols-2 gap-4">
-            <ComingSoonCard title="Equipment" description="Equipment budgeting tools are coming soon." />
-            <ComingSoonCard title="Budget Line Items" description="Detailed editable line items are coming soon." />
-          </div>
+          {isBudgetEditOpen && me?.role === "admin" ? (
+            <div className="card p-5">
+              <h3 className="text-base font-semibold mb-3">Edit Budget</h3>
+              <div className="grid md:grid-cols-2 gap-3">
+                <Field label="Labor" value={budgetForm.laborBudget} onChange={(v) => setBudgetForm((f) => ({ ...f, laborBudget: v }))} />
+                <Field label="Paint & Materials" value={budgetForm.materialsBudget} onChange={(v) => setBudgetForm((f) => ({ ...f, materialsBudget: v }))} />
+                <Field label="Equipment & Tools" value={budgetForm.equipmentBudget} onChange={(v) => setBudgetForm((f) => ({ ...f, equipmentBudget: v }))} />
+                <Field label="Subcontractors" value={budgetForm.subcontractorBudget} onChange={(v) => setBudgetForm((f) => ({ ...f, subcontractorBudget: v }))} />
+                <Field label="Travel & Ferry" value={budgetForm.travelBudget} onChange={(v) => setBudgetForm((f) => ({ ...f, travelBudget: v }))} />
+                <Field label="Other" value={budgetForm.otherBudget} onChange={(v) => setBudgetForm((f) => ({ ...f, otherBudget: v }))} />
+              </div>
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <button className="btn btn-secondary" type="button" onClick={() => setIsBudgetEditOpen(false)}>Cancel</button>
+                <button
+                  className="btn btn-primary"
+                  type="button"
+                  disabled={updateBudget.isPending}
+                  onClick={() => updateBudget.mutate({ id, data: budgetForm })}
+                >
+                  {updateBudget.isPending ? "Saving..." : "Save Budget"}
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
       )}
 
@@ -707,15 +856,58 @@ export default function JobDetailPage() {
 
           <div className="grid md:grid-cols-2 gap-4">
             <div className="card p-5">
-              <h2 className="text-base font-semibold mb-3">Expenses</h2>
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <h2 className="text-base font-semibold">Expenses</h2>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => setShowAddExpensePanel((prev) => !prev)}
+                >
+                  + Add Expense
+                </button>
+              </div>
+
+              {showAddExpensePanel && (
+                <div className="mb-4 border-b border-slate-200 pb-4">
+                  <ExpenseIntakePanel
+                    fixedJobId={id}
+                    fixedJobName={job.name}
+                    onCancel={() => setShowAddExpensePanel(false)}
+                    onSaved={() => setShowAddExpensePanel(false)}
+                  />
+                </div>
+              )}
+
               {nonRejectedExpenses.length === 0 ? (
-                <p className="text-sm text-slate-500">No expenses tracked yet.</p>
+                <div className="space-y-3">
+                  <p className="text-sm text-slate-500">No expenses tracked yet.</p>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => setShowAddExpensePanel(true)}
+                  >
+                    + Add Expense
+                  </button>
+                </div>
               ) : (
                 <ul className="text-sm divide-y">
                   {nonRejectedExpenses.slice(0, 12).map((e) => (
-                    <li key={e.id} className="py-2 flex items-start justify-between gap-3">
-                      <span className="text-slate-700">{e.vendor || "Expense"} · {e.category}</span>
-                      <span>{formatCurrency(Number(e.amount))}</span>
+                    <li key={e.id} className="py-2">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-medium text-slate-800">{e.vendor || "Expense"}</p>
+                          <p className="text-xs text-slate-500">
+                            {formatDateTime(e.expenseDate)} · {e.category.replaceAll("_", " ")}
+                          </p>
+                          {e.description && <p className="text-xs text-slate-600 mt-1">{e.description}</p>}
+                          {e.receiptUrl && (
+                            <a className="mt-1 inline-block text-xs text-brand-700 hover:underline" href={e.receiptUrl} target="_blank" rel="noreferrer">
+                              View receipt
+                            </a>
+                          )}
+                        </div>
+                        <span className="font-medium">{formatCurrency(Number(e.amount))}</span>
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -764,33 +956,158 @@ export default function JobDetailPage() {
       {activeTab === "financials" && (
         <div className="space-y-4">
           <div className="card p-5">
-            <h2 className="text-base font-semibold mb-3">Financial Summary</h2>
-            <div className="grid md:grid-cols-3 gap-4">
-              <Stat label="Contract amount" value={formatCurrency(contractOrTotalAmount)} />
-              <Stat label="Change orders" value="Coming Soon" />
-              <Stat label="Invoices total" value={formatCurrency(invoiceTotal)} />
-              <Stat label="Payments received" value={formatCurrency(paymentsTotal)} />
-              <Stat label="Balance due" value={formatCurrency(balanceDue)} />
-              <Stat label="Actual costs" value={formatCurrency(actualTotalCost)} />
-              <Stat label="Gross profit" value={formatCurrency(actualProfit)} />
-              <Stat label="Net profit" value={formatCurrency(actualProfit)} />
-              <Stat label="Margin" value={`${actualMarginPct.toFixed(1)}%`} />
-              <Stat label="ROI" value={`${actualMarginPct.toFixed(1)}%`} />
-              <RoiFlag profit={actualProfit} />
+            <h2 className="text-base font-semibold mb-3">Financial Overview</h2>
+            {isFinancialSummaryLoading || !financialSummary ? (
+              <p className="text-sm text-slate-500">Loading financial summary...</p>
+            ) : (
+              <div className="grid md:grid-cols-4 gap-4">
+                <Stat label="Contract Value" value={formatCurrency(financialSummary.contractValue)} />
+                <Stat label="Total Budget" value={formatCurrency(financialSummary.totalBudget)} />
+                <Stat label="Actual Cost" value={formatCurrency(financialSummary.actualTotalCost)} />
+                <Stat label="Committed Cost" value={formatCurrency(financialSummary.committedTotalCost)} />
+                <Stat label="Remaining Budget" value={formatCurrency(financialSummary.remainingBudget)} />
+                <Stat label="Gross Profit" value={formatCurrency(financialSummary.grossProfit)} />
+                <Stat label="Gross Margin" value={`${Number(financialSummary.grossMargin).toFixed(1)}%`} />
+                <Stat label="Projected" value={financialSummary.projectedFinalCost == null ? "Not enough data yet." : formatCurrency(financialSummary.projectedFinalCost)} />
+              </div>
+            )}
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="card p-5">
+              <h3 className="text-base font-semibold mb-3">Budget vs Actual</h3>
+              {isFinancialSummaryLoading || !financialSummary ? (
+                <p className="text-sm text-slate-500">Loading...</p>
+              ) : (
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between"><span>Total Budget</span><span>{formatCurrency(financialSummary.totalBudget)}</span></div>
+                  <div className="flex justify-between"><span>Actual</span><span>{formatCurrency(financialSummary.actualTotalCost)}</span></div>
+                  <div className="flex justify-between"><span>Pending</span><span>{formatCurrency(financialSummary.pendingLaborCost + financialSummary.pendingExpenseCost)}</span></div>
+                  <div className="flex justify-between font-medium border-t border-slate-200 pt-2"><span>Committed</span><span>{formatCurrency(financialSummary.committedTotalCost)}</span></div>
+                </div>
+              )}
+            </div>
+
+            <div className="card p-5">
+              <h3 className="text-base font-semibold mb-3">Labor and Expense Detail</h3>
+              {isFinancialSummaryLoading || !financialSummary ? (
+                <p className="text-sm text-slate-500">Loading...</p>
+              ) : (
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between"><span>Actual Labor</span><span>{formatCurrency(financialSummary.actualLaborCost)}</span></div>
+                  <div className="flex justify-between"><span>Pending Labor</span><span>{formatCurrency(financialSummary.pendingLaborCost)}</span></div>
+                  <div className="flex justify-between"><span>Actual Expenses</span><span>{formatCurrency(financialSummary.actualExpenseCost)}</span></div>
+                  <div className="flex justify-between"><span>Pending Expenses</span><span>{formatCurrency(financialSummary.pendingExpenseCost)}</span></div>
+                  <div className="flex justify-between"><span>Subcontractor Cost</span><span>{formatCurrency(financialSummary.subcontractorCost)}</span></div>
+                  <div className="flex justify-between font-medium border-t border-slate-200 pt-2"><span>Gross Margin</span><span>{Number(financialSummary.grossMargin).toFixed(1)}%</span></div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="card p-5">
+            <h3 className="text-base font-semibold mb-3">Six-Category Breakdown</h3>
+            {isFinancialSummaryLoading || !financialSummary ? (
+              <p className="text-sm text-slate-500">Loading...</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-left bg-slate-50">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">Category</th>
+                      <th className="px-3 py-2 font-medium">Budget</th>
+                      <th className="px-3 py-2 font-medium">Actual</th>
+                      <th className="px-3 py-2 font-medium">Pending</th>
+                      <th className="px-3 py-2 font-medium">Committed</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {financialSummary.categoryBreakdown.map((row) => (
+                      <tr key={row.category} className="border-t border-slate-100">
+                        <td className="px-3 py-2 font-medium">{budgetCategoryLabel(row.category)}</td>
+                        <td className="px-3 py-2">{formatCurrency(row.budgetAmount)}</td>
+                        <td className="px-3 py-2">{formatCurrency(row.actualCost)}</td>
+                        <td className="px-3 py-2">{formatCurrency(row.pendingCost)}</td>
+                        <td className="px-3 py-2">{formatCurrency(row.committedCost)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="card p-5">
+              <h3 className="text-base font-semibold mb-3">Over-Budget Warnings</h3>
+              {isFinancialSummaryLoading || !financialSummary ? (
+                <p className="text-sm text-slate-500">Loading...</p>
+              ) : financialSummary.warnings.length === 0 ? (
+                <p className="text-sm text-slate-500">No warnings.</p>
+              ) : (
+                <ul className="text-sm space-y-2">
+                  {financialSummary.warnings.map((warning, idx) => (
+                    <li key={`${warning.code}-${idx}`} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
+                      {warning.message}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="card p-5">
+              <h3 className="text-base font-semibold mb-3">Job Health</h3>
+              {isFinancialSummaryLoading || !financialSummary ? (
+                <p className="text-sm text-slate-500">Loading...</p>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-slate-600">Overall</span>
+                    <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${healthBadgeClass(financialSummary.health.overall)}`}>
+                      {financialSummary.health.overall.replaceAll("_", " ")}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-slate-600">Score</span>
+                    <span className="text-sm font-semibold text-slate-900">{Number(financialSummary.health.score).toFixed(1)} / 100</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-slate-600">Margin Health</span>
+                    <span className="text-sm font-medium text-slate-900">{financialSummary.health.marginHealth}</span>
+                  </div>
+                  <div className="pt-2 border-t border-slate-200 space-y-2">
+                    {financialSummary.health.categoryHealth.map((row) => (
+                      <div key={row.category} className="flex items-center justify-between text-xs">
+                        <span className="text-slate-600">{budgetCategoryLabel(row.category)}</span>
+                        <span className={`inline-flex rounded-full px-2 py-0.5 font-medium ${budgetStatusClass(row.status)}`}>
+                          {budgetStatusLabel(row.status)} ({Number(row.utilizationPct).toFixed(1)}%)
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
           <div className="grid md:grid-cols-2 gap-4">
             <div className="card p-5">
-              <h2 className="text-base font-semibold mb-3">Invoices</h2>
-              {jobData.invoices.length === 0 ? (
-                <p className="text-sm text-slate-500">No invoices yet.</p>
+              <h3 className="text-base font-semibold mb-3">Budget Change History</h3>
+              {isFinancialSummaryLoading || !financialSummary ? (
+                <p className="text-sm text-slate-500">Loading...</p>
+              ) : financialSummary.budgetChangeHistory.length === 0 ? (
+                <p className="text-sm text-slate-500">No budget changes recorded yet.</p>
               ) : (
                 <ul className="text-sm divide-y">
-                  {jobData.invoices.map((i) => (
-                    <li key={i.id} className="py-2 flex justify-between">
-                      <span>{i.invoiceNumber} · {i.title}</span>
-                      <span>{formatCurrency(Number(i.total))}</span>
+                  {financialSummary.budgetChangeHistory.slice(0, 12).map((change, idx) => (
+                    <li key={`${change.field}-${change.at}-${idx}`} className="py-2 space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium text-slate-800">{budgetFieldLabel(change.field)}</span>
+                        <span className="text-xs text-slate-500">{formatDateTime(change.at)}</span>
+                      </div>
+                      <p className="text-xs text-slate-600">
+                        {change.changedBy} changed {formatCurrency(change.previousValue)} to {formatCurrency(change.newValue)}
+                      </p>
                     </li>
                   ))}
                 </ul>
@@ -798,20 +1115,157 @@ export default function JobDetailPage() {
             </div>
 
             <div className="card p-5">
-              <h2 className="text-base font-semibold mb-3">Payments</h2>
-              {jobData.payments.length === 0 ? (
-                <p className="text-sm text-slate-500">No payments recorded yet.</p>
+              <h3 className="text-base font-semibold mb-3">Financial Timeline</h3>
+              {isFinancialSummaryLoading || !financialSummary ? (
+                <p className="text-sm text-slate-500">Loading...</p>
+              ) : financialSummary.timeline.length === 0 ? (
+                <p className="text-sm text-slate-500">No timeline events yet.</p>
               ) : (
                 <ul className="text-sm divide-y">
-                  {jobData.payments.map((p) => (
-                    <li key={p.id} className="py-2 flex justify-between">
-                      <span>{p.method} · {formatDateTime(p.dateReceived)}</span>
-                      <span>{formatCurrency(Number(p.amount))}</span>
+                  {financialSummary.timeline.slice(0, 14).map((event, idx) => (
+                    <li key={`${event.type}-${event.at}-${idx}`} className="py-2 space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium text-slate-800">{event.title}</span>
+                        <span className="text-xs text-slate-500">{formatDateTime(event.at)}</span>
+                      </div>
+                      <p className="text-xs text-slate-600">{event.description}</p>
                     </li>
                   ))}
                 </ul>
               )}
             </div>
+          </div>
+
+          <div className="card p-5">
+            <h3 className="text-base font-semibold mb-3">Category Drill-Down</h3>
+            {isFinancialSummaryLoading || !financialSummary ? (
+              <p className="text-sm text-slate-500">Loading...</p>
+            ) : (
+              <div className="grid lg:grid-cols-2 gap-4">
+                <DrilldownSection title="Labor" rows={financialSummary.drilldown.labor.map((row) => ({
+                  id: row.timeEntryId,
+                  label: `${row.employee} (${row.payType})`,
+                  sublabel: `${Number(row.hours).toFixed(2)}h - ${row.status}`,
+                  amount: row.totalCost,
+                }))} />
+                <DrilldownSection title="Paint & Materials" rows={financialSummary.drilldown.paintMaterials.map((row) => ({
+                  id: row.expenseId,
+                  label: row.vendor,
+                  sublabel: row.invoice || row.status,
+                  amount: row.amount,
+                }))} />
+                <DrilldownSection title="Equipment & Tools" rows={financialSummary.drilldown.equipmentTools.map((row) => ({
+                  id: row.expenseId,
+                  label: row.vendor,
+                  sublabel: row.invoice || row.status,
+                  amount: row.amount,
+                }))} />
+                <DrilldownSection title="Subcontractors" rows={financialSummary.drilldown.subcontractors.map((row) => ({
+                  id: row.expenseId,
+                  label: row.vendor,
+                  sublabel: row.invoice || row.status,
+                  amount: row.amount,
+                }))} />
+                <DrilldownSection title="Travel & Ferry" rows={financialSummary.drilldown.travelFerry.map((row) => ({
+                  id: row.expenseId,
+                  label: row.vendor,
+                  sublabel: row.invoice || row.status,
+                  amount: row.amount,
+                }))} />
+                <DrilldownSection title="Other" rows={financialSummary.drilldown.other.map((row) => ({
+                  id: row.expenseId,
+                  label: row.vendor,
+                  sublabel: row.invoice || row.status,
+                  amount: row.amount,
+                }))} />
+              </div>
+            )}
+          </div>
+
+          <div className="card p-5">
+            <h3 className="text-base font-semibold mb-3">Labor Verification Report</h3>
+            {isFinancialSummaryLoading || !financialSummary ? (
+              <p className="text-sm text-slate-500">Loading...</p>
+            ) : financialSummary.laborVerification.rows.length === 0 ? (
+              <p className="text-sm text-slate-500">No approved or pending labor entries yet.</p>
+            ) : (
+              <div className="space-y-3">
+                <div className="grid sm:grid-cols-2 gap-3 text-sm">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                    <div className="text-xs uppercase tracking-wide text-slate-500">Actual Total</div>
+                    <div className="font-semibold text-slate-900">{formatCurrency(financialSummary.laborVerification.actualTotal)}</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                    <div className="text-xs uppercase tracking-wide text-slate-500">Pending Total</div>
+                    <div className="font-semibold text-slate-900">{formatCurrency(financialSummary.laborVerification.pendingTotal)}</div>
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 text-left">
+                      <tr>
+                        <th className="px-3 py-2 font-medium">Employee</th>
+                        <th className="px-3 py-2 font-medium">Hours</th>
+                        <th className="px-3 py-2 font-medium">Regular</th>
+                        <th className="px-3 py-2 font-medium">Island</th>
+                        <th className="px-3 py-2 font-medium">Travel</th>
+                        <th className="px-3 py-2 font-medium">Special</th>
+                        <th className="px-3 py-2 font-medium">Cost</th>
+                        <th className="px-3 py-2 font-medium">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {financialSummary.laborVerification.rows.map((row) => (
+                        <tr key={row.timeEntryId} className="border-t border-slate-100">
+                          <td className="px-3 py-2">{row.employee}</td>
+                          <td className="px-3 py-2">{Number(row.hours).toFixed(2)}</td>
+                          <td className="px-3 py-2">{formatCurrency(row.regular)}</td>
+                          <td className="px-3 py-2">{formatCurrency(row.island)}</td>
+                          <td className="px-3 py-2">{formatCurrency(row.travel)}</td>
+                          <td className="px-3 py-2">{formatCurrency(row.special)}</td>
+                          <td className="px-3 py-2 font-medium">{formatCurrency(row.cost)}</td>
+                          <td className="px-3 py-2">
+                            <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${row.status === "approved" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                              {row.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="card p-5">
+            <h3 className="text-base font-semibold mb-3">Recent Approved/Pending Labor Activity</h3>
+            {jobData.timeEntries.length === 0 ? (
+              <p className="text-sm text-slate-500">No labor activity yet.</p>
+            ) : (
+              <ul className="text-sm divide-y">
+                {jobData.timeEntries
+                  .filter((entry) => entry.reviewStatus === "approved" || entry.reviewStatus === "pending")
+                  .slice(0, 10)
+                  .map((entry) => (
+                    <li key={entry.id} className="py-2 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="font-medium text-slate-800">{entry.user.name}</p>
+                        <p className="text-xs text-slate-500">{formatDateTime(entry.clockIn)} · {entry.reviewStatus}</p>
+                      </div>
+                      <span className="text-slate-700">
+                        {entry.paidHours != null
+                          ? `${Number(entry.paidHours).toFixed(2)}h`
+                          : entry.hoursWorked != null
+                            ? `${Number(entry.hoursWorked).toFixed(2)}h`
+                            : entry.grossHours != null
+                              ? `${Number(entry.grossHours).toFixed(2)}h`
+                              : "0.00h"}
+                      </span>
+                    </li>
+                  ))}
+              </ul>
+            )}
           </div>
         </div>
       )}
@@ -993,16 +1447,50 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function RoiFlag({ profit }: { profit: number }) {
-  const profitable = profit >= 0;
-  return (
-    <div>
-      <div className="text-xs text-slate-500 uppercase tracking-wide">ROI Status</div>
-      <div className={`text-sm font-semibold mt-1 ${profitable ? "text-emerald-700" : "text-rose-700"}`}>
-        {profitable ? "Profitable" : "Losing Money"}
-      </div>
-    </div>
-  );
+function budgetCategoryLabel(category: string) {
+  if (category === "labor") return "Labor";
+  if (category === "paint_materials") return "Paint & Materials";
+  if (category === "equipment_tools") return "Equipment & Tools";
+  if (category === "subcontractors") return "Subcontractors";
+  if (category === "travel_ferry") return "Travel & Ferry";
+  return "Other";
+}
+
+function budgetStatusLabel(status: string) {
+  if (status === "on_track") return "On Track";
+  if (status === "watch") return "Watch";
+  if (status === "at_risk") return "At Risk";
+  return "Over Budget";
+}
+
+function budgetStatusClass(status: string) {
+  if (status === "on_track") return "bg-emerald-100 text-emerald-700";
+  if (status === "watch") return "bg-amber-100 text-amber-700";
+  if (status === "at_risk") return "bg-orange-100 text-orange-700";
+  return "bg-rose-100 text-rose-700";
+}
+
+function healthBadgeClass(status: string) {
+  if (status === "healthy") return "bg-emerald-100 text-emerald-700";
+  if (status === "watch") return "bg-amber-100 text-amber-700";
+  if (status === "at_risk") return "bg-orange-100 text-orange-700";
+  return "bg-rose-100 text-rose-700";
+}
+
+function budgetFieldLabel(field: string) {
+  if (field === "laborBudget") return "Labor Budget";
+  if (field === "materialsBudget") return "Materials Budget";
+  if (field === "equipmentBudget") return "Equipment Budget";
+  if (field === "subcontractorBudget") return "Subcontractor Budget";
+  if (field === "travelBudget") return "Travel Budget";
+  return "Other Budget";
+}
+
+function budgetProgressClass(status: string) {
+  if (status === "on_track") return "bg-emerald-500";
+  if (status === "watch") return "bg-amber-500";
+  if (status === "at_risk") return "bg-orange-500";
+  return "bg-rose-500";
 }
 
 function ComingSoonCard({ title, description }: { title: string; description: string }) {
@@ -1011,6 +1499,35 @@ function ComingSoonCard({ title, description }: { title: string; description: st
       <h3 className="text-base font-semibold mb-2">{title}</h3>
       <p className="text-sm text-slate-500">Coming Soon</p>
       <p className="text-xs text-slate-500 mt-1">{description}</p>
+    </div>
+  );
+}
+
+function DrilldownSection({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: Array<{ id: number; label: string; sublabel: string; amount: number }>;
+}) {
+  return (
+    <div className="rounded-lg border border-slate-200">
+      <div className="border-b border-slate-200 px-3 py-2 text-sm font-semibold text-slate-800">{title}</div>
+      {rows.length === 0 ? (
+        <p className="px-3 py-3 text-xs text-slate-500">No items yet.</p>
+      ) : (
+        <ul className="divide-y text-sm">
+          {rows.slice(0, 6).map((row) => (
+            <li key={row.id} className="px-3 py-2 flex items-start justify-between gap-2">
+              <div>
+                <p className="text-slate-800">{row.label}</p>
+                <p className="text-xs text-slate-500">{row.sublabel}</p>
+              </div>
+              <span className="font-medium text-slate-900">{formatCurrency(row.amount)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

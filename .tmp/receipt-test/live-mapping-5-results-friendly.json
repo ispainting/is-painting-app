@@ -1,0 +1,115 @@
+{
+  "preview": "https://is-painting-app-git-feature-replace-e0c170-ispaintings-projects.vercel.app",
+  "results": [
+    {
+      "fileName": "expense_us_receipt.jpg",
+      "attachmentId": 41,
+      "extractionStatus": "failed",
+      "provider": "manus",
+      "model": "manus-1.6",
+      "message": "AI receipt extraction is temporarily unavailable because the Manus API credit limit has been reached. You can still enter the expense manually.",
+      "populated": {
+        "vendor": null,
+        "date": null,
+        "subtotal": null,
+        "tax": null,
+        "total": null,
+        "paymentMethod": null,
+        "receiptNumber": null,
+        "invoiceNumber": null,
+        "lineItemsCount": 0,
+        "overallConfidence": null
+      },
+      "rawStructuredOutput": null,
+      "parsedNormalizedOutput": null
+    },
+    {
+      "fileName": "expense_default_sample.jpg",
+      "attachmentId": 42,
+      "extractionStatus": "failed",
+      "provider": "manus",
+      "model": "manus-1.6",
+      "message": "AI receipt extraction is temporarily unavailable because the Manus API credit limit has been reached. You can still enter the expense manually.",
+      "populated": {
+        "vendor": null,
+        "date": null,
+        "subtotal": null,
+        "tax": null,
+        "total": null,
+        "paymentMethod": null,
+        "receiptNumber": null,
+        "invoiceNumber": null,
+        "lineItemsCount": 0,
+        "overallConfidence": null
+      },
+      "rawStructuredOutput": null,
+      "parsedNormalizedOutput": null
+    },
+    {
+      "fileName": "invoice_default_sample.jpg",
+      "attachmentId": 43,
+      "extractionStatus": "failed",
+      "provider": "manus",
+      "model": "manus-1.6",
+      "message": "AI receipt extraction is temporarily unavailable because the Manus API credit limit has been reached. You can still enter the expense manually.",
+      "populated": {
+        "vendor": null,
+        "date": null,
+        "subtotal": null,
+        "tax": null,
+        "total": null,
+        "paymentMethod": null,
+        "receiptNumber": null,
+        "invoiceNumber": null,
+        "lineItemsCount": 0,
+        "overallConfidence": null
+      },
+      "rawStructuredOutput": null,
+      "parsedNormalizedOutput": null
+    },
+    {
+      "fileName": "petrol_default_sample.jpg",
+      "attachmentId": 44,
+      "extractionStatus": "failed",
+      "provider": "manus",
+      "model": "manus-1.6",
+      "message": "AI receipt extraction is temporarily unavailable because the Manus API credit limit has been reached. You can still enter the expense manually.",
+      "populated": {
+        "vendor": null,
+        "date": null,
+        "subtotal": null,
+        "tax": null,
+        "total": null,
+        "paymentMethod": null,
+        "receiptNumber": null,
+        "invoiceNumber": null,
+        "lineItemsCount": 0,
+        "overallConfidence": null
+      },
+      "rawStructuredOutput": null,
+      "parsedNormalizedOutput": null
+    },
+    {
+      "fileName": "items_classifier_default_sample.jpg",
+      "attachmentId": 45,
+      "extractionStatus": "failed",
+      "provider": "manus",
+      "model": "manus-1.6",
+      "message": "AI receipt extraction is temporarily unavailable because the Manus API credit limit has been reached. You can still enter the expense manually.",
+      "populated": {
+        "vendor": null,
+        "date": null,
+        "subtotal": null,
+        "tax": null,
+        "total": null,
+        "paymentMethod": null,
+        "receiptNumber": null,
+        "invoiceNumber": null,
+        "lineItemsCount": 0,
+        "overallConfidence": null
+      },
+      "rawStructuredOutput": null,
+      "parsedNormalizedOutput": null
+    }
+  ]
+}

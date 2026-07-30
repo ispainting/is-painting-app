@@ -1,0 +1,42 @@
+EXPENSES EXPORT REPORT
+=====================
+
+Export Date: 2026-07-23T17:21:49.159Z
+Source Table: expenses
+Output Format: JSON array
+
+SUMMARY
+=======
+Total Records Exported: 422
+Duplicate Legacy IDs: No
+Missing Project References: 62
+Missing Employee References: 0
+Records with Receipt/Attachment: 205
+Records with Extracted Data: 204
+
+STATUS BREAKDOWN
+================
+Pending: 21
+Approved: 399
+Rejected: 2
+
+FINANCIAL TOTALS
+================
+Total Expense Amount: $76232.60
+
+VALIDATION
+==========
+✓ Total Records in JSON: 422
+✓ All original IDs preserved
+✓ No ID transformations
+✓ No financial recalculations
+✓ Raw legacy data exported faithfully
+
+OUTPUT FILE
+===========
+Filename: expenses.json
+Format: Plain JSON array
+Records: 422
+Size: 413968 bytes
+
+Export completed successfully!

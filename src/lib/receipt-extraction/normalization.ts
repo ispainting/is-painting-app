@@ -73,6 +73,70 @@ function toStringValue(value: unknown, maxLen: number): string | null {
   return trimmed.slice(0, maxLen);
 }
 
+function looksLikeNonBusinessText(value: string): boolean {
+  const text = value.trim();
+  if (!text) return true;
+
+  const lowered = text.toLowerCase();
+  const blockedTerms = [
+    "invoice",
+    "receipt",
+    "customer",
+    "account",
+    "acct",
+    "statement",
+    "subtotal",
+    "total",
+    "tax",
+    "amount due",
+    "bill to",
+    "ship to",
+    "sold to",
+    "order",
+    "purchase order",
+    "po #",
+    "invoice #",
+    "transaction",
+    "card",
+    "visa",
+    "mastercard",
+    "amex",
+  ];
+
+  if (blockedTerms.some((term) => lowered.includes(term))) {
+    return true;
+  }
+
+  if (/^(id|ref|reference|invoice|receipt|customer|account|acct)\b/i.test(text)) {
+    return true;
+  }
+
+  const hasLetter = /[a-z]/i.test(text);
+  if (!hasLetter) return true;
+
+  const digitCount = (text.match(/\d/g) || []).length;
+  if (digitCount > 0 && digitCount / text.length > 0.35) {
+    return true;
+  }
+
+  if (/^[A-Z0-9\-\s]{1,8}$/.test(text)) {
+    return true;
+  }
+
+  if (/^[\W_]+$/.test(text)) {
+    return true;
+  }
+
+  return false;
+}
+
+function cleanVendorCandidate(value: unknown): string | null {
+  const text = toStringValue(value, 200);
+  if (!text) return null;
+  if (looksLikeNonBusinessText(text)) return null;
+  return text;
+}
+
 function toNumberWithConfidence(value: unknown, confidence: unknown): number | null {
   const numeric = toNumber(value);
   const conf = clampConfidence(confidence, 0);
@@ -90,6 +154,67 @@ function toDateOnly(value: unknown): string | null {
   const parsed = new Date(trimmed);
   if (Number.isNaN(parsed.getTime())) return null;
   return parsed.toISOString().slice(0, 10);
+}
+
+function inferVendorFromRawText(rawText: string | null): string | null {
+  if (!rawText) return null;
+
+  const lines = rawText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 12);
+
+  for (const line of lines) {
+    const maybeVendor = cleanVendorCandidate(line);
+    if (maybeVendor) return maybeVendor;
+  }
+
+  return null;
+}
+
+function extractPreferredMerchant(parsed: LooseRecord): { value: string | null; confidence: number } {
+  const entityArrays: unknown[] = [
+    readAlias(parsed, ["entities", "documentEntities", "document_entities", "fields"]),
+  ];
+
+  let bestValue: string | null = null;
+  let bestConfidence = 0;
+
+  for (const arrayValue of entityArrays) {
+    if (!Array.isArray(arrayValue)) continue;
+
+    for (const entry of arrayValue) {
+      const row = toRecord(entry);
+      const entityType = toStringValue(readAlias(row, ["type", "entityType", "entity_type", "name", "label"]), 100)?.toLowerCase() ?? "";
+
+      if (
+        !entityType.includes("merchant")
+        && !entityType.includes("supplier")
+        && !entityType.includes("vendor")
+        && !entityType.includes("seller")
+        && !entityType.includes("store")
+        && !entityType.includes("business")
+      ) {
+        continue;
+      }
+
+      const rawCandidate =
+        readAlias(row, ["mentionText", "mention_text", "text", "value", "rawText", "raw_text"])
+        ?? readAlias(toRecord(readAlias(row, ["normalizedValue", "normalized_value"])), ["text", "value", "stringValue"]);
+
+      const candidate = cleanVendorCandidate(rawCandidate);
+      if (!candidate) continue;
+
+      const confidence = clampConfidence(readAlias(row, ["confidence", "score", "probability"]));
+      if (!bestValue || confidence > bestConfidence) {
+        bestValue = candidate;
+        bestConfidence = confidence;
+      }
+    }
+  }
+
+  return { value: bestValue, confidence: bestConfidence };
 }
 
 function normalizeLineItems(input: unknown) {
@@ -161,6 +286,7 @@ function inferSuggestedJob(
 
 export function normalizeExtractionResponse(input: unknown, jobs: Array<{ id: number; name: string }>) {
   const parsed = toRecord(input);
+  const preferredMerchant = extractPreferredMerchant(parsed);
 
   const vendorField = unwrapValue(readAlias(parsed, ["vendor", "merchant", "supplier", "store"]));
   const dateField = unwrapValue(readAlias(parsed, ["date", "expenseDate", "purchaseDate", "transactionDate"]));
@@ -175,6 +301,7 @@ export function normalizeExtractionResponse(input: unknown, jobs: Array<{ id: nu
   const overallConfidenceField = unwrapValue(readAlias(parsed, ["overallConfidence", "overall_confidence", "confidence", "score"]));
 
   const rawTextValue = readAlias(parsed, ["rawText", "raw_text", "ocrText", "ocr_text", "text"]);
+  const normalizedRawText = toStringValue(rawTextValue, 20000);
   const itemsValue = readAlias(parsed, ["items", "lineItems", "line_items"]);
 
   const suggestedJobRaw = toRecord(readAlias(parsed, ["suggestedJob", "suggested_job", "jobSuggestion", "job"]));
@@ -183,8 +310,13 @@ export function normalizeExtractionResponse(input: unknown, jobs: Array<{ id: nu
 
   const normalized: NormalizedReceiptExtraction = {
     vendor: {
-      value: toStringValue(vendorField.value, 200),
-      confidence: clampConfidence(vendorField.confidence),
+      value:
+        preferredMerchant.value
+        ?? cleanVendorCandidate(vendorField.value)
+        ?? inferVendorFromRawText(normalizedRawText),
+      confidence: preferredMerchant.value
+        ? preferredMerchant.confidence
+        : clampConfidence(vendorField.confidence),
     },
     date: {
       value: toDateOnly(dateField.value),
@@ -223,7 +355,7 @@ export function normalizeExtractionResponse(input: unknown, jobs: Array<{ id: nu
       confidence: clampConfidence(descriptionField.confidence),
     },
     items: normalizeLineItems(itemsValue),
-    rawText: toStringValue(rawTextValue, 20000),
+    rawText: normalizedRawText,
     overallConfidence: clampConfidence(overallConfidenceField.value ?? overallConfidenceField.confidence),
     suggestedJob: inferSuggestedJob(
       suggestedJobName,
@@ -237,7 +369,7 @@ export function normalizeExtractionResponse(input: unknown, jobs: Array<{ id: nu
 
 export function shouldMarkNeedsReview(normalized: NormalizedReceiptExtraction) {
   if (normalized.total.value == null) return true;
-  if (normalized.overallConfidence < 0.65) return true;
-  if (normalized.vendor.value == null || normalized.vendor.confidence < 0.5) return true;
+  if (normalized.vendor.value == null) return true;
+  if (normalized.date.value == null) return true;
   return false;
 }
