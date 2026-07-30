@@ -546,6 +546,9 @@ model Job {
   materialsBudget      Decimal           @default(0) @db.Decimal(12, 2)
   laborBudget          Decimal           @default(0) @db.Decimal(12, 2)
   subcontractorBudget  Decimal?          @db.Decimal(10, 2)
+  equipmentBudget      Decimal           @default(0) @db.Decimal(12, 2)
+  travelBudget         Decimal           @default(0) @db.Decimal(12, 2)
+  otherBudget          Decimal           @default(0) @db.Decimal(12, 2)
   wcPercent            Decimal           @default(0) @db.Decimal(5, 2)
   glPercent            Decimal           @default(0) @db.Decimal(5, 2)
   overheadPercent      Decimal           @default(0) @db.Decimal(5, 2)
@@ -1006,8 +1009,12 @@ model ExpenseAttachment {
   extractionConfidenceByField Json?
   extractionProvider          String?                 @db.VarChar(80)
   extractionModel             String?                 @db.VarChar(120)
+  manusTaskId                 String?                 @db.VarChar(120)
+  providerErrorCode           String?                 @db.VarChar(64)
+  extractionAttemptCount      Int                     @default(0)
   extractionError             String?                 @db.Text
   extractionStartedAt         DateTime?
+  extractionCompletedAt       DateTime?
   extractionProcessedAt       DateTime?
   uploadedAt                  DateTime                @default(now())
 
@@ -1018,6 +1025,8 @@ model ExpenseAttachment {
   @@index([uploadedById])
   @@index([uploadedAt])
   @@index([extractionStatus])
+  @@index([manusTaskId])
+  @@index([providerErrorCode])
   @@index([extractionProcessedAt])
 }
 
@@ -1242,6 +1251,18 @@ model AuditLog {
 
   @@index([userId])
   @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+model MigrationMap {
+  id         Int      @id @default(autoincrement())
+  entityType String   @db.VarChar(80)
+  legacyId   String   @db.VarChar(191)
+  newId      Int
+  createdAt  DateTime @default(now())
+
+  @@unique([entityType, legacyId])
+  @@index([entityType, newId])
   @@index([createdAt])
 }
 
