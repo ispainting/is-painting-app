@@ -1,0 +1,16 @@
+{
+  "projectId": "prj_0pL4tgsRufZsSh3i1B3E9Ah45XK3",
+  "orgId": "team_e4YQTiKTkAUBBvcRbD2FmLTN",
+  "projectName": "is-painting-app",
+  "settings": {
+    "createdAt": 1777508971935,
+    "framework": "nextjs",
+    "devCommand": null,
+    "installCommand": null,
+    "buildCommand": "npx prisma db push && next build",
+    "outputDirectory": null,
+    "rootDirectory": null,
+    "directoryListing": false,
+    "nodeVersion": "24.x"
+  }
+}
