@@ -76,7 +76,6 @@ const CATEGORY_OPTIONS = [
 
 const STATUS_OPTIONS = ["pending", "approved", "rejected"] as const;
 const UPLOAD_REQUEST_TIMEOUT_MS = 60_000;
-const SUCCESS_UPLOAD_ROW_TTL_MS = 1_200;
 const EXTRACTION_UI_TIMEOUT_MS = 75_000;
 
 function numberToInput(value: number | null | undefined) {
@@ -97,6 +96,7 @@ export default function ExpensesPage() {
   const searchParams = useSearchParams();
   const utils = api.useUtils();
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const replaceInputRef = useRef<HTMLInputElement | null>(null);
   const xhrMap = useRef<Map<string, XMLHttpRequest>>(new Map());
   const extractionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -334,6 +334,10 @@ export default function ExpensesPage() {
   }
 
   function removeUpload(id: string) {
+    const upload = uploads.find((item) => item.id === id);
+    if (upload?.attachmentId) {
+      setSelectedAttachmentIds((prev) => prev.filter((attachmentId) => attachmentId !== upload.attachmentId));
+    }
     setUploads((prev) => prev.filter((u) => u.id !== id));
   }
 
@@ -393,8 +397,7 @@ export default function ExpensesPage() {
           beginExtraction(json.attachment.id);
         }
 
-        toast.success("Receipt uploaded. Review and save the expense details.");
-        setTimeout(() => removeUpload(item.id), SUCCESS_UPLOAD_ROW_TTL_MS);
+        toast.success("Receipt attached. Review the fields before saving.");
       } else {
         setUploads((prev) =>
           prev.map((u) =>
@@ -511,8 +514,8 @@ export default function ExpensesPage() {
         description="Track spend and manage receipt uploads."
         actions={
           <div className="flex gap-2">
-            <button className="btn btn-secondary" onClick={() => setShowUpload((v) => !v)}>Upload Receipt</button>
-            <button className="btn btn-primary" onClick={() => setShowAddExpense((v) => !v)}>Add Expense</button>
+            <button className="btn btn-secondary min-h-11" onClick={() => setShowUpload((v) => !v)}>Upload Receipt</button>
+            <button className="btn btn-primary min-h-11" onClick={() => setShowAddExpense((v) => !v)}>Add Expense</button>
           </div>
         }
       />
@@ -541,15 +544,29 @@ export default function ExpensesPage() {
             onDragLeave={() => setDragActive(false)}
             onDrop={onDropFiles}
           >
-            <p className="text-sm">Drag and drop receipt files here</p>
-            <p className="text-xs text-slate-500 mt-1">or</p>
-            <button className="btn btn-secondary mt-3" onClick={() => inputRef.current?.click()}>
-              Choose Files
-            </button>
+            <p className="text-sm">Take a photo or choose a receipt file</p>
+            <div className="mt-3 grid gap-2 sm:flex sm:justify-center">
+              <button className="btn btn-primary min-h-12 w-full sm:w-auto" onClick={() => cameraInputRef.current?.click()}>
+                Take Photo
+              </button>
+              <button className="btn btn-secondary min-h-12 w-full sm:w-auto" onClick={() => inputRef.current?.click()}>
+                Choose Photo or PDF
+              </button>
+            </div>
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+              capture="environment"
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files?.length) queueFiles(e.target.files);
+                e.currentTarget.value = "";
+              }}
+            />
             <input
               ref={inputRef}
               type="file"
-              multiple
               accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif"
               className="hidden"
               onChange={(e) => {
@@ -578,6 +595,11 @@ export default function ExpensesPage() {
                       {(upload.status === "failed" || upload.status === "canceled") && (
                         <button className="btn btn-secondary text-xs" onClick={() => retryUpload(upload.id)}>
                           Retry
+                        </button>
+                      )}
+                      {upload.status === "success" && (
+                        <button className="btn btn-secondary min-h-11 text-xs" onClick={() => removeUpload(upload.id)}>
+                          Remove
                         </button>
                       )}
                     </div>
@@ -614,9 +636,15 @@ export default function ExpensesPage() {
             </div>
           )}
 
-          <button className="btn btn-secondary mt-4" onClick={() => setShowUpload(true)}>
+          <button className="btn btn-primary mt-4 min-h-12 w-full text-base" onClick={() => setShowUpload(true)}>
             Upload Receipt
           </button>
+
+          {uploads.some((upload) => upload.status === "success" && upload.attachmentId) && (
+            <p className="mt-3 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800" aria-live="polite">
+              Receipt attached. AI fields can be reviewed and edited below.
+            </p>
+          )}
 
           {possibleDuplicate && (
             <div className="mt-3 rounded-md border border-orange-300 bg-orange-50 p-3 text-sm text-orange-800">
@@ -627,7 +655,7 @@ export default function ExpensesPage() {
             </div>
           )}
 
-          <div className="grid gap-3 md:grid-cols-2 mt-4">
+          <div className="grid grid-cols-1 gap-4 mt-4">
             <div>
               <label className="label">Vendor</label>
               <input className="input" value={form.vendor} onChange={(e) => setForm((p) => ({ ...p, vendor: e.target.value }))} />
@@ -670,11 +698,11 @@ export default function ExpensesPage() {
             </div>
           </div>
 
-          <div className="mt-4 flex flex-wrap gap-2">
-            <button className="btn btn-primary" onClick={() => submitExpense("close")} disabled={createExpense.isPending || !canSubmitExpense}>
+          <div className="sticky bottom-0 z-10 -mx-4 mt-5 flex gap-2 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:px-0 sm:py-0">
+            <button className="btn btn-primary min-h-12 flex-1 text-base" onClick={() => submitExpense("close")} disabled={createExpense.isPending || !canSubmitExpense}>
               {createExpense.isPending ? "Saving..." : "Add Expense"}
             </button>
-            <button className="btn btn-secondary" onClick={() => setShowAddExpense(false)}>Cancel</button>
+            <button className="btn btn-secondary min-h-12 flex-1 text-base" onClick={() => setShowAddExpense(false)}>Cancel</button>
           </div>
         </section>
       )}
@@ -716,7 +744,8 @@ export default function ExpensesPage() {
       </div>
 
       <div className="card overflow-hidden">
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-[720px] text-sm">
           <thead className="bg-slate-50 text-left">
             <tr>
               <th className="px-4 py-2 font-medium">Vendor</th>
@@ -811,6 +840,7 @@ export default function ExpensesPage() {
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       <input
