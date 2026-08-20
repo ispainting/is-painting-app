@@ -32,7 +32,7 @@ const createInput = z.object({
   paymentMethod: z.string().trim().max(120).optional(),
   receiptNumber: z.string().trim().max(100).optional(),
   invoiceNumber: z.string().trim().max(100).optional(),
-  jobId: z.number().int().positive().optional(),
+  jobId: z.number().int().positive(),
   employeeId: z.number().int().positive().optional(),
   notes: z.string().trim().max(2000).optional(),
   status: z.nativeEnum(ExpenseStatus).optional(),
@@ -173,6 +173,9 @@ export const expensesRouter = router({
   }),
 
   create: protectedProcedure.input(createInput).mutation(async ({ ctx, input }) => {
+    if (!input.jobId) {
+      throw new Error("A Job is required before an expense can be created.");
+    }
     const attachmentIds = Array.from(new Set(input.attachmentIds));
     const isEmployee = ctx.session.role === "employee";
 

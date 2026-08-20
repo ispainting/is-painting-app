@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDate } from "@/lib/utils";
@@ -23,35 +24,14 @@ type ExtractedValue<T> = {
   confidence: number;
 };
 
-type ExtractedLineItem = {
-  description: string;
-  quantity: number | null;
-  unitPrice: number | null;
-  totalPrice: number | null;
-  confidence: number;
-};
-
-type SuggestedJob = {
-  jobId: number | null;
-  jobName: string | null;
-  confidence: number;
-  reason: string | null;
-};
-
 type ExtractedReceiptData = {
   vendor: ExtractedValue<string>;
   date: ExtractedValue<string>;
-  subtotal: ExtractedValue<number>;
-  tax: ExtractedValue<number>;
   total: ExtractedValue<number>;
-  paymentMethod: ExtractedValue<string>;
-  receiptNumber: ExtractedValue<string>;
   category: ExtractedValue<string>;
   description: ExtractedValue<string>;
-  items: ExtractedLineItem[];
   rawText: string | null;
   overallConfidence: number;
-  suggestedJob?: SuggestedJob;
 };
 
 type ExtractionState = {
@@ -61,15 +41,6 @@ type ExtractionState = {
   data?: ExtractedReceiptData | null;
   provider?: string;
   model?: string;
-};
-
-type EditableLineItem = {
-  id: string;
-  description: string;
-  quantity: string;
-  unitPrice: string;
-  totalPrice: string;
-  confidence: number;
 };
 
 const ALLOWED_EXTENSIONS = ["pdf", "jpg", "jpeg", "png", "webp", "heic", "heif"];
@@ -113,25 +84,6 @@ function numberToInput(value: number | null | undefined) {
   return String(value);
 }
 
-function inputToOptionalNumber(value: string) {
-  const parsed = Number(value);
-  if (!value.trim() || Number.isNaN(parsed)) return undefined;
-  return parsed;
-}
-
-function inputToNullableNumber(value: string) {
-  const parsed = Number(value);
-  if (!value.trim() || Number.isNaN(parsed)) return null;
-  return parsed;
-}
-
-function confidenceLabel(value: number) {
-  if (value >= 0.85) return "High";
-  if (value >= 0.65) return "Medium";
-  if (value > 0) return "Low";
-  return "Needs review";
-}
-
 function toExtractionStatus(value: string): ExtractionStatus {
   if (value === "queued") return "queued";
   if (value === "processing") return "processing";
@@ -142,6 +94,7 @@ function toExtractionStatus(value: string): ExtractionStatus {
 }
 
 export default function ExpensesPage() {
+  const searchParams = useSearchParams();
   const utils = api.useUtils();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const replaceInputRef = useRef<HTMLInputElement | null>(null);
@@ -157,7 +110,6 @@ export default function ExpensesPage() {
   const [showAddExpense, setShowAddExpense] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
   const [dragActive, setDragActive] = useState(false);
-  const [jobSearch, setJobSearch] = useState("");
   const [saveBehavior, setSaveBehavior] = useState<"close" | "next">("close");
   const [replacementTarget, setReplacementTarget] = useState<{ expenseId: number; oldAttachmentId?: number } | null>(null);
 
@@ -165,24 +117,16 @@ export default function ExpensesPage() {
     vendor: "",
     expenseDate: new Date().toISOString().slice(0, 10),
     amount: "",
-    subtotal: "",
-    tax: "",
     category: "materials" as (typeof CATEGORY_OPTIONS)[number],
-    paymentMethod: "",
-    receiptNumber: "",
-    invoiceNumber: "",
     jobId: "",
-    employeeId: "",
     description: "",
-    notes: "",
-    status: "pending" as (typeof STATUS_OPTIONS)[number],
   });
+  const requestedJobId = Number(searchParams.get("jobId"));
+  const jobIsLocked = Number.isInteger(requestedJobId) && requestedJobId > 0;
 
   const [selectedAttachmentIds, setSelectedAttachmentIds] = useState<number[]>([]);
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [extractionState, setExtractionState] = useState<ExtractionState>({ status: "idle" });
-  const [lineItems, setLineItems] = useState<EditableLineItem[]>([]);
-
   const listQuery = api.expenses.list.useQuery({
     search: search || undefined,
     status: status || undefined,
@@ -192,6 +136,12 @@ export default function ExpensesPage() {
   });
   const statsQuery = api.expenses.stats.useQuery();
   const metaQuery = api.expenses.meta.useQuery();
+
+  useEffect(() => {
+    if (!jobIsLocked || !metaQuery.data?.jobs.some((job) => job.id === requestedJobId)) return;
+    setForm((prev) => ({ ...prev, jobId: String(requestedJobId) }));
+    setShowAddExpense(true);
+  }, [jobIsLocked, metaQuery.data?.jobs, requestedJobId]);
 
   const extractReceipt = api.expenses.extractReceipt.useMutation({
     onSuccess: (result) => {
@@ -265,20 +215,11 @@ export default function ExpensesPage() {
         vendor: "",
         expenseDate: new Date().toISOString().slice(0, 10),
         amount: "",
-        subtotal: "",
-        tax: "",
         category: "materials",
-        paymentMethod: "",
-        receiptNumber: "",
-        invoiceNumber: "",
         jobId: "",
-        employeeId: "",
         description: "",
-        notes: "",
-        status: "pending",
       });
       setSelectedAttachmentIds([]);
-      setLineItems([]);
       setExtractionState({ status: "idle" });
 
       if (saveBehavior === "close") {
@@ -306,35 +247,6 @@ export default function ExpensesPage() {
     },
     onError: (error) => toast.error(error.message || "Failed to delete attachment"),
   });
-
-  const allAvailableAttachments = useMemo(() => {
-    const orphan = metaQuery.data?.orphanAttachments ?? [];
-    const fromQueue = uploads
-      .filter((u) => u.status === "success" && u.attachmentId)
-      .map((u) => ({
-        id: u.attachmentId as number,
-        originalFilename: u.file.name,
-        mimeType: u.file.type,
-        sizeBytes: u.file.size,
-        uploadedAt: new Date(),
-      }));
-
-    const map = new Map<number, (typeof orphan)[number] | (typeof fromQueue)[number]>();
-    [...fromQueue, ...orphan].forEach((item) => map.set(item.id, item));
-    return Array.from(map.values());
-  }, [metaQuery.data?.orphanAttachments, uploads]);
-
-  const filteredJobs = useMemo(() => {
-    const jobs = metaQuery.data?.jobs ?? [];
-    const needle = jobSearch.trim().toLowerCase();
-    if (!needle) return jobs;
-    return jobs.filter((job) => job.name.toLowerCase().includes(needle));
-  }, [metaQuery.data?.jobs, jobSearch]);
-
-  const primaryAttachmentId = selectedAttachmentIds[0] ?? extractionState.attachmentId;
-  const viewReceiptHref = primaryAttachmentId
-    ? `/api/expenses/attachments/${primaryAttachmentId}/preview`
-    : null;
 
   const possibleDuplicate = useMemo(() => {
     const vendor = form.vendor.trim().toLowerCase();
@@ -386,26 +298,11 @@ export default function ExpensesPage() {
       vendor: data.vendor.value ?? prev.vendor,
       expenseDate: data.date.value ?? prev.expenseDate,
       amount: data.total.value != null ? numberToInput(data.total.value) : prev.amount,
-      subtotal: data.subtotal.value != null ? numberToInput(data.subtotal.value) : prev.subtotal,
-      tax: data.tax.value != null ? numberToInput(data.tax.value) : prev.tax,
       category: data.category.value && CATEGORY_OPTIONS.includes(data.category.value as (typeof CATEGORY_OPTIONS)[number])
         ? (data.category.value as (typeof CATEGORY_OPTIONS)[number])
-        : prev.category,
-      paymentMethod: data.paymentMethod.value ?? prev.paymentMethod,
-      receiptNumber: data.receiptNumber.value ?? prev.receiptNumber,
+        : "materials",
       description: data.description.value ?? prev.description,
     }));
-
-    setLineItems(
-      data.items.map((item) => ({
-        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        description: item.description,
-        quantity: numberToInput(item.quantity),
-        unitPrice: numberToInput(item.unitPrice),
-        totalPrice: numberToInput(item.totalPrice),
-        confidence: item.confidence,
-      }))
-    );
   }
 
   function queueFiles(fileList: FileList | File[]) {
@@ -564,6 +461,10 @@ export default function ExpensesPage() {
   }
 
   function submitExpense(behavior: "close" | "next") {
+    if (!form.jobId) {
+      toast.error("Select a Job before adding the expense.");
+      return;
+    }
     if (!form.amount || Number.isNaN(Number(form.amount)) || Number(form.amount) <= 0) {
       toast.error("Enter a valid total amount");
       return;
@@ -575,65 +476,27 @@ export default function ExpensesPage() {
       expenseDate: new Date(form.expenseDate),
       description: form.description || undefined,
       amount: Number(form.amount),
-      subtotal: inputToOptionalNumber(form.subtotal),
-      tax: inputToOptionalNumber(form.tax),
       category: form.category,
-      paymentMethod: form.paymentMethod || undefined,
-      receiptNumber: form.receiptNumber || undefined,
-      invoiceNumber: form.invoiceNumber || undefined,
-      jobId: form.jobId ? Number(form.jobId) : undefined,
-      employeeId: form.employeeId ? Number(form.employeeId) : undefined,
-      notes: form.notes || undefined,
-      status: form.status,
+      jobId: Number(form.jobId),
       attachmentIds: selectedAttachmentIds,
       extractedRawText: extractionState.data?.rawText || undefined,
       extractedStructured: extractionState.data || undefined,
       extractedConfidence: extractionState.data?.overallConfidence,
-      lineItems: lineItems
-        .filter((item) => item.description.trim().length > 0)
-        .map((item) => ({
-          description: item.description.trim(),
-          quantity: inputToNullableNumber(item.quantity),
-          unitPrice: inputToNullableNumber(item.unitPrice),
-          totalPrice: inputToNullableNumber(item.totalPrice),
-        })),
     });
-  }
-
-  function addLineItem() {
-    setLineItems((prev) => [
-      ...prev,
-      {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        description: "",
-        quantity: "",
-        unitPrice: "",
-        totalPrice: "",
-        confidence: 0,
-      },
-    ]);
-  }
-
-  function clearExtractedData() {
-    setExtractionState({ status: "idle", data: null, attachmentId: primaryAttachmentId });
-    setLineItems([]);
-    setForm((prev) => ({
-      ...prev,
-      vendor: "",
-      amount: "",
-      subtotal: "",
-      tax: "",
-      paymentMethod: "",
-      receiptNumber: "",
-      description: "",
-      category: "materials",
-    }));
   }
 
   const expenses = listQuery.data ?? [];
   const isLoading = listQuery.isLoading;
 
   const emptyState = !isLoading && expenses.length === 0;
+  const canSubmitExpense = Boolean(
+    form.jobId
+    && form.vendor.trim()
+    && form.expenseDate
+    && CATEGORY_OPTIONS.includes(form.category)
+    && Number.isFinite(Number(form.amount))
+    && Number(form.amount) > 0
+  );
 
   const summaryCards = [
     { label: "Total Expenses", value: formatCurrency(statsQuery.data?.totalExpenses ?? 0) },
@@ -751,19 +614,9 @@ export default function ExpensesPage() {
             </div>
           )}
 
-          {extractionState.data && (
-            <div className="mt-3 rounded-md border border-slate-200 p-3 text-sm">
-              <div className="flex flex-wrap gap-2 text-xs">
-                <span className="rounded-full bg-slate-100 px-2 py-1">Overall: {confidenceLabel(extractionState.data.overallConfidence)}</span>
-                <span className="rounded-full bg-slate-100 px-2 py-1">Vendor: {confidenceLabel(extractionState.data.vendor.confidence)}</span>
-                <span className="rounded-full bg-slate-100 px-2 py-1">Date: {confidenceLabel(extractionState.data.date.confidence)}</span>
-                <span className="rounded-full bg-slate-100 px-2 py-1">Total: {confidenceLabel(extractionState.data.total.confidence)}</span>
-                {extractionState.provider && (
-                  <span className="rounded-full bg-slate-100 px-2 py-1">Provider: {extractionState.provider}</span>
-                )}
-              </div>
-            </div>
-          )}
+          <button className="btn btn-secondary mt-4" onClick={() => setShowUpload(true)}>
+            Upload Receipt
+          </button>
 
           {possibleDuplicate && (
             <div className="mt-3 rounded-md border border-orange-300 bg-orange-50 p-3 text-sm text-orange-800">
@@ -771,22 +624,6 @@ export default function ExpensesPage() {
               <p>
                 Existing expense #{possibleDuplicate.id} has the same vendor, total, and date.
               </p>
-            </div>
-          )}
-
-          {extractionState.data?.suggestedJob && extractionState.data.suggestedJob.confidence >= 0.85 && extractionState.data.suggestedJob.jobId && (
-            <div className="mt-3 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
-              <p className="font-medium">
-                Suggested job: {extractionState.data.suggestedJob.jobName} ({confidenceLabel(extractionState.data.suggestedJob.confidence)})
-              </p>
-              <div className="mt-2">
-                <button
-                  className="btn btn-secondary text-xs"
-                  onClick={() => setForm((prev) => ({ ...prev, jobId: String(extractionState.data?.suggestedJob?.jobId || "") }))}
-                >
-                  Apply suggestion
-                </button>
-              </div>
             </div>
           )}
 
@@ -804,14 +641,6 @@ export default function ExpensesPage() {
               <input type="number" step="0.01" className="input" value={form.amount} onChange={(e) => setForm((p) => ({ ...p, amount: e.target.value }))} />
             </div>
             <div>
-              <label className="label">Subtotal</label>
-              <input type="number" step="0.01" className="input" value={form.subtotal} onChange={(e) => setForm((p) => ({ ...p, subtotal: e.target.value }))} />
-            </div>
-            <div>
-              <label className="label">Tax</label>
-              <input type="number" step="0.01" className="input" value={form.tax} onChange={(e) => setForm((p) => ({ ...p, tax: e.target.value }))} />
-            </div>
-            <div>
               <label className="label">Category</label>
               <select className="input" value={form.category} onChange={(e) => setForm((p) => ({ ...p, category: e.target.value as (typeof CATEGORY_OPTIONS)[number] }))}>
                 {CATEGORY_OPTIONS.map((opt) => (
@@ -820,184 +649,30 @@ export default function ExpensesPage() {
               </select>
             </div>
             <div>
-              <label className="label">Payment Method</label>
-              <input className="input" value={form.paymentMethod} onChange={(e) => setForm((p) => ({ ...p, paymentMethod: e.target.value }))} />
-            </div>
-            <div>
-              <label className="label">Receipt Number</label>
-              <input className="input" value={form.receiptNumber} onChange={(e) => setForm((p) => ({ ...p, receiptNumber: e.target.value }))} />
-            </div>
-            <div>
-              <label className="label">Invoice Number</label>
-              <input className="input" value={form.invoiceNumber} onChange={(e) => setForm((p) => ({ ...p, invoiceNumber: e.target.value }))} />
-            </div>
-            <div>
-              <label className="label">Status</label>
-              <select className="input" value={form.status} onChange={(e) => setForm((p) => ({ ...p, status: e.target.value as (typeof STATUS_OPTIONS)[number] }))}>
-                {STATUS_OPTIONS.map((opt) => (
-                  <option key={opt} value={opt}>{opt}</option>
-                ))}
-              </select>
-            </div>
-            <div className="md:col-span-2">
-              <label className="label">Search Job</label>
-              <input
-                className="input"
-                placeholder="Search jobs..."
-                value={jobSearch}
-                onChange={(e) => setJobSearch(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="label">Job</label>
-              <select className="input" value={form.jobId} onChange={(e) => setForm((p) => ({ ...p, jobId: e.target.value }))}>
-                <option value="">Unassigned</option>
-                {filteredJobs.map((job) => (
-                  <option key={job.id} value={job.id}>{job.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="label">Employee</label>
-              <select className="input" value={form.employeeId} onChange={(e) => setForm((p) => ({ ...p, employeeId: e.target.value }))}>
-                <option value="">Not set</option>
-                {(metaQuery.data?.employees ?? []).map((employee) => (
-                  <option key={employee.id} value={employee.id}>{employee.name}</option>
-                ))}
-              </select>
+              <label className="label">Job <span className="text-red-600">*</span></label>
+              {jobIsLocked ? (
+                <p className="input bg-slate-50" aria-live="polite">
+                  {metaQuery.data?.jobs.find((job) => String(job.id) === form.jobId)?.name || "Loading job..."}
+                </p>
+              ) : (
+                <select className="input" value={form.jobId} onChange={(e) => setForm((p) => ({ ...p, jobId: e.target.value }))}>
+                  <option value="">Select a Job</option>
+                  {(metaQuery.data?.jobs ?? []).map((job) => (
+                    <option key={job.id} value={job.id}>{job.name}</option>
+                  ))}
+                </select>
+              )}
+              {jobIsLocked && <p className="mt-1 text-xs text-slate-500">Expense will be added to this Job.</p>}
             </div>
             <div className="md:col-span-2">
               <label className="label">Description</label>
               <input className="input" value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} />
             </div>
-            <div className="md:col-span-2">
-              <label className="label">Notes</label>
-              <textarea className="input" rows={3} value={form.notes} onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))} />
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <div className="flex items-center justify-between">
-              <label className="label">Line Items</label>
-              <button className="btn btn-secondary text-xs" onClick={addLineItem}>Add Line</button>
-            </div>
-            {lineItems.length === 0 ? (
-              <p className="text-sm text-slate-500">No line items extracted yet.</p>
-            ) : (
-              <div className="space-y-2">
-                {lineItems.map((item) => (
-                  <div key={item.id} className="grid gap-2 md:grid-cols-12 rounded-md border border-slate-200 p-2">
-                    <input
-                      className="input md:col-span-4"
-                      placeholder="Description"
-                      value={item.description}
-                      onChange={(e) => {
-                        const next = e.target.value;
-                        setLineItems((prev) => prev.map((line) => line.id === item.id ? { ...line, description: next } : line));
-                      }}
-                    />
-                    <input
-                      className="input md:col-span-2"
-                      type="number"
-                      step="0.01"
-                      placeholder="Qty"
-                      value={item.quantity}
-                      onChange={(e) => {
-                        const next = e.target.value;
-                        setLineItems((prev) => prev.map((line) => line.id === item.id ? { ...line, quantity: next } : line));
-                      }}
-                    />
-                    <input
-                      className="input md:col-span-2"
-                      type="number"
-                      step="0.01"
-                      placeholder="Unit"
-                      value={item.unitPrice}
-                      onChange={(e) => {
-                        const next = e.target.value;
-                        setLineItems((prev) => prev.map((line) => line.id === item.id ? { ...line, unitPrice: next } : line));
-                      }}
-                    />
-                    <input
-                      className="input md:col-span-2"
-                      type="number"
-                      step="0.01"
-                      placeholder="Total"
-                      value={item.totalPrice}
-                      onChange={(e) => {
-                        const next = e.target.value;
-                        setLineItems((prev) => prev.map((line) => line.id === item.id ? { ...line, totalPrice: next } : line));
-                      }}
-                    />
-                    <div className="md:col-span-1 text-xs text-slate-600 flex items-center justify-center">
-                      {confidenceLabel(item.confidence)}
-                    </div>
-                    <div className="md:col-span-1 flex items-center justify-end">
-                      <button
-                        className="btn btn-danger text-xs"
-                        onClick={() => setLineItems((prev) => prev.filter((line) => line.id !== item.id))}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="mt-4">
-            <label className="label">Attach Uploaded Receipts</label>
-            {allAvailableAttachments.length === 0 ? (
-              <p className="text-sm text-slate-500">No uploaded receipts available yet.</p>
-            ) : (
-              <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                {allAvailableAttachments.map((item) => (
-                  <label key={item.id} className="flex items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={selectedAttachmentIds.includes(item.id)}
-                      onChange={(e) => {
-                        setSelectedAttachmentIds((prev) =>
-                          e.target.checked
-                            ? Array.from(new Set([...prev, item.id]))
-                            : prev.filter((id) => id !== item.id)
-                        );
-                      }}
-                    />
-                    <span className="font-medium">{item.originalFilename}</span>
-                    <span className="text-slate-500">({Math.round(item.sizeBytes / 1024)} KB)</span>
-                  </label>
-                ))}
-              </div>
-            )}
           </div>
 
           <div className="mt-4 flex flex-wrap gap-2">
-            <button
-              className="btn btn-secondary"
-              onClick={() => {
-                if (!primaryAttachmentId) {
-                  toast.error("Select a receipt attachment first.");
-                  return;
-                }
-                beginExtraction(primaryAttachmentId);
-              }}
-              disabled={extractReceipt.isPending}
-            >
-              Retry AI Reading
-            </button>
-            <button className="btn btn-secondary" onClick={clearExtractedData}>Clear Extracted Data</button>
-            {viewReceiptHref && (
-              <a className="btn btn-secondary" href={viewReceiptHref} target="_blank" rel="noreferrer">
-                View Receipt
-              </a>
-            )}
-            <button className="btn btn-primary" onClick={() => submitExpense("close")} disabled={createExpense.isPending}>
-              {createExpense.isPending ? "Saving..." : "Save Expense"}
-            </button>
-            <button className="btn btn-primary" onClick={() => submitExpense("next")} disabled={createExpense.isPending}>
-              Save and Review Next
+            <button className="btn btn-primary" onClick={() => submitExpense("close")} disabled={createExpense.isPending || !canSubmitExpense}>
+              {createExpense.isPending ? "Saving..." : "Add Expense"}
             </button>
             <button className="btn btn-secondary" onClick={() => setShowAddExpense(false)}>Cancel</button>
           </div>

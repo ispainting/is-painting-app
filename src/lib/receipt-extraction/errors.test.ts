@@ -103,6 +103,33 @@ describe("receipt extraction error handling", () => {
     expect(safeUserFacingMessage(error)).not.toContain("ECONNRESET");
   });
 
+  it("reads only the simplified receipt fields and maps amount to the expense total", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      output_text: JSON.stringify({
+        vendor: { value: "Harbor Supply", confidence: 0.95 },
+        category: { value: "materials", confidence: 0.9 },
+        amount: { value: 123.45, confidence: 0.96 },
+        date: { value: "2026-08-20", confidence: 0.94 },
+        description: { value: "Paint supplies", confidence: 0.9 },
+      }),
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await new OpenAiReceiptExtractionProvider().extract(input);
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    const prompt = requestBody.input[0].content[0].text as string;
+
+    expect(result.normalized.vendor.value).toBe("Harbor Supply");
+    expect(result.normalized.category.value).toBe("materials");
+    expect(result.normalized.total.value).toBe(123.45);
+    expect(result.normalized.date.value).toBe("2026-08-20");
+    expect(result.normalized.description.value).toBe("Paint supplies");
+    expect(prompt).toContain("Extract only vendor, category, amount, date, and description");
+    expect(prompt).not.toContain("paymentMethod");
+    expect(prompt).not.toContain("lineItems");
+    expect(prompt).not.toContain("Known jobs");
+  });
+
   it("treats malformed provider output as a recoverable extraction failure", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ output_text: "not json" }), { status: 200 })));
 

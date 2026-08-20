@@ -64,7 +64,6 @@ function tryParseJson(text: string): unknown {
 }
 
 function buildPrompt(jobOptions: Array<{ id: number; name: string }>) {
-  const jobNameList = jobOptions.slice(0, 200).map((job) => job.name).join(" | ");
   return [
     "You are extracting data from a business receipt image.",
     "Return JSON only. No markdown. No extra keys.",
@@ -72,35 +71,15 @@ function buildPrompt(jobOptions: Array<{ id: number; name: string }>) {
     "Confidences must be between 0 and 1.",
     "Use YYYY-MM-DD for date.",
     "Suggested category should be one of: paint, materials, labor, tools, equipment, rentals, fuel, subcontractor, travel, ferry, payroll_related, office, advertising, insurance, vehicle, meals, other.",
-    "Suggest a job only when strong evidence exists in receipt text.",
-    `Known jobs: ${jobNameList || "none"}`,
-    "JSON shape:",
+    "Extract only vendor, category, amount, date, and description. Do not extract subtotal, tax, payment method, receipt number, invoice number, line items, jobs, or raw receipt text.",
+    "If category is uncertain, return null; the expense form will default it to materials.",
+    "JSON shape (amount is the final receipt total):",
     JSON.stringify({
       vendor: { value: "string|null", confidence: 0.5 },
-      date: { value: "YYYY-MM-DD|null", confidence: 0.5 },
-      subtotal: { value: "number|null", confidence: 0.5 },
-      tax: { value: "number|null", confidence: 0.5 },
-      total: { value: "number|null", confidence: 0.5 },
-      paymentMethod: { value: "string|null", confidence: 0.5 },
-      receiptNumber: { value: "string|null", confidence: 0.5 },
       category: { value: "string|null", confidence: 0.5 },
+      amount: { value: "number|null", confidence: 0.5 },
+      date: { value: "YYYY-MM-DD|null", confidence: 0.5 },
       description: { value: "string|null", confidence: 0.5 },
-      items: [
-        {
-          description: "string",
-          quantity: "number|null",
-          unitPrice: "number|null",
-          totalPrice: "number|null",
-          confidence: 0.5,
-        },
-      ],
-      rawText: "string|null",
-      overallConfidence: 0.5,
-      suggestedJob: {
-        jobName: "string|null",
-        confidence: 0.5,
-        reason: "string|null",
-      },
     }),
   ].join("\n");
 }

@@ -19,6 +19,7 @@ const rawExtractionSchema = z.object({
   subtotal: z.object({ value: z.union([z.number(), z.string(), z.null()]).optional(), confidence: z.union([z.number(), z.string()]).optional() }).optional(),
   tax: z.object({ value: z.union([z.number(), z.string(), z.null()]).optional(), confidence: z.union([z.number(), z.string()]).optional() }).optional(),
   total: z.object({ value: z.union([z.number(), z.string(), z.null()]).optional(), confidence: z.union([z.number(), z.string()]).optional() }).optional(),
+  amount: z.object({ value: z.union([z.number(), z.string(), z.null()]).optional(), confidence: z.union([z.number(), z.string()]).optional() }).optional(),
   paymentMethod: z.object({ value: z.union([z.string(), z.null()]).optional(), confidence: z.union([z.number(), z.string()]).optional() }).optional(),
   receiptNumber: z.object({ value: z.union([z.string(), z.null()]).optional(), confidence: z.union([z.number(), z.string()]).optional() }).optional(),
   category: z.object({ value: z.union([z.string(), z.null()]).optional(), confidence: z.union([z.number(), z.string()]).optional() }).optional(),
@@ -140,8 +141,8 @@ export function normalizeExtractionResponse(input: unknown, jobs: Array<{ id: nu
       confidence: clampConfidence(parsed.tax?.confidence),
     },
     total: {
-      value: toNumber(parsed.total?.value),
-      confidence: clampConfidence(parsed.total?.confidence),
+      value: toNumber(parsed.amount?.value ?? parsed.total?.value),
+      confidence: clampConfidence(parsed.amount?.confidence ?? parsed.total?.confidence),
     },
     paymentMethod: {
       value: toStringValue(parsed.paymentMethod?.value, 120),

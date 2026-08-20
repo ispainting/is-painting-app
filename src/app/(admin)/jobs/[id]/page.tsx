@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -707,7 +708,12 @@ export default function JobDetailPage() {
 
           <div className="grid md:grid-cols-2 gap-4">
             <div className="card p-5">
-              <h2 className="text-base font-semibold mb-3">Expenses</h2>
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <h2 className="text-base font-semibold">Expenses</h2>
+                <Link className="btn btn-primary text-xs" href={`/expenses?jobId=${id}`}>
+                  Add Expense
+                </Link>
+              </div>
               {nonRejectedExpenses.length === 0 ? (
                 <p className="text-sm text-slate-500">No expenses tracked yet.</p>
               ) : (
