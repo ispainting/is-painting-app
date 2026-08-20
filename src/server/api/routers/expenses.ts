@@ -50,6 +50,17 @@ const createInput = z.object({
   ).default([]),
 });
 
+function getUserFacingExtractionError(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (message.includes("timeout") || message.includes("timed out")) {
+    return "Receipt reading timed out. You can enter the expense manually.";
+  }
+  if (message.includes("429") || message.includes("credit_balance_exhausted") || message.includes("provider unavailable")) {
+    return "Receipt reading is temporarily unavailable. You can enter the expense manually.";
+  }
+  return "Receipt reading failed. You can enter the expense manually.";
+}
+
 export const expensesRouter = router({
   list: protectedProcedure.input(listInput).query(async ({ ctx, input }) => {
     const search = input?.search?.trim();
@@ -336,7 +347,11 @@ export const expensesRouter = router({
           model: extracted.model,
         };
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Receipt extraction failed.";
+        const message = getUserFacingExtractionError(error);
+        console.error("Receipt extraction failed", {
+          attachmentId: attachment.id,
+          error,
+        });
         await ctx.prisma.expenseAttachment.update({
           where: { id: attachment.id },
           data: {
