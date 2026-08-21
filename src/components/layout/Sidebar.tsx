@@ -35,7 +35,7 @@ export function Sidebar() {
   });
 
   return (
-    <aside className="flex h-screen w-60 flex-col border-r border-slate-200 bg-white">
+    <aside className="hidden md:flex h-screen w-60 flex-col border-r border-slate-200 bg-white">
       <div className="px-5 py-4 border-b border-slate-200">
         <div className="text-sm font-bold text-brand-700">I.S PAINTING</div>
         <div className="text-xs text-slate-500">Business Manager</div>
@@ -67,5 +67,50 @@ export function Sidebar() {
         <LogOut className="w-4 h-4" /> Sign out
       </button>
     </aside>
+  );
+}
+
+export function SidebarDrawer({ onNavigate }: { onNavigate?: () => void }) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const logout = api.auth.logout.useMutation({
+    onSuccess: () => router.push("/login"),
+  });
+
+  const handleNavigate = (href: string) => {
+    router.push(href);
+    onNavigate?.();
+  };
+
+  return (
+    <nav className="flex flex-col space-y-0.5 p-3">
+      {NAV.map(({ href, label, icon: Icon }) => {
+        const active = pathname === href || pathname.startsWith(href + "/");
+        return (
+          <button
+            key={href}
+            onClick={() => handleNavigate(href)}
+            className={cn(
+              "flex w-full items-center gap-3 px-3 py-2 rounded-md text-sm text-left",
+              active
+                ? "bg-brand-50 text-brand-700 font-medium"
+                : "text-slate-700 hover:bg-slate-100"
+            )}
+          >
+            <Icon className="w-4 h-4" />
+            {label}
+          </button>
+        );
+      })}
+      <button
+        onClick={() => {
+          logout.mutate();
+          onNavigate?.();
+        }}
+        className="flex w-full items-center gap-2 px-3 py-2 mt-2 rounded-md text-sm text-slate-600 hover:bg-slate-100"
+      >
+        <LogOut className="w-4 h-4" /> Sign out
+      </button>
+    </nav>
   );
 }
