@@ -111,7 +111,15 @@ export const jobsRouter = router({
         assignments: { include: { user: true } },
         invoices: true,
         payments: true,
-        expenses: true,
+        expenses: {
+          include: {
+            attachments: {
+              orderBy: { uploadedAt: "desc" },
+              select: { id: true, originalFilename: true, mimeType: true },
+            },
+          },
+          orderBy: { expenseDate: "desc" },
+        },
         timeEntries: { include: { user: true }, orderBy: { clockIn: "desc" }, take: 50 },
       },
     });

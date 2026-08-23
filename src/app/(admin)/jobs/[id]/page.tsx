@@ -1,13 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { toast } from "sonner";
+import { JobExpenseEntry } from "@/components/expenses/JobExpenseEntry";
 
 const STATUSES = ["estimate", "sent", "approved", "active", "completed", "on_hold", "cancelled"] as const;
 const WORKSPACE_TABS = [
@@ -132,7 +132,7 @@ export default function JobDetailPage() {
   const jobData = job as typeof job & {
     customer: { name: string };
     assignments: Array<{ id: number; user: { name: string }; userId: number }>;
-    expenses: Array<{ id: number; status: string; category: string; amount: string | number; receiptUrl: string | null; vendor: string | null }>;
+    expenses: Array<{ id: number; status: string; category: string; amount: string | number; receiptUrl: string | null; vendor: string | null; expenseDate: string; description: string | null; attachments: Array<{ id: number; originalFilename: string; mimeType: string }> }>;
     timeEntries: Array<{ id: number; paidHours: string | number | null; hoursWorked: string | number | null; grossHours: string | number | null; clockOut: string | null; clockIn: string; user: { name: string; hourlyRate: string | number | null } }>;
     invoices: Array<{ id: number; total: string | number; invoiceNumber: string | null; title: string | null }>;
     payments: Array<{ id: number; amount: string | number; dateReceived: string; attachmentUrl: string | null; method: string | null }>;
@@ -708,20 +708,18 @@ export default function JobDetailPage() {
 
           <div className="grid md:grid-cols-2 gap-4">
             <div className="card p-5">
-              <div className="flex items-center justify-between gap-3 mb-3">
+              <div className="flex flex-col items-stretch gap-3 mb-3 sm:flex-row sm:items-center sm:justify-between">
                 <h2 className="text-base font-semibold">Expenses</h2>
-                <Link className="btn btn-primary text-xs" href={`/expenses?jobId=${id}`}>
-                  Add Expense
-                </Link>
+                <JobExpenseEntry jobId={id} jobName={job.name} onSaved={() => utils.jobs.byId.invalidate({ id })} />
               </div>
               {nonRejectedExpenses.length === 0 ? (
                 <p className="text-sm text-slate-500">No expenses tracked yet.</p>
               ) : (
                 <ul className="text-sm divide-y">
                   {nonRejectedExpenses.slice(0, 12).map((e) => (
-                    <li key={e.id} className="py-2 flex items-start justify-between gap-3">
-                      <span className="text-slate-700">{e.vendor || "Expense"} · {e.category}</span>
-                      <span>{formatCurrency(Number(e.amount))}</span>
+                    <li key={e.id} className="py-3 flex items-start justify-between gap-3">
+                      <div className="min-w-0"><p className="truncate text-slate-700">{e.vendor || "Expense"}</p><p className="text-xs text-slate-500">{formatDateTime(e.expenseDate)} · {e.category}{e.description ? ` · ${e.description}` : ""}</p>{e.attachments.length > 0 ? <a className="text-xs text-brand-700 hover:underline" href={`/api/expenses/attachments/${e.attachments[0].id}/preview`} target="_blank" rel="noreferrer">View Receipt</a> : <span className="text-xs text-slate-400">No receipt</span>}</div>
+                      <span className="shrink-0 font-medium">{formatCurrency(Number(e.amount))}</span>
                     </li>
                   ))}
                 </ul>
