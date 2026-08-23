@@ -674,8 +674,8 @@ export default function JobDetailPage() {
 
       {activeTab === "tracking" && (
         <div className="space-y-4">
-          <div className="grid md:grid-cols-2 gap-4">
-            <div className="card p-5">
+          <div className="grid gap-4 min-w-0">
+            <div className="card min-w-0 overflow-hidden p-5">
               <h2 className="text-base font-semibold mb-3">Time Entries</h2>
               {jobData.timeEntries.length === 0 ? (
                 <p className="text-sm text-slate-500">No time logged.</p>
@@ -720,22 +720,6 @@ export default function JobDetailPage() {
                     <li key={e.id} className="py-3 flex items-start justify-between gap-3">
                       <div className="min-w-0"><p className="truncate text-slate-700">{e.vendor || "Expense"}</p><p className="text-xs text-slate-500">{formatDateTime(e.expenseDate)} · {e.category}{e.description ? ` · ${e.description}` : ""}</p>{e.attachments.length > 0 ? <a className="text-xs text-brand-700 hover:underline" href={`/api/expenses/attachments/${e.attachments[0].id}/preview`} target="_blank" rel="noreferrer">View Receipt</a> : <span className="text-xs text-slate-400">No receipt</span>}</div>
                       <span className="shrink-0 font-medium">{formatCurrency(Number(e.amount))}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            <div className="card p-5">
-              <h2 className="text-base font-semibold mb-3">Receipts</h2>
-              {jobData.expenses.filter((e) => !!e.receiptUrl).length === 0 ? (
-                <p className="text-sm text-slate-500">No receipts uploaded yet.</p>
-              ) : (
-                <ul className="text-sm divide-y">
-                  {jobData.expenses.filter((e) => !!e.receiptUrl).slice(0, 12).map((e) => (
-                    <li key={e.id} className="py-2 flex items-start justify-between gap-3">
-                      <span>{e.vendor || "Receipt"}</span>
-                      <a className="text-brand-700 hover:underline" href={e.receiptUrl!} target="_blank" rel="noreferrer">Open</a>
                     </li>
                   ))}
                 </ul>
