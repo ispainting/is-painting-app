@@ -27,6 +27,8 @@ export default function SettingsPage() {
     defaultOverhead: 0,
     defaultMarkup: 0,
     defaultTaxPercent: 0,
+    defaultLaborSellRate: "",
+    defaultLaborCostRate: "",
   });
 
   useEffect(() => {
@@ -42,6 +44,8 @@ export default function SettingsPage() {
         defaultOverhead: Number(data.defaultOverhead ?? 0),
         defaultMarkup: Number(data.defaultMarkup ?? 0),
         defaultTaxPercent: Number(data.defaultTaxPercent ?? 0),
+        defaultLaborSellRate: data.defaultLaborSellRate == null ? "" : String(Number(data.defaultLaborSellRate)),
+        defaultLaborCostRate: data.defaultLaborCostRate == null ? "" : String(Number(data.defaultLaborCostRate)),
       });
     }
   }, [data]);
@@ -63,11 +67,42 @@ export default function SettingsPage() {
           <NumField label="Overhead %" value={form.defaultOverhead} onChange={(v) => setForm((f) => ({ ...f, defaultOverhead: v }))} />
           <NumField label="Markup %" value={form.defaultMarkup} onChange={(v) => setForm((f) => ({ ...f, defaultMarkup: v }))} />
           <NumField label="Tax %" value={form.defaultTaxPercent} onChange={(v) => setForm((f) => ({ ...f, defaultTaxPercent: v }))} />
+          <div>
+            <label className="label">Default labor sell rate ($/painter-hour)</label>
+            <input
+              type="text"
+              inputMode="decimal"
+              className="input"
+              placeholder="Not configured"
+              value={form.defaultLaborSellRate}
+              onChange={(e) => setForm((f) => ({ ...f, defaultLaborSellRate: e.target.value }))}
+            />
+            <p className="text-xs text-slate-500 mt-1">
+              Required before Proposal scopes with estimated labor hours can be priced. Leave blank to keep unconfigured.
+            </p>
+          </div>
+          <div>
+            <label className="label">Default labor cost rate ($/hr, internal, optional)</label>
+            <input
+              type="text"
+              inputMode="decimal"
+              className="input"
+              placeholder="Not tracked"
+              value={form.defaultLaborCostRate}
+              onChange={(e) => setForm((f) => ({ ...f, defaultLaborCostRate: e.target.value }))}
+            />
+          </div>
         </div>
         <button
           className="btn btn-primary mt-5"
           disabled={update.isPending}
-          onClick={() => update.mutate(form)}
+          onClick={() =>
+            update.mutate({
+              ...form,
+              defaultLaborSellRate: form.defaultLaborSellRate.trim() === "" ? null : Number(form.defaultLaborSellRate),
+              defaultLaborCostRate: form.defaultLaborCostRate.trim() === "" ? null : Number(form.defaultLaborCostRate),
+            })
+          }
         >
           {update.isPending ? "Saving…" : "Save settings"}
         </button>

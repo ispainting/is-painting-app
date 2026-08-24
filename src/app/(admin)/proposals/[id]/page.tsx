@@ -8,6 +8,8 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { toast } from "sonner";
+import { SectionMaterialsAndLabor } from "./SectionMaterialsAndLabor";
+import { computeScopeEstimate, computeProposalTotals } from "@/lib/proposal-pricing";
 
 const TABS = [
   { id: "scope", label: "Scope" },
@@ -72,6 +74,16 @@ type PaintColorDraft = {
   sortOrder: number;
 };
 
+type SectionMaterialDraft = {
+  key: string;
+  inventoryItemId: number | null;
+  name: string;
+  unit: string;
+  quantity: string;
+  unitCost: string;
+  markupPercent: string;
+};
+
 type SectionDraft = {
   templateKey: string;
   title: string;
@@ -79,7 +91,24 @@ type SectionDraft = {
   bulletItems: string[];
   notes: string;
   sortOrder: number;
+  estimatedLaborHours: string;
+  laborSellRateOverride: string;
+  additionalCharges: string;
+  materials: SectionMaterialDraft[];
 };
+
+const EMPTY_ESTIMATE_FIELDS = {
+  estimatedLaborHours: "",
+  laborSellRateOverride: "",
+  additionalCharges: "0",
+  materials: [] as SectionMaterialDraft[],
+};
+
+let materialDraftKeySeq = 0;
+function nextMaterialDraftKey() {
+  materialDraftKeySeq += 1;
+  return `m-${materialDraftKeySeq}`;
+}
 
 const ATTACHMENT_CATEGORIES = [
   "IS Painting Booklet",
@@ -102,7 +131,10 @@ const SECTION_TEMPLATES = [
   "custom_section",
 ] as const;
 
-const SECTION_PRESETS: Record<(typeof SECTION_TEMPLATES)[number], Omit<SectionDraft, "sortOrder">> = {
+const SECTION_PRESETS: Record<
+  (typeof SECTION_TEMPLATES)[number],
+  Omit<SectionDraft, "sortOrder" | "estimatedLaborHours" | "laborSellRateOverride" | "additionalCharges" | "materials">
+> = {
   interior_painting: {
     templateKey: "interior_painting",
     title: "Interior Painting",
@@ -325,6 +357,30 @@ export default function ProposalDetailPage() {
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustomerResults, setShowCustomerResults] = useState(false);
   const customers = api.customers.list.useQuery({ search: customerSearch.trim() || undefined }, { enabled: !!proposal });
+  const [linkClientOpen, setLinkClientOpen] = useState(false);
+  const [linkClientSearch, setLinkClientSearch] = useState("");
+  const linkClientCustomers = api.customers.list.useQuery(
+    { search: linkClientSearch.trim() || undefined },
+    { enabled: linkClientOpen && linkClientSearch.trim().length > 0 }
+  );
+  const linkClient = api.proposals.linkClient.useMutation({
+    onSuccess: () => {
+      toast.success("Client linked");
+      setLinkClientOpen(false);
+      setLinkClientSearch("");
+      utils.proposals.byId.invalidate({ id });
+      utils.proposals.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const convertToJob = api.proposals.convertToJob.useMutation({
+    onSuccess: (job) => {
+      toast.success(`Converted to Job ${job.estimateNumber}`);
+      utils.proposals.byId.invalidate({ id });
+      utils.proposals.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
   const [collapsedOptions, setCollapsedOptions] = useState<Record<number, boolean>>({});
   const [collapsedSections, setCollapsedSections] = useState<Record<number, boolean>>({});
   const [selectedSectionTemplate, setSelectedSectionTemplate] = useState<(typeof SECTION_TEMPLATES)[number]>("interior_painting");
@@ -366,6 +422,28 @@ export default function ProposalDetailPage() {
     paintColors: [] as PaintColorDraft[],
   });
 
+  const config = api.config.get.useQuery();
+  const computedScopesTotal = useMemo(() => {
+    const defaultLaborSellRate = config.data?.defaultLaborSellRate != null ? Number(config.data.defaultLaborSellRate) : null;
+    const defaultMarkup = config.data ? Number(config.data.defaultMarkup) : 27;
+    const subtotals = form.sections.map((section) => {
+      const laborHours = Number(section.estimatedLaborHours) || 0;
+      const laborSellRate = section.laborSellRateOverride.trim() ? Number(section.laborSellRateOverride) : defaultLaborSellRate;
+      return computeScopeEstimate({
+        materials: section.materials
+          .filter((m) => m.name.trim().length > 0 && Number(m.quantity) > 0)
+          .map((m) => ({
+            quantity: Number(m.quantity) || 0,
+            unitCost: Number(m.unitCost) || 0,
+            markupPercent: m.markupPercent.trim() ? Number(m.markupPercent) : defaultMarkup,
+          })),
+        labor: laborHours > 0 && laborSellRate != null ? { hours: laborHours, sellRate: laborSellRate } : null,
+        additionalCharges: Number(section.additionalCharges) || 0,
+      }).subtotal;
+    });
+    return computeProposalTotals({ scopeSubtotals: subtotals }).total;
+  }, [form.sections, config.data]);
+
   const update = api.proposals.update.useMutation({
     onSuccess: () => {
       toast.success("Proposal saved");
@@ -396,6 +474,7 @@ export default function ProposalDetailPage() {
               bulletItems: section.bulletItems.length ? section.bulletItems : [""],
               notes: section.notes || "",
               sortOrder: section.sortOrder ?? index,
+              ...EMPTY_ESTIMATE_FIELDS,
             }))
           : current.sections,
       }));
@@ -406,9 +485,9 @@ export default function ProposalDetailPage() {
 
   useEffect(() => {
     if (!proposal) return;
-    setCustomerSearch(proposal.customer.name);
+    setCustomerSearch(proposal.customer?.name ?? "");
     setForm({
-      customerId: proposal.customerId,
+      customerId: proposal.customerId ?? 0,
       projectName: proposal.projectName,
       address: proposal.address || "",
       city: proposal.city || "",
@@ -444,6 +523,18 @@ export default function ProposalDetailPage() {
             bulletItems: section.bulletItems.length ? section.bulletItems : [""],
             notes: section.notes || "",
             sortOrder: section.sortOrder,
+            estimatedLaborHours: section.estimatedLaborHours == null ? "" : String(section.estimatedLaborHours),
+            laborSellRateOverride: section.laborSellRateSnapshot == null ? "" : String(section.laborSellRateSnapshot),
+            additionalCharges: String(section.additionalCharges ?? 0),
+            materials: section.materials.map((m) => ({
+              key: nextMaterialDraftKey(),
+              inventoryItemId: m.inventoryItemId,
+              name: m.nameSnapshot,
+              unit: m.unitSnapshot,
+              quantity: String(m.quantity),
+              unitCost: String(m.unitCostSnapshot),
+              markupPercent: String(m.markupPercentSnapshot),
+            })),
           }))
         : buildLegacySections(proposal),
       options: proposal.options.map((o) => ({
@@ -612,7 +703,7 @@ export default function ProposalDetailPage() {
       }));
 
     const sectionsPayload = form.sections
-      .filter((section) => isMeaningfulRow([section.title, section.description, section.notes]) || section.bulletItems.some((item) => item.trim().length > 0))
+      .filter((section) => isMeaningfulRow([section.title, section.description, section.notes]) || section.bulletItems.some((item) => item.trim().length > 0) || section.materials.length > 0 || Number(section.estimatedLaborHours) > 0)
       .map((section, index) => ({
         templateKey: section.templateKey || undefined,
         title: section.title.trim() || `Section ${index + 1}`,
@@ -620,12 +711,26 @@ export default function ProposalDetailPage() {
         bulletItems: section.bulletItems.map((item) => item.trim()).filter(Boolean),
         notes: section.notes.trim() || undefined,
         sortOrder: section.sortOrder || index,
+        estimatedLaborHours: section.estimatedLaborHours.trim() ? Number(section.estimatedLaborHours) : null,
+        laborSellRateOverride: section.laborSellRateOverride.trim() ? Number(section.laborSellRateOverride) : null,
+        additionalCharges: section.additionalCharges.trim() ? Number(section.additionalCharges) : 0,
+        materials: section.materials
+          .filter((m) => m.name.trim().length > 0 && Number(m.quantity) > 0)
+          .map((m, mIndex) => ({
+            inventoryItemId: m.inventoryItemId,
+            name: m.name.trim(),
+            unit: m.unit.trim() || "unit",
+            quantity: Number(m.quantity) || 0,
+            unitCost: Number(m.unitCost) || 0,
+            markupPercent: m.markupPercent.trim() ? Number(m.markupPercent) : null,
+            sortOrder: mIndex,
+          })),
       }));
 
     update.mutate({
       id,
       data: {
-        customerId: form.customerId,
+        customerId: form.customerId > 0 ? form.customerId : null,
         projectName: form.projectName,
         address: form.address,
         city: form.city,
@@ -705,6 +810,7 @@ export default function ProposalDetailPage() {
         ...current.sections,
         {
           ...preset,
+          ...EMPTY_ESTIMATE_FIELDS,
           bulletItems: [...preset.bulletItems],
           sortOrder: current.sections.length,
         },
@@ -719,7 +825,15 @@ export default function ProposalDetailPage() {
         ...current,
         sections: current.sections.flatMap((section, i) =>
           i === index
-            ? [section, { ...target, bulletItems: [...target.bulletItems], sortOrder: current.sections.length }]
+            ? [
+                section,
+                {
+                  ...target,
+                  bulletItems: [...target.bulletItems],
+                  materials: target.materials.map((m) => ({ ...m, key: nextMaterialDraftKey() })),
+                  sortOrder: current.sections.length,
+                },
+              ]
             : [section]
         ),
       };
@@ -784,16 +898,20 @@ export default function ProposalDetailPage() {
 
   if (isLoading || !proposal) return <div className="text-slate-500">Loading…</div>;
 
+  const isLinked = proposal.customerId != null;
+
   return (
     <>
       <PageHeader
         title={proposal.projectName}
-        description={`${proposal.proposalNumber} · ${proposal.customer.name}`}
+        description={`${proposal.proposalNumber} · ${proposal.customer?.name ?? "Client not linked"}`}
         actions={
           <div className="flex items-center gap-2">
-            <Link href={`/customers/${proposal.customerId}`} className="btn btn-secondary">
-              Open Customer
-            </Link>
+            {isLinked && (
+              <Link href={`/customers/${proposal.customerId}`} className="btn btn-secondary">
+                Open Customer
+              </Link>
+            )}
             <button
               className="btn bg-rose-600 text-white hover:bg-rose-700"
               type="button"
@@ -814,6 +932,49 @@ export default function ProposalDetailPage() {
         </div>
       )}
 
+      {!isLinked && !isReadOnly && (
+        <div className="card p-4 mb-4 border border-slate-300 bg-slate-50 text-sm flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <span className="font-semibold">Client not linked.</span>{" "}
+            You can keep estimating this draft. A customer is only required before you send, approve, or convert it to a Job.
+          </div>
+          <button className="btn btn-secondary" type="button" onClick={() => setLinkClientOpen((v) => !v)}>
+            {linkClientOpen ? "Cancel" : "Link Client"}
+          </button>
+        </div>
+      )}
+
+      {linkClientOpen && !isLinked && (
+        <div className="card p-4 mb-4 relative">
+          <label className="label">Search existing customers</label>
+          <input
+            className="input"
+            placeholder="Search by name…"
+            value={linkClientSearch}
+            onChange={(e) => setLinkClientSearch(e.target.value)}
+          />
+          {linkClientSearch.trim().length > 0 && (
+            <div className="mt-2 border border-slate-200 rounded-md max-h-56 overflow-auto">
+              {linkClientCustomers.data?.length ? (
+                linkClientCustomers.data.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className="w-full text-left px-3 py-2 hover:bg-slate-50 text-sm border-b border-slate-100 last:border-0"
+                    disabled={linkClient.isPending}
+                    onClick={() => linkClient.mutate({ id, customerId: c.id })}
+                  >
+                    {c.name}
+                  </button>
+                ))
+              ) : (
+                <div className="px-3 py-2 text-sm text-slate-500">No matches. Create the customer from the Customers page, then search here.</div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="card p-5 mb-4">
         <div className="grid md:grid-cols-4 gap-3 items-start">
           <HeaderStat label="Proposal Number" value={proposal.proposalNumber} />
@@ -822,9 +983,16 @@ export default function ProposalDetailPage() {
           <div className="flex gap-2 md:justify-end">
             <button
               className="btn btn-secondary"
-              onClick={() => toast.info("Proposal-to-job conversion remains intentionally deferred.")}
+              disabled={isReadOnly || convertToJob.isPending}
+              onClick={() => {
+                if (!isLinked) {
+                  toast.error("Client not linked. Link a customer before converting to a Job.");
+                  return;
+                }
+                convertToJob.mutate({ id });
+              }}
             >
-              Convert to Job
+              {convertToJob.isPending ? "Converting…" : "Convert to Job"}
             </button>
           </div>
 
@@ -877,7 +1045,14 @@ export default function ProposalDetailPage() {
             <select
               className="input"
               value={form.status}
-              onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as (typeof PROPOSAL_STATUSES)[number] }))}
+              onChange={(e) => {
+                const next = e.target.value as (typeof PROPOSAL_STATUSES)[number];
+                if ((next === "sent" || next === "approved") && form.customerId <= 0) {
+                  toast.error("Client not linked. Link a customer before you can send or approve this proposal.");
+                  return;
+                }
+                setForm((f) => ({ ...f, status: next }));
+              }}
               disabled={isReadOnly}
             >
               {STATUS_OPTIONS.map((status) => (
@@ -1042,6 +1217,22 @@ export default function ProposalDetailPage() {
                           <FieldArea label="Description" value={section.description} onChange={(v) => setForm((f) => ({ ...f, sections: f.sections.map((item, i) => i === index ? { ...item, description: v } : item) }))} disabled={isReadOnly} className="md:col-span-2" />
                           <FieldArea label="Bullet Items" value={section.bulletItems.join("\n")} onChange={(v) => setForm((f) => ({ ...f, sections: f.sections.map((item, i) => i === index ? { ...item, bulletItems: v.split("\n") } : item) }))} disabled={isReadOnly} />
                           <FieldArea label="Notes" value={section.notes} onChange={(v) => setForm((f) => ({ ...f, sections: f.sections.map((item, i) => i === index ? { ...item, notes: v } : item) }))} disabled={isReadOnly} />
+                          <SectionMaterialsAndLabor
+                            value={{
+                              materials: section.materials,
+                              estimatedLaborHours: section.estimatedLaborHours,
+                              laborSellRateOverride: section.laborSellRateOverride,
+                              additionalCharges: section.additionalCharges,
+                            }}
+                            onChange={(next) =>
+                              setForm((f) => ({
+                                ...f,
+                                sections: f.sections.map((item, i) => (i === index ? { ...item, ...next } : item)),
+                              }))
+                            }
+                            disabled={isReadOnly}
+                            makeMaterialKey={nextMaterialDraftKey}
+                          />
                         </div>
                       )}
                     </div>
@@ -1072,6 +1263,19 @@ export default function ProposalDetailPage() {
                 </div>
               </div>
               <FieldNumber label="Final Proposal Price" value={form.totalAmount} onChange={(v) => setForm((f) => ({ ...f, totalAmount: v }))} disabled={isReadOnly} />
+              <div className="md:col-span-2 flex items-center justify-between text-sm bg-slate-50 border border-slate-200 rounded-md px-3 py-2">
+                <span>
+                  Computed from scope estimates (labor + materials + charges): <strong>{formatCurrency(computedScopesTotal)}</strong>
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={isReadOnly}
+                  onClick={() => setForm((f) => ({ ...f, totalAmount: computedScopesTotal }))}
+                >
+                  Use computed total
+                </button>
+              </div>
               <FieldArea label="Payment Schedule" value={form.paymentSchedule} onChange={(v) => setForm((f) => ({ ...f, paymentSchedule: v }))} disabled={isReadOnly} className="md:col-span-2" />
               <FieldArea label="Terms" value={form.termsAndConditions} onChange={(v) => setForm((f) => ({ ...f, termsAndConditions: v }))} disabled={isReadOnly} className="md:col-span-2" />
             </div>
@@ -1468,6 +1672,7 @@ function buildLegacySections(proposal: {
       bulletItems: [""],
       notes: "",
       sortOrder,
+      ...EMPTY_ESTIMATE_FIELDS,
     }));
 }
 

@@ -14,6 +14,8 @@ const itemInput = z.object({
   minStockLevel: z.number().min(0).default(0),
   supplier: z.string().optional(),
   sku: z.string().optional(),
+  /** Optional per-item override for the Proposal material markup default. */
+  defaultMarkupPercent: z.number().min(0).nullable().optional(),
 });
 
 export const inventoryRouter = router({

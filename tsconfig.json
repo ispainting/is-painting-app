@@ -20,5 +20,10 @@
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules",
+    "preview-expense-import.ts",
+    "production-expense-import.ts",
+    "production-time-entry-incremental-import.ts"
+  ]
 }

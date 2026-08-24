@@ -141,7 +141,11 @@ export default function ProposalsPage() {
                 <tr key={p.id} className="border-t border-slate-100 hover:bg-slate-50">
                   <td className="px-4 py-2 font-mono text-xs">{p.proposalNumber}</td>
                   <td className="px-4 py-2">
-                    <Link href={`/customers/${p.customerId}`} className="text-brand-700 hover:underline">{p.customer.name}</Link>
+                    {p.customer ? (
+                      <Link href={`/customers/${p.customerId}`} className="text-brand-700 hover:underline">{p.customer.name}</Link>
+                    ) : (
+                      <span className="badge bg-amber-100 text-amber-800">Client not linked</span>
+                    )}
                   </td>
                   <td className="px-4 py-2">
                     <Link href={`/proposals/${p.id}`} className="text-brand-700 hover:underline">{p.projectName}</Link>
@@ -181,7 +185,7 @@ export default function ProposalsPage() {
             <div className="text-lg font-semibold mb-3">Create Proposal</div>
             <div className="grid grid-cols-2 gap-3 overflow-y-auto pr-1 flex-1">
               <div className="col-span-2">
-                <label className="label">Customer</label>
+                <label className="label">Customer <span className="text-slate-500 font-normal">(optional — you can link a client later)</span></label>
                 <div className="relative">
                   <input
                     className="input"
@@ -257,10 +261,10 @@ export default function ProposalsPage() {
               <button className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button>
               <button
                 className="btn btn-primary"
-                disabled={create.isPending || !form.customerId || !form.projectName}
-                onClick={() => create.mutate(form)}
+                disabled={create.isPending || !form.projectName}
+                onClick={() => create.mutate({ ...form, customerId: form.customerId > 0 ? form.customerId : null })}
               >
-                {create.isPending ? "Creating…" : "Create Proposal"}
+                {create.isPending ? "Creating…" : form.customerId > 0 ? "Create Proposal" : "Start Draft (No Client Yet)"}
               </button>
             </div>
           </div>

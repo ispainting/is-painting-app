@@ -2,6 +2,8 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, adminProcedure } from "../trpc";
 import { nextNumber } from "@/lib/utils";
+import { computeScopeEstimate, buildJobEstimateFromProposal, resolveLaborSellRate, MissingLaborRateError, type ProposalEstimateSnapshot } from "@/lib/proposal-pricing";
+import { assertCustomerLinked, ProposalNotLinkedError } from "@/lib/proposal-guards";
 
 const ProposalStatusZ = z.enum(["draft", "ready", "sent", "viewed", "approved", "declined", "follow_up", "converted"]);
 const ProposalTemplateZ = z.enum([
@@ -62,6 +64,16 @@ const proposalPaintColorInput = z.object({
   sortOrder: z.number().int().default(0),
 });
 
+const proposalSectionMaterialInput = z.object({
+  inventoryItemId: z.number().nullable().optional(),
+  name: z.string().min(1),
+  unit: z.string().min(1),
+  quantity: z.number().min(0),
+  unitCost: z.number().min(0),
+  markupPercent: z.number().min(0).nullable().optional(),
+  sortOrder: z.number().int().default(0),
+});
+
 const proposalSectionInput = z.object({
   templateKey: z.string().optional(),
   title: z.string().min(1),
@@ -69,10 +81,18 @@ const proposalSectionInput = z.object({
   bulletItems: z.array(z.string()).default([]),
   notes: z.string().optional(),
   sortOrder: z.number().int().default(0),
+  // Labor-hour + material estimating. All optional so existing sections/scopes
+  // with no estimate still work exactly as before.
+  estimatedLaborHours: z.number().min(0).nullable().optional(),
+  laborSellRateOverride: z.number().min(0).nullable().optional(),
+  additionalCharges: z.number().min(0).default(0),
+  materials: z.array(proposalSectionMaterialInput).default([]),
 });
 
 const proposalInput = z.object({
-  customerId: z.number(),
+  // Nullable: a Proposal can be created and estimated as an unlinked draft
+  // ('Client not linked') before a Customer is selected or created.
+  customerId: z.number().nullable().optional(),
   projectName: z.string().min(1),
   address: z.string().optional(),
   city: z.string().optional(),
@@ -107,23 +127,76 @@ const proposalInput = z.object({
   paintColors: z.array(proposalPaintColorInput).default([]),
 });
 
-function sanitizeSections(sections: z.infer<typeof proposalSectionInput>[]) {
+function sanitizeSectionMaterials(materials: z.infer<typeof proposalSectionMaterialInput>[], defaultMarkupPercent: number) {
+  return materials
+    .filter((m) => m.name.trim().length > 0 && m.quantity > 0)
+    .map((m, index) => {
+      const markupPercent = m.markupPercent ?? defaultMarkupPercent;
+      const line = computeScopeEstimate({
+        materials: [{ quantity: m.quantity, unitCost: m.unitCost, markupPercent }],
+        labor: null,
+      }).materialLines[0];
+      return {
+        inventoryItemId: m.inventoryItemId ?? undefined,
+        nameSnapshot: m.name.trim(),
+        unitSnapshot: m.unit.trim() || "unit",
+        quantity: m.quantity,
+        unitCostSnapshot: m.unitCost,
+        markupPercentSnapshot: markupPercent,
+        materialCostSnapshot: line.materialCost,
+        sellingPriceSnapshot: line.sellingPrice,
+        sortOrder: m.sortOrder ?? index,
+      };
+    });
+}
+
+function sanitizeSections(
+  sections: z.infer<typeof proposalSectionInput>[],
+  defaults: { defaultLaborSellRate: number | null; defaultLaborCostRate: number | null; defaultMarkup: number }
+) {
   const rows = sections.filter((s) => {
     const title = s.title.trim();
     const description = (s.description || "").trim();
     const notes = (s.notes || "").trim();
     const bullets = s.bulletItems.filter((item) => item.trim().length > 0);
-    return title.length > 0 || description.length > 0 || notes.length > 0 || bullets.length > 0;
+    const hasMaterials = s.materials.some((m) => m.name.trim().length > 0 && m.quantity > 0);
+    const hasLabor = (s.estimatedLaborHours ?? 0) > 0;
+    return title.length > 0 || description.length > 0 || notes.length > 0 || bullets.length > 0 || hasMaterials || hasLabor;
   });
 
-  return rows.map((s, index) => ({
-    templateKey: s.templateKey?.trim() || undefined,
-    title: s.title.trim() || `Section ${index + 1}`,
-    description: (s.description || "").trim() || undefined,
-    bulletItems: s.bulletItems.map((item) => item.trim()).filter(Boolean),
-    notes: (s.notes || "").trim() || undefined,
-    sortOrder: s.sortOrder ?? index,
-  }));
+  return rows.map((s, index) => {
+    const sanitizedMaterials = sanitizeSectionMaterials(s.materials, defaults.defaultMarkup);
+    const sectionTitle = s.title.trim() || `Section ${index + 1}`;
+    const laborSellRate = resolveLaborSellRate(s.estimatedLaborHours ?? 0, s.laborSellRateOverride ?? null, defaults.defaultLaborSellRate, sectionTitle);
+    const laborCostRate = defaults.defaultLaborCostRate;
+    const estimate = computeScopeEstimate({
+      materials: sanitizedMaterials.map((m) => ({
+        quantity: Number(m.quantity),
+        unitCost: Number(m.unitCostSnapshot),
+        markupPercent: Number(m.markupPercentSnapshot),
+      })),
+      labor: s.estimatedLaborHours ? { hours: s.estimatedLaborHours, sellRate: laborSellRate as number, costRate: laborCostRate } : null,
+      additionalCharges: s.additionalCharges,
+    });
+
+  return {
+      templateKey: s.templateKey?.trim() || undefined,
+      title: sectionTitle,
+      description: (s.description || "").trim() || undefined,
+      bulletItems: s.bulletItems.map((item) => item.trim()).filter(Boolean),
+      notes: (s.notes || "").trim() || undefined,
+      sortOrder: s.sortOrder ?? index,
+      estimatedLaborHours: s.estimatedLaborHours ?? undefined,
+      laborSellRateSnapshot: s.estimatedLaborHours ? laborSellRate : undefined,
+      laborCostRateSnapshot: s.estimatedLaborHours ? laborCostRate ?? undefined : undefined,
+      laborSellingPriceSnapshot: estimate.laborSellingPrice,
+      materialsCostSnapshot: estimate.materialsCost,
+      materialsSellingPriceSnapshot: estimate.materialsSellingPrice,
+      additionalCharges: estimate.additionalCharges,
+      scopeSubtotalSnapshot: estimate.subtotal,
+      materials: sanitizedMaterials,
+    };
+  });
 }
 
 function sanitizeOptions(options: z.infer<typeof proposalOptionInput>[]) {
@@ -483,6 +556,40 @@ function createSection(
   };
 }
 
+async function getProposalPricingDefaults(ctx: { prisma: any }) {
+  const config = await ctx.prisma.config.findUnique({ where: { id: 1 } });
+  return {
+    defaultLaborSellRate: config?.defaultLaborSellRate != null ? Number(config.defaultLaborSellRate) : null,
+    defaultLaborCostRate: config?.defaultLaborCostRate != null ? Number(config.defaultLaborCostRate) : null,
+    defaultMarkup: config ? Number(config.defaultMarkup) : 27,
+  };
+}
+
+function guardCustomerLinkedForStatus(customerId: number | null, status: "sent" | "approved") {
+  try {
+    assertCustomerLinked({ customerId }, status === "sent" ? "send" : "approve");
+  } catch (error) {
+    if (error instanceof ProposalNotLinkedError) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
+    }
+    throw error;
+  }
+}
+
+function runSanitizeSections(
+  sections: z.infer<typeof proposalSectionInput>[],
+  defaults: { defaultLaborSellRate: number | null; defaultLaborCostRate: number | null; defaultMarkup: number }
+) {
+  try {
+    return sanitizeSections(sections, defaults);
+  } catch (error) {
+    if (error instanceof MissingLaborRateError) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
+    }
+    throw error;
+  }
+}
+
 export const proposalsRouter = router({
   list: protectedProcedure
     .input(z.object({ visibility: ProposalVisibilityZ.optional() }).optional())
@@ -515,7 +622,10 @@ export const proposalsRouter = router({
       where: { id: input.id },
       include: {
         customer: true,
-        sections: { orderBy: { sortOrder: "asc" } },
+        sections: {
+          orderBy: { sortOrder: "asc" },
+          include: { materials: { orderBy: { sortOrder: "asc" } } },
+        },
         options: { orderBy: { sortOrder: "asc" } },
         attachments: { orderBy: { sortOrder: "asc" } },
         paintColors: { orderBy: { sortOrder: "asc" } },
@@ -528,21 +638,25 @@ export const proposalsRouter = router({
   ),
 
   create: adminProcedure.input(proposalInput).mutation(async ({ ctx, input }) => {
-    const last = await ctx.prisma.proposal.findFirst({
-      orderBy: { id: "desc" },
-      select: { proposalNumber: true },
-    });
+    const [last, config] = await Promise.all([
+      ctx.prisma.proposal.findFirst({ orderBy: { id: "desc" }, select: { proposalNumber: true } }),
+      getProposalPricingDefaults(ctx),
+    ]);
+
+    if (input.status === "sent" || input.status === "approved") {
+      guardCustomerLinkedForStatus(input.customerId ?? null, input.status);
+    }
 
     const proposalNumber = nextNumber("PROP", last?.proposalNumber);
     const budgetTotal = input.materialsBudget + input.laborBudget + input.subcontractorBudget;
-    const sanitizedSections = sanitizeSections(input.sections);
+    const sanitizedSections = runSanitizeSections(input.sections, config);
     const sanitizedOptions = sanitizeOptions(input.options);
     const sanitizedAttachments = sanitizeAttachments(input.attachments);
     const sanitizedPaintColors = sanitizePaintColors(input.paintColors);
 
     return ctx.prisma.proposal.create({
       data: {
-        customerId: input.customerId,
+        customerId: input.customerId ?? null,
         projectName: input.projectName,
         address: input.address,
         city: input.city,
@@ -583,6 +697,29 @@ export const proposalsRouter = router({
                 bulletItems: s.bulletItems,
                 notes: s.notes,
                 sortOrder: s.sortOrder ?? index,
+                estimatedLaborHours: s.estimatedLaborHours,
+                laborSellRateSnapshot: s.laborSellRateSnapshot,
+                laborCostRateSnapshot: s.laborCostRateSnapshot,
+                laborSellingPriceSnapshot: s.laborSellingPriceSnapshot,
+                materialsCostSnapshot: s.materialsCostSnapshot,
+                materialsSellingPriceSnapshot: s.materialsSellingPriceSnapshot,
+                additionalCharges: s.additionalCharges,
+                scopeSubtotalSnapshot: s.scopeSubtotalSnapshot,
+                materials: s.materials.length
+                  ? {
+                      create: s.materials.map((m, mIndex) => ({
+                        inventoryItemId: m.inventoryItemId,
+                        nameSnapshot: m.nameSnapshot,
+                        unitSnapshot: m.unitSnapshot,
+                        quantity: m.quantity,
+                        unitCostSnapshot: m.unitCostSnapshot,
+                        markupPercentSnapshot: m.markupPercentSnapshot,
+                        materialCostSnapshot: m.materialCostSnapshot,
+                        sellingPriceSnapshot: m.sellingPriceSnapshot,
+                        sortOrder: m.sortOrder ?? mIndex,
+                      })),
+                    }
+                  : undefined,
               })),
             }
           : undefined,
@@ -626,7 +763,7 @@ export const proposalsRouter = router({
       },
       include: {
         customer: true,
-        sections: { orderBy: { sortOrder: "asc" } },
+        sections: { orderBy: { sortOrder: "asc" }, include: { materials: { orderBy: { sortOrder: "asc" } } } },
         options: { orderBy: { sortOrder: "asc" } },
         attachments: { orderBy: { sortOrder: "asc" } },
         paintColors: { orderBy: { sortOrder: "asc" } },
@@ -644,7 +781,7 @@ export const proposalsRouter = router({
     .mutation(async ({ ctx, input }) => {
       const current = await ctx.prisma.proposal.findUnique({
         where: { id: input.id },
-        select: { status: true, sentAt: true, approvedAt: true },
+        select: { status: true, sentAt: true, approvedAt: true, customerId: true },
       });
 
       if (!current) {
@@ -658,8 +795,14 @@ export const proposalsRouter = router({
         });
       }
 
+      const nextCustomerId = input.data.customerId ?? current.customerId ?? null;
+      if (input.data.status === "sent" || input.data.status === "approved") {
+        guardCustomerLinkedForStatus(nextCustomerId, input.data.status);
+      }
+
+      const config = await getProposalPricingDefaults(ctx);
       const budgetTotal = input.data.materialsBudget + input.data.laborBudget + input.data.subcontractorBudget;
-      const sanitizedSections = sanitizeSections(input.data.sections);
+      const sanitizedSections = runSanitizeSections(input.data.sections, config);
       const sanitizedOptions = sanitizeOptions(input.data.options);
       const sanitizedAttachments = sanitizeAttachments(input.data.attachments);
       const sanitizedPaintColors = sanitizePaintColors(input.data.paintColors);
@@ -667,7 +810,7 @@ export const proposalsRouter = router({
       return ctx.prisma.proposal.update({
         where: { id: input.id },
         data: {
-          customerId: input.data.customerId,
+          customerId: input.data.customerId ?? null,
           projectName: input.data.projectName,
           address: input.data.address,
           city: input.data.city,
@@ -707,6 +850,29 @@ export const proposalsRouter = router({
               bulletItems: s.bulletItems,
               notes: s.notes,
               sortOrder: s.sortOrder ?? index,
+              estimatedLaborHours: s.estimatedLaborHours,
+              laborSellRateSnapshot: s.laborSellRateSnapshot,
+              laborCostRateSnapshot: s.laborCostRateSnapshot,
+              laborSellingPriceSnapshot: s.laborSellingPriceSnapshot,
+              materialsCostSnapshot: s.materialsCostSnapshot,
+              materialsSellingPriceSnapshot: s.materialsSellingPriceSnapshot,
+              additionalCharges: s.additionalCharges,
+              scopeSubtotalSnapshot: s.scopeSubtotalSnapshot,
+              materials: s.materials.length
+                ? {
+                    create: s.materials.map((m, mIndex) => ({
+                      inventoryItemId: m.inventoryItemId,
+                      nameSnapshot: m.nameSnapshot,
+                      unitSnapshot: m.unitSnapshot,
+                      quantity: m.quantity,
+                      unitCostSnapshot: m.unitCostSnapshot,
+                      markupPercentSnapshot: m.markupPercentSnapshot,
+                      materialCostSnapshot: m.materialCostSnapshot,
+                      sellingPriceSnapshot: m.sellingPriceSnapshot,
+                      sortOrder: m.sortOrder ?? mIndex,
+                    })),
+                  }
+                : undefined,
             })),
           },
           options: {
@@ -746,7 +912,7 @@ export const proposalsRouter = router({
         },
         include: {
           customer: true,
-          sections: { orderBy: { sortOrder: "asc" } },
+          sections: { orderBy: { sortOrder: "asc" }, include: { materials: { orderBy: { sortOrder: "asc" } } } },
           options: { orderBy: { sortOrder: "asc" } },
           attachments: { orderBy: { sortOrder: "asc" } },
           paintColors: { orderBy: { sortOrder: "asc" } },
@@ -759,7 +925,7 @@ export const proposalsRouter = router({
     .mutation(async ({ ctx, input }) => {
       const current = await ctx.prisma.proposal.findUnique({
         where: { id: input.id },
-        select: { status: true, sentAt: true, approvedAt: true },
+        select: { status: true, sentAt: true, approvedAt: true, customerId: true },
       });
 
       if (!current) {
@@ -773,6 +939,10 @@ export const proposalsRouter = router({
         });
       }
 
+      if (input.status === "sent" || input.status === "approved") {
+        guardCustomerLinkedForStatus(current.customerId, input.status);
+      }
+
       return ctx.prisma.proposal.update({
         where: { id: input.id },
         data: {
@@ -782,6 +952,138 @@ export const proposalsRouter = router({
         },
       });
     }),
+
+  /** Search-and-select or create-and-link happens client side via customers.create; this only links an existing customer. */
+  linkClient: adminProcedure
+    .input(z.object({ id: z.number(), customerId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      const proposal = await ctx.prisma.proposal.findUnique({ where: { id: input.id }, select: { status: true } });
+      if (!proposal) throw new TRPCError({ code: "NOT_FOUND", message: "Proposal not found" });
+      if (proposal.status === "converted") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Converted proposals are read-only." });
+      }
+      const customer = await ctx.prisma.customer.findUnique({ where: { id: input.customerId }, select: { id: true } });
+      if (!customer) throw new TRPCError({ code: "NOT_FOUND", message: "Customer not found" });
+
+      return ctx.prisma.proposal.update({
+        where: { id: input.id },
+        data: { customerId: input.customerId },
+        include: { customer: true },
+      });
+    }),
+
+  /**
+   * Converts an accepted Proposal into a Job, preserving the estimated labor
+   * hours, estimated material quantities/costs, estimated labor/material
+   * selling prices, and proposal total exactly as saved — never recalculated
+   * from current catalog/settings. Reuses existing Job/JobMaterial/JobLabor
+   * columns, so no Job schema changes are required.
+   */
+  convertToJob: adminProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
+    const proposal = await ctx.prisma.proposal.findUnique({
+      where: { id: input.id },
+      include: { sections: { include: { materials: true }, orderBy: { sortOrder: "asc" } } },
+    });
+
+    if (!proposal) throw new TRPCError({ code: "NOT_FOUND", message: "Proposal not found" });
+    if (proposal.status === "converted") {
+      throw new TRPCError({ code: "FORBIDDEN", message: "This proposal has already been converted to a Job." });
+    }
+
+    try {
+      assertCustomerLinked({ customerId: proposal.customerId }, "convert_to_job");
+    } catch (error) {
+      if (error instanceof ProposalNotLinkedError) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
+      }
+      throw error;
+    }
+
+    const snapshot: ProposalEstimateSnapshot = {
+      scopes: proposal.sections.map((section) => ({
+        title: section.title,
+        laborHours: section.estimatedLaborHours != null ? Number(section.estimatedLaborHours) : null,
+        laborSellRate: section.laborSellRateSnapshot != null ? Number(section.laborSellRateSnapshot) : null,
+        laborSellingPrice: Number(section.laborSellingPriceSnapshot),
+        materials: section.materials.map((m) => ({
+          name: m.nameSnapshot,
+          unit: m.unitSnapshot,
+          quantity: Number(m.quantity),
+          unitCost: Number(m.unitCostSnapshot),
+          materialCost: Number(m.materialCostSnapshot),
+          sellingPrice: Number(m.sellingPriceSnapshot),
+        })),
+        materialsCost: Number(section.materialsCostSnapshot),
+        materialsSellingPrice: Number(section.materialsSellingPriceSnapshot),
+        additionalCharges: Number(section.additionalCharges),
+        subtotal: Number(section.scopeSubtotalSnapshot),
+      })),
+      totalAmount: Number(proposal.totalAmount),
+    };
+
+    const seed = buildJobEstimateFromProposal(snapshot);
+
+    const job = await ctx.prisma.$transaction(async (tx) => {
+      // Re-check + flip status inside the transaction so two concurrent conversions
+      // cannot both pass the earlier check and create duplicate Jobs.
+      const claimed = await tx.proposal.updateMany({
+        where: { id: proposal.id, status: { not: "converted" } },
+        data: { status: "converted" },
+      });
+      if (claimed.count !== 1) {
+        throw new TRPCError({ code: "CONFLICT", message: "This proposal has already been converted to a Job." });
+      }
+
+      const last = await tx.job.findFirst({ orderBy: { id: "desc" }, select: { estimateNumber: true } });
+      const estimateNumber = nextNumber("EST", last?.estimateNumber);
+
+      const createdJob = await tx.job.create({
+        data: {
+          customerId: proposal.customerId as number,
+          estimateNumber,
+          name: proposal.projectName,
+          address: proposal.address,
+          city: proposal.city,
+          state: proposal.state,
+          zipCode: proposal.zipCode,
+          scopeOfWork: proposal.scopeOfWork,
+          materialsBudget: seed.materialsBudget,
+          laborBudget: seed.laborBudget,
+          totalEstimate: seed.totalEstimate,
+          contractAmount: seed.totalEstimate,
+        },
+      });
+
+      if (seed.materials.length) {
+        await tx.jobMaterial.createMany({
+          data: seed.materials.map((m) => ({
+            jobId: createdJob.id,
+            name: m.name,
+            quantity: m.quantity,
+            unit: m.unit,
+            unitCost: m.unitCost,
+            totalCost: m.totalCost,
+          })),
+        });
+      }
+
+      if (seed.labor.length) {
+        await tx.jobLabor.createMany({
+          data: seed.labor.map((l) => ({
+            jobId: createdJob.id,
+            role: l.role,
+            hours: l.hours,
+            hourlyCost: l.hourlyCost,
+            totalCost: l.totalCost,
+          })),
+        });
+      }
+
+      return createdJob;
+    });
+
+    return job;
+  }),
 
   generateProposalDraft: adminProcedure
     .input(

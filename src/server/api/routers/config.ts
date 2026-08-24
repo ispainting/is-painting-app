@@ -24,6 +24,8 @@ export const configRouter = router({
         defaultTaxPercent: z.number().min(0).optional(),
         twilioFromNumber: z.string().optional(),
         reminderEmailTo: z.string().optional(),
+        defaultLaborSellRate: z.number().min(0).nullable().optional(),
+        defaultLaborCostRate: z.number().min(0).nullable().optional(),
       })
     )
     .mutation(({ ctx, input }) =>
