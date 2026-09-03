@@ -16,6 +16,8 @@ const itemInput = z.object({
   sku: z.string().optional(),
   /** Optional per-item override for the Proposal material markup default. */
   defaultMarkupPercent: z.number().min(0).nullable().optional(),
+  coveragePerUnit: z.number().positive().nullable().optional(),
+  defaultWastePercent: z.number().min(0).default(0),
 });
 
 export const inventoryRouter = router({

@@ -29,6 +29,7 @@ export default function SettingsPage() {
     defaultTaxPercent: 0,
     defaultLaborSellRate: "",
     defaultLaborCostRate: "",
+    defaultProposalPricingMethod: "GROSS_MARGIN" as "GROSS_MARGIN" | "MARKUP",
   });
 
   useEffect(() => {
@@ -46,6 +47,7 @@ export default function SettingsPage() {
         defaultTaxPercent: Number(data.defaultTaxPercent ?? 0),
         defaultLaborSellRate: data.defaultLaborSellRate == null ? "" : String(Number(data.defaultLaborSellRate)),
         defaultLaborCostRate: data.defaultLaborCostRate == null ? "" : String(Number(data.defaultLaborCostRate)),
+        defaultProposalPricingMethod: data.defaultProposalPricingMethod,
       });
     }
   }, [data]);
@@ -91,6 +93,17 @@ export default function SettingsPage() {
               value={form.defaultLaborCostRate}
               onChange={(e) => setForm((f) => ({ ...f, defaultLaborCostRate: e.target.value }))}
             />
+          </div>
+          <div>
+            <label className="label">Default proposal pricing method</label>
+            <select
+              className="input"
+              value={form.defaultProposalPricingMethod}
+              onChange={(e) => setForm((f) => ({ ...f, defaultProposalPricingMethod: e.target.value as "GROSS_MARGIN" | "MARKUP" }))}
+            >
+              <option value="GROSS_MARGIN">Gross margin</option>
+              <option value="MARKUP">Markup</option>
+            </select>
           </div>
         </div>
         <button

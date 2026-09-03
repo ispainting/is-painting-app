@@ -2,7 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, adminProcedure } from "../trpc";
 import { nextNumber } from "@/lib/utils";
-import { computeScopeEstimate, buildJobEstimateFromProposal, resolveLaborSellRate, MissingLaborRateError, type ProposalEstimateSnapshot } from "@/lib/proposal-pricing";
+import { computeScopeEstimate, buildJobEstimateFromProposal, computeProposalEstimate, calculateMaterialQuantitySnapshot, resolveLaborSellRate, MissingLaborRateError, round2, type ProposalEstimateSnapshot } from "@/lib/proposal-pricing";
 import { assertCustomerLinked, ProposalNotLinkedError } from "@/lib/proposal-guards";
 
 const ProposalStatusZ = z.enum(["draft", "ready", "sent", "viewed", "approved", "declined", "follow_up", "converted"]);
@@ -35,6 +35,19 @@ const ProposalCategoryZ = z.enum([
   "custom",
 ]);
 const ProposalVisibilityZ = z.enum(["active", "archived", "all"]);
+const ProductionRateBasisZ = z.enum(["SQFT_PER_HOUR", "LINEAR_FT_PER_HOUR", "HOURS_PER_ITEM", "FIXED_HOURS"]);
+const ProductionRateCategoryZ = z.enum(["INTERIOR", "EXTERIOR", "PREP", "SPECIALTY"]);
+const ProposalPricingMethodZ = z.enum(["GROSS_MARGIN", "MARKUP"]);
+const ESTIMATE_ENGINE_VERSION = 1;
+
+type ProposalPricingDefaults = {
+  defaultLaborSellRate: number | null;
+  defaultLaborCostRate: number | null;
+  defaultMarkup: number;
+  defaultWcPercent: number;
+  defaultOverhead: number;
+  defaultProposalPricingMethod: "GROSS_MARGIN" | "MARKUP";
+};
 
 const proposalOptionInput = z.object({
   title: z.string().min(1),
@@ -71,6 +84,10 @@ const proposalSectionMaterialInput = z.object({
   quantity: z.number().min(0),
   unitCost: z.number().min(0),
   markupPercent: z.number().min(0).nullable().optional(),
+  coveragePerUnit: z.number().positive().nullable().optional(),
+  wastePercent: z.number().min(0).default(0),
+  calculatedQuantity: z.number().min(0).nullable().optional(),
+  adjustedQuantity: z.number().min(0).nullable().optional(),
   sortOrder: z.number().int().default(0),
 });
 
@@ -87,13 +104,25 @@ const proposalSectionInput = z.object({
   laborSellRateOverride: z.number().min(0).nullable().optional(),
   additionalCharges: z.number().min(0).default(0),
   materials: z.array(proposalSectionMaterialInput).default([]),
+  areaName: z.string().optional(),
+  measurementType: z.string().optional(),
+  measurementValue: z.number().min(0).nullable().optional(),
+  coats: z.number().int().min(1).nullable().optional(),
+  prepLevel: z.string().optional(),
+  productionRateId: z.number().int().positive().nullable().optional(),
+  calculatedLaborHours: z.number().min(0).nullable().optional(),
+  adjustedLaborHours: z.number().min(0).nullable().optional(),
+  directLaborCostRate: z.number().min(0).nullable().optional(),
+  customerDisplayLabel: z.string().optional(),
+  priceVisibility: z.enum(["SHOW", "HIDE"]).default("SHOW"),
+  groupIntoAreaPrice: z.boolean().default(false),
 });
 
 const proposalInput = z.object({
   // Nullable: a Proposal can be created and estimated as an unlinked draft
   // ('Client not linked') before a Customer is selected or created.
   customerId: z.number().nullable().optional(),
-  projectName: z.string().min(1),
+  projectName: z.string().optional(),
   address: z.string().optional(),
   city: z.string().optional(),
   state: z.string().optional(),
@@ -119,6 +148,14 @@ const proposalInput = z.object({
   laborBudget: z.number().min(0).default(0),
   subcontractorBudget: z.number().min(0).default(0),
   totalAmount: z.number().min(0).optional(),
+  estimatePricingMethod: ProposalPricingMethodZ.nullable().optional(),
+  estimateTargetMarginPercent: z.number().min(0).max(99.99).nullable().optional(),
+  estimateTargetMarkupPercent: z.number().min(0).nullable().optional(),
+  estimatePriceOverride: z.number().min(0).nullable().optional(),
+  estimateSubcontractorCost: z.number().min(0).default(0),
+  estimateEquipmentCost: z.number().min(0).default(0),
+  estimateLogisticsCost: z.number().min(0).default(0),
+  estimateMiscProjectCost: z.number().min(0).default(0),
   expectedStartDate: z.date().nullable().optional(),
   expectedEndDate: z.date().nullable().optional(),
   sections: z.array(proposalSectionInput).default([]),
@@ -127,21 +164,38 @@ const proposalInput = z.object({
   paintColors: z.array(proposalPaintColorInput).default([]),
 });
 
-function sanitizeSectionMaterials(materials: z.infer<typeof proposalSectionMaterialInput>[], defaultMarkupPercent: number) {
+export function sanitizeSectionMaterials(
+  materials: z.infer<typeof proposalSectionMaterialInput>[],
+  defaultMarkupPercent: number,
+  measurementValue: number | null | undefined,
+  coats: number | null | undefined
+) {
   return materials
     .filter((m) => m.name.trim().length > 0 && m.quantity > 0)
     .map((m, index) => {
       const markupPercent = m.markupPercent ?? defaultMarkupPercent;
+      const quantities = calculateMaterialQuantitySnapshot({
+        measurement: measurementValue ?? 0,
+        coats: coats ?? 0,
+        coveragePerUnit: m.coveragePerUnit ?? null,
+        wastePercent: m.wastePercent,
+        adjustedQuantity: m.adjustedQuantity,
+      });
+      const effectiveQuantity = quantities.effectiveQuantity ?? m.quantity;
       const line = computeScopeEstimate({
-        materials: [{ quantity: m.quantity, unitCost: m.unitCost, markupPercent }],
+        materials: [{ quantity: effectiveQuantity, unitCost: m.unitCost, markupPercent }],
         labor: null,
       }).materialLines[0];
       return {
         inventoryItemId: m.inventoryItemId ?? undefined,
         nameSnapshot: m.name.trim(),
         unitSnapshot: m.unit.trim() || "unit",
-        quantity: m.quantity,
+        quantity: effectiveQuantity,
+        calculatedQuantity: m.calculatedQuantity ?? quantities.calculatedQuantity,
+        adjustedQuantity: m.adjustedQuantity,
         unitCostSnapshot: m.unitCost,
+        coveragePerUnitSnapshot: m.coveragePerUnit ?? undefined,
+        wastePercentSnapshot: m.wastePercent,
         markupPercentSnapshot: markupPercent,
         materialCostSnapshot: line.materialCost,
         sellingPriceSnapshot: line.sellingPrice,
@@ -150,9 +204,9 @@ function sanitizeSectionMaterials(materials: z.infer<typeof proposalSectionMater
     });
 }
 
-function sanitizeSections(
+export function sanitizeSections(
   sections: z.infer<typeof proposalSectionInput>[],
-  defaults: { defaultLaborSellRate: number | null; defaultLaborCostRate: number | null; defaultMarkup: number }
+  defaults: ProposalPricingDefaults
 ) {
   const rows = sections.filter((s) => {
     const title = s.title.trim();
@@ -165,30 +219,54 @@ function sanitizeSections(
   });
 
   return rows.map((s, index) => {
-    const sanitizedMaterials = sanitizeSectionMaterials(s.materials, defaults.defaultMarkup);
+    const sanitizedMaterials = sanitizeSectionMaterials(s.materials, defaults.defaultMarkup, s.measurementValue, s.coats);
     const sectionTitle = s.title.trim() || `Section ${index + 1}`;
-    const laborSellRate = resolveLaborSellRate(s.estimatedLaborHours ?? 0, s.laborSellRateOverride ?? null, defaults.defaultLaborSellRate, sectionTitle);
-    const laborCostRate = defaults.defaultLaborCostRate;
+    const effectiveLaborHours = s.adjustedLaborHours ?? s.calculatedLaborHours ?? s.estimatedLaborHours ?? null;
+    const laborSellRate = resolveLaborSellRate(effectiveLaborHours ?? 0, s.laborSellRateOverride ?? null, defaults.defaultLaborSellRate, sectionTitle);
+    const directLaborCostRate = s.directLaborCostRate ?? defaults.defaultLaborCostRate;
     const estimate = computeScopeEstimate({
       materials: sanitizedMaterials.map((m) => ({
         quantity: Number(m.quantity),
         unitCost: Number(m.unitCostSnapshot),
         markupPercent: Number(m.markupPercentSnapshot),
       })),
-      labor: s.estimatedLaborHours ? { hours: s.estimatedLaborHours, sellRate: laborSellRate as number, costRate: laborCostRate } : null,
+      labor: effectiveLaborHours ? { hours: effectiveLaborHours, sellRate: laborSellRate as number, costRate: directLaborCostRate } : null,
       additionalCharges: s.additionalCharges,
     });
+    const directLaborCost = effectiveLaborHours && directLaborCostRate != null ? round2(effectiveLaborHours * directLaborCostRate) : 0;
+    const wcCost = round2(directLaborCost * (defaults.defaultWcPercent / 100));
 
-  return {
+    return {
       templateKey: s.templateKey?.trim() || undefined,
       title: sectionTitle,
       description: (s.description || "").trim() || undefined,
       bulletItems: s.bulletItems.map((item) => item.trim()).filter(Boolean),
       notes: (s.notes || "").trim() || undefined,
       sortOrder: s.sortOrder ?? index,
-      estimatedLaborHours: s.estimatedLaborHours ?? undefined,
-      laborSellRateSnapshot: s.estimatedLaborHours ? laborSellRate : undefined,
-      laborCostRateSnapshot: s.estimatedLaborHours ? laborCostRate ?? undefined : undefined,
+      areaName: s.areaName?.trim() || undefined,
+      measurementType: s.measurementType?.trim() || undefined,
+      measurementValue: s.measurementValue ?? undefined,
+      coats: s.coats ?? undefined,
+      prepLevel: s.prepLevel?.trim() || undefined,
+      productionRateId: s.productionRateId ?? undefined,
+      calculatedLaborHours: s.calculatedLaborHours ?? undefined,
+      adjustedLaborHours: s.adjustedLaborHours ?? undefined,
+      effectiveLaborHours: effectiveLaborHours ?? undefined,
+      directLaborCostRateSnapshot: directLaborCostRate ?? undefined,
+      wcPercentSnapshot: defaults.defaultWcPercent,
+      wcCostSnapshot: wcCost,
+      otherLaborBurdenPercentSnapshot: 0,
+      otherLaborBurdenCostSnapshot: 0,
+      directLaborCostSnapshot: directLaborCost,
+      laborBurdenCostSnapshot: wcCost,
+      loadedLaborCostSnapshot: round2(directLaborCost + wcCost),
+      sectionSellingPriceSnapshot: estimate.subtotal,
+      customerDisplayLabel: s.customerDisplayLabel?.trim() || undefined,
+      priceVisibility: s.priceVisibility,
+      groupIntoAreaPrice: s.groupIntoAreaPrice,
+      estimatedLaborHours: effectiveLaborHours ?? undefined,
+      laborSellRateSnapshot: effectiveLaborHours ? laborSellRate : undefined,
+      laborCostRateSnapshot: effectiveLaborHours ? directLaborCostRate ?? undefined : undefined,
       laborSellingPriceSnapshot: estimate.laborSellingPrice,
       materialsCostSnapshot: estimate.materialsCost,
       materialsSellingPriceSnapshot: estimate.materialsSellingPrice,
@@ -562,6 +640,9 @@ async function getProposalPricingDefaults(ctx: { prisma: any }) {
     defaultLaborSellRate: config?.defaultLaborSellRate != null ? Number(config.defaultLaborSellRate) : null,
     defaultLaborCostRate: config?.defaultLaborCostRate != null ? Number(config.defaultLaborCostRate) : null,
     defaultMarkup: config ? Number(config.defaultMarkup) : 27,
+    defaultWcPercent: config ? Number(config.defaultWcPercent) : 3.5,
+    defaultOverhead: config ? Number(config.defaultOverhead) : 12,
+    defaultProposalPricingMethod: config?.defaultProposalPricingMethod ?? "GROSS_MARGIN",
   };
 }
 
@@ -578,7 +659,7 @@ function guardCustomerLinkedForStatus(customerId: number | null, status: "sent" 
 
 function runSanitizeSections(
   sections: z.infer<typeof proposalSectionInput>[],
-  defaults: { defaultLaborSellRate: number | null; defaultLaborCostRate: number | null; defaultMarkup: number }
+  defaults: ProposalPricingDefaults
 ) {
   try {
     return sanitizeSections(sections, defaults);
@@ -588,6 +669,211 @@ function runSanitizeSections(
     }
     throw error;
   }
+}
+
+export function buildAuthoritativeProposalEstimate(
+  sections: ReturnType<typeof sanitizeSections>,
+  input: z.infer<typeof proposalInput>,
+  defaults: ProposalPricingDefaults
+) {
+  const hasEstimatorData = sections.some((section) =>
+    section.measurementValue != null || section.productionRateId != null || section.calculatedLaborHours != null || section.adjustedLaborHours != null || section.materials.length > 0
+  );
+  if (!hasEstimatorData) return null;
+
+  const laborRateMissing = sections.some((section) =>
+    (section.effectiveLaborHours ?? 0) > 0 && section.directLaborCostRateSnapshot == null && defaults.defaultLaborCostRate == null
+  );
+  if (laborRateMissing) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Set a direct labor cost rate in Settings or on each work item before saving a labor estimate." });
+  }
+
+  const method = input.estimatePricingMethod ?? defaults.defaultProposalPricingMethod;
+  const estimate = computeProposalEstimate({
+    workItems: sections.map((section) => ({
+      calculatedLaborHours: Number(section.calculatedLaborHours ?? 0),
+      adjustedLaborHours: section.adjustedLaborHours == null ? null : Number(section.adjustedLaborHours),
+      directLaborCostRate: Number(section.directLaborCostRateSnapshot ?? defaults.defaultLaborCostRate ?? 0),
+      materialsCost: Number(section.materialsCostSnapshot ?? 0),
+    })),
+    wcPercent: defaults.defaultWcPercent,
+    overheadPercent: defaults.defaultOverhead,
+    subcontractorCost: input.estimateSubcontractorCost,
+    equipmentCost: input.estimateEquipmentCost,
+    logisticsCost: input.estimateLogisticsCost,
+    miscDirectCost: input.estimateMiscProjectCost,
+    pricingMethod: method,
+    targetMarginPercent: input.estimateTargetMarginPercent,
+    targetMarkupPercent: input.estimateTargetMarkupPercent,
+    manualPriceOverride: input.estimatePriceOverride,
+  });
+
+  return { method, estimate };
+}
+
+export function buildProposalEstimatePersistence(
+  authoritative: ReturnType<typeof buildAuthoritativeProposalEstimate>,
+  input: z.infer<typeof proposalInput>,
+  defaults: ProposalPricingDefaults
+) {
+  if (!authoritative) {
+    return {
+      estimateEngineVersion: null,
+      estimatePricingMethod: null,
+      estimateTargetMarginPercent: null,
+      estimateTargetMarkupPercent: null,
+      estimateOverheadPercentSnapshot: null,
+      estimateOverheadDollars: null,
+      estimateRecommendedSellingPrice: null,
+      estimatePriceOverride: null,
+      estimateFinalProposalPrice: null,
+      estimateDirectLaborCost: null,
+      estimateLaborBurdenCost: null,
+      estimateLoadedLaborCost: null,
+      estimateMaterialCost: null,
+      estimateSubcontractorCost: null,
+      estimateEquipmentCost: null,
+      estimateLogisticsCost: null,
+      estimateMiscProjectCost: null,
+      estimateDirectProjectCost: null,
+      estimateTrueJobCost: null,
+      estimateGrossProfitDollars: null,
+      estimateGrossMarginPercent: null,
+      estimateEffectiveSalesRate: null,
+      estimatePainterHoursTotal: null,
+    };
+  }
+
+  const { method, estimate } = authoritative;
+  return {
+    estimateEngineVersion: ESTIMATE_ENGINE_VERSION,
+    estimatePricingMethod: method,
+    estimateTargetMarginPercent: method === "GROSS_MARGIN" ? input.estimateTargetMarginPercent ?? null : null,
+    estimateTargetMarkupPercent: method === "MARKUP" ? input.estimateTargetMarkupPercent ?? null : null,
+    estimateOverheadPercentSnapshot: defaults.defaultOverhead,
+    estimateOverheadDollars: estimate.overheadDollars,
+    estimateRecommendedSellingPrice: estimate.recommendedSellingPrice,
+    estimatePriceOverride: input.estimatePriceOverride ?? null,
+    estimateFinalProposalPrice: estimate.finalProposalPrice,
+    estimateDirectLaborCost: estimate.directLaborCost,
+    estimateLaborBurdenCost: estimate.laborBurdenCost,
+    estimateLoadedLaborCost: estimate.loadedLaborCost,
+    estimateMaterialCost: estimate.materialCost,
+    estimateSubcontractorCost: estimate.subcontractorCost,
+    estimateEquipmentCost: estimate.equipmentCost,
+    estimateLogisticsCost: estimate.logisticsCost,
+    estimateMiscProjectCost: estimate.miscDirectCost,
+    estimateDirectProjectCost: estimate.directProjectCost,
+    estimateTrueJobCost: estimate.trueJobCost,
+    estimateGrossProfitDollars: estimate.grossProfitDollars,
+    estimateGrossMarginPercent: estimate.grossMarginPercent,
+    estimateEffectiveSalesRate: estimate.effectiveSalesRate,
+    estimatePainterHoursTotal: estimate.totalPainterHours,
+  };
+}
+
+function buildSectionCreateData(s: ReturnType<typeof sanitizeSections>[number], index: number) {
+  return {
+    templateKey: s.templateKey,
+    title: s.title,
+    description: s.description,
+    bulletItems: s.bulletItems,
+    notes: s.notes,
+    sortOrder: s.sortOrder ?? index,
+    estimatedLaborHours: s.estimatedLaborHours,
+    laborSellRateSnapshot: s.laborSellRateSnapshot,
+    laborCostRateSnapshot: s.laborCostRateSnapshot,
+    laborSellingPriceSnapshot: s.laborSellingPriceSnapshot,
+    materialsCostSnapshot: s.materialsCostSnapshot,
+    materialsSellingPriceSnapshot: s.materialsSellingPriceSnapshot,
+    additionalCharges: s.additionalCharges,
+    scopeSubtotalSnapshot: s.scopeSubtotalSnapshot,
+    areaName: s.areaName,
+    measurementType: s.measurementType,
+    measurementValue: s.measurementValue,
+    coats: s.coats,
+    prepLevel: s.prepLevel,
+    productionRateId: s.productionRateId,
+    calculatedLaborHours: s.calculatedLaborHours,
+    adjustedLaborHours: s.adjustedLaborHours,
+    effectiveLaborHours: s.effectiveLaborHours,
+    directLaborCostRateSnapshot: s.directLaborCostRateSnapshot,
+    wcPercentSnapshot: s.wcPercentSnapshot,
+    wcCostSnapshot: s.wcCostSnapshot,
+    otherLaborBurdenPercentSnapshot: s.otherLaborBurdenPercentSnapshot,
+    otherLaborBurdenCostSnapshot: s.otherLaborBurdenCostSnapshot,
+    directLaborCostSnapshot: s.directLaborCostSnapshot,
+    laborBurdenCostSnapshot: s.laborBurdenCostSnapshot,
+    loadedLaborCostSnapshot: s.loadedLaborCostSnapshot,
+    sectionSellingPriceSnapshot: s.sectionSellingPriceSnapshot,
+    customerDisplayLabel: s.customerDisplayLabel,
+    priceVisibility: s.priceVisibility,
+    groupIntoAreaPrice: s.groupIntoAreaPrice,
+    materials: s.materials.length
+      ? {
+          create: s.materials.map((m, mIndex) => ({
+            inventoryItemId: m.inventoryItemId,
+            nameSnapshot: m.nameSnapshot,
+            unitSnapshot: m.unitSnapshot,
+            quantity: m.quantity,
+            calculatedQuantity: m.calculatedQuantity,
+            adjustedQuantity: m.adjustedQuantity,
+            unitCostSnapshot: m.unitCostSnapshot,
+            coveragePerUnitSnapshot: m.coveragePerUnitSnapshot,
+            wastePercentSnapshot: m.wastePercentSnapshot,
+            markupPercentSnapshot: m.markupPercentSnapshot,
+            materialCostSnapshot: m.materialCostSnapshot,
+            sellingPriceSnapshot: m.sellingPriceSnapshot,
+            sortOrder: m.sortOrder ?? mIndex,
+          })),
+        }
+      : undefined,
+  };
+}
+
+export function buildProposalEstimateSnapshotFromSavedProposal(proposal: {
+  totalAmount: unknown;
+  estimateFinalProposalPrice?: unknown;
+  sections: Array<{
+    title: string;
+    estimatedLaborHours: unknown;
+    laborSellRateSnapshot: unknown;
+    laborSellingPriceSnapshot: unknown;
+    materialsCostSnapshot: unknown;
+    materialsSellingPriceSnapshot: unknown;
+    additionalCharges: unknown;
+    scopeSubtotalSnapshot: unknown;
+    materials: Array<{
+      nameSnapshot: string;
+      unitSnapshot: string;
+      quantity: unknown;
+      unitCostSnapshot: unknown;
+      materialCostSnapshot: unknown;
+      sellingPriceSnapshot: unknown;
+    }>;
+  }>;
+}): ProposalEstimateSnapshot {
+  return {
+    scopes: proposal.sections.map((section) => ({
+      title: section.title,
+      laborHours: section.estimatedLaborHours != null ? Number(section.estimatedLaborHours) : null,
+      laborSellRate: section.laborSellRateSnapshot != null ? Number(section.laborSellRateSnapshot) : null,
+      laborSellingPrice: Number(section.laborSellingPriceSnapshot),
+      materials: section.materials.map((m) => ({
+        name: m.nameSnapshot,
+        unit: m.unitSnapshot,
+        quantity: Number(m.quantity),
+        unitCost: Number(m.unitCostSnapshot),
+        materialCost: Number(m.materialCostSnapshot),
+        sellingPrice: Number(m.sellingPriceSnapshot),
+      })),
+      materialsCost: Number(section.materialsCostSnapshot),
+      materialsSellingPrice: Number(section.materialsSellingPriceSnapshot),
+      additionalCharges: Number(section.additionalCharges),
+      subtotal: Number(section.scopeSubtotalSnapshot),
+    })),
+    totalAmount: Number(proposal.estimateFinalProposalPrice ?? proposal.totalAmount),
+  };
 }
 
 export const proposalsRouter = router({
@@ -653,11 +939,16 @@ export const proposalsRouter = router({
     const sanitizedOptions = sanitizeOptions(input.options);
     const sanitizedAttachments = sanitizeAttachments(input.attachments);
     const sanitizedPaintColors = sanitizePaintColors(input.paintColors);
+    const authoritativeEstimate = buildAuthoritativeProposalEstimate(sanitizedSections, input, config);
+    const estimatePersistence = buildProposalEstimatePersistence(authoritativeEstimate, input, config);
+
+    const normalizedProjectName = input.projectName?.trim() || "Untitled Proposal";
+    const finalTotalAmount = authoritativeEstimate?.estimate.finalProposalPrice ?? input.totalAmount ?? budgetTotal;
 
     return ctx.prisma.proposal.create({
       data: {
         customerId: input.customerId ?? null,
-        projectName: input.projectName,
+        projectName: normalizedProjectName,
         address: input.address,
         city: input.city,
         state: input.state,
@@ -683,44 +974,15 @@ export const proposalsRouter = router({
         laborBudget: input.laborBudget,
         subcontractorBudget: input.subcontractorBudget,
         proposalNumber,
-        totalAmount: input.totalAmount ?? budgetTotal,
+        totalAmount: finalTotalAmount,
+        ...estimatePersistence,
         expectedStartDate: input.expectedStartDate ?? null,
         expectedEndDate: input.expectedEndDate ?? null,
         sentAt: input.status === "sent" ? new Date() : null,
         approvedAt: input.status === "approved" ? new Date() : null,
         sections: sanitizedSections.length
           ? {
-              create: sanitizedSections.map((s, index) => ({
-                templateKey: s.templateKey,
-                title: s.title,
-                description: s.description,
-                bulletItems: s.bulletItems,
-                notes: s.notes,
-                sortOrder: s.sortOrder ?? index,
-                estimatedLaborHours: s.estimatedLaborHours,
-                laborSellRateSnapshot: s.laborSellRateSnapshot,
-                laborCostRateSnapshot: s.laborCostRateSnapshot,
-                laborSellingPriceSnapshot: s.laborSellingPriceSnapshot,
-                materialsCostSnapshot: s.materialsCostSnapshot,
-                materialsSellingPriceSnapshot: s.materialsSellingPriceSnapshot,
-                additionalCharges: s.additionalCharges,
-                scopeSubtotalSnapshot: s.scopeSubtotalSnapshot,
-                materials: s.materials.length
-                  ? {
-                      create: s.materials.map((m, mIndex) => ({
-                        inventoryItemId: m.inventoryItemId,
-                        nameSnapshot: m.nameSnapshot,
-                        unitSnapshot: m.unitSnapshot,
-                        quantity: m.quantity,
-                        unitCostSnapshot: m.unitCostSnapshot,
-                        markupPercentSnapshot: m.markupPercentSnapshot,
-                        materialCostSnapshot: m.materialCostSnapshot,
-                        sellingPriceSnapshot: m.sellingPriceSnapshot,
-                        sortOrder: m.sortOrder ?? mIndex,
-                      })),
-                    }
-                  : undefined,
-              })),
+              create: sanitizedSections.map(buildSectionCreateData),
             }
           : undefined,
         options: sanitizedOptions.length
@@ -806,6 +1068,9 @@ export const proposalsRouter = router({
       const sanitizedOptions = sanitizeOptions(input.data.options);
       const sanitizedAttachments = sanitizeAttachments(input.data.attachments);
       const sanitizedPaintColors = sanitizePaintColors(input.data.paintColors);
+      const authoritativeEstimate = buildAuthoritativeProposalEstimate(sanitizedSections, input.data, config);
+      const estimatePersistence = buildProposalEstimatePersistence(authoritativeEstimate, input.data, config);
+      const finalTotalAmount = authoritativeEstimate?.estimate.finalProposalPrice ?? input.data.totalAmount ?? budgetTotal;
 
       return ctx.prisma.proposal.update({
         where: { id: input.id },
@@ -836,44 +1101,15 @@ export const proposalsRouter = router({
           materialsBudget: input.data.materialsBudget,
           laborBudget: input.data.laborBudget,
           subcontractorBudget: input.data.subcontractorBudget,
-          totalAmount: input.data.totalAmount ?? budgetTotal,
+          totalAmount: finalTotalAmount,
+          ...estimatePersistence,
           expectedStartDate: input.data.expectedStartDate ?? null,
           expectedEndDate: input.data.expectedEndDate ?? null,
           sentAt: input.data.status === "sent" && !current.sentAt ? new Date() : current.sentAt,
           approvedAt: input.data.status === "approved" && !current.approvedAt ? new Date() : current.approvedAt,
           sections: {
             deleteMany: {},
-            create: sanitizedSections.map((s, index) => ({
-              templateKey: s.templateKey,
-              title: s.title,
-              description: s.description,
-              bulletItems: s.bulletItems,
-              notes: s.notes,
-              sortOrder: s.sortOrder ?? index,
-              estimatedLaborHours: s.estimatedLaborHours,
-              laborSellRateSnapshot: s.laborSellRateSnapshot,
-              laborCostRateSnapshot: s.laborCostRateSnapshot,
-              laborSellingPriceSnapshot: s.laborSellingPriceSnapshot,
-              materialsCostSnapshot: s.materialsCostSnapshot,
-              materialsSellingPriceSnapshot: s.materialsSellingPriceSnapshot,
-              additionalCharges: s.additionalCharges,
-              scopeSubtotalSnapshot: s.scopeSubtotalSnapshot,
-              materials: s.materials.length
-                ? {
-                    create: s.materials.map((m, mIndex) => ({
-                      inventoryItemId: m.inventoryItemId,
-                      nameSnapshot: m.nameSnapshot,
-                      unitSnapshot: m.unitSnapshot,
-                      quantity: m.quantity,
-                      unitCostSnapshot: m.unitCostSnapshot,
-                      markupPercentSnapshot: m.markupPercentSnapshot,
-                      materialCostSnapshot: m.materialCostSnapshot,
-                      sellingPriceSnapshot: m.sellingPriceSnapshot,
-                      sortOrder: m.sortOrder ?? mIndex,
-                    })),
-                  }
-                : undefined,
-            })),
+            create: sanitizedSections.map(buildSectionCreateData),
           },
           options: {
             deleteMany: {},
@@ -999,27 +1235,7 @@ export const proposalsRouter = router({
       throw error;
     }
 
-    const snapshot: ProposalEstimateSnapshot = {
-      scopes: proposal.sections.map((section) => ({
-        title: section.title,
-        laborHours: section.estimatedLaborHours != null ? Number(section.estimatedLaborHours) : null,
-        laborSellRate: section.laborSellRateSnapshot != null ? Number(section.laborSellRateSnapshot) : null,
-        laborSellingPrice: Number(section.laborSellingPriceSnapshot),
-        materials: section.materials.map((m) => ({
-          name: m.nameSnapshot,
-          unit: m.unitSnapshot,
-          quantity: Number(m.quantity),
-          unitCost: Number(m.unitCostSnapshot),
-          materialCost: Number(m.materialCostSnapshot),
-          sellingPrice: Number(m.sellingPriceSnapshot),
-        })),
-        materialsCost: Number(section.materialsCostSnapshot),
-        materialsSellingPrice: Number(section.materialsSellingPriceSnapshot),
-        additionalCharges: Number(section.additionalCharges),
-        subtotal: Number(section.scopeSubtotalSnapshot),
-      })),
-      totalAmount: Number(proposal.totalAmount),
-    };
+    const snapshot = buildProposalEstimateSnapshotFromSavedProposal(proposal);
 
     const seed = buildJobEstimateFromProposal(snapshot);
 
