@@ -26,6 +26,7 @@ export const configRouter = router({
         reminderEmailTo: z.string().optional(),
         defaultLaborSellRate: z.number().min(0).nullable().optional(),
         defaultLaborCostRate: z.number().min(0).nullable().optional(),
+        defaultProposalPricingMethod: z.enum(["GROSS_MARGIN", "MARKUP"]).optional(),
       })
     )
     .mutation(({ ctx, input }) =>

@@ -8,6 +8,12 @@ import {
   resolveLaborSellRate,
   MissingLaborRateError,
   round2,
+  calculateProductionHours,
+  calculatePaintMaterialQuantity,
+  calculateMarkupPrice,
+  calculateGrossMarginPrice,
+  calculateEffectiveSalesRate,
+  normalizeProposalProjectName,
 } from "./proposal-pricing";
 
 describe("computeMaterialLine", () => {
@@ -184,6 +190,71 @@ describe("buildJobEstimateFromProposal — proposal-to-job estimate preservation
     const seed = buildJobEstimateFromProposal(snapshot);
     expect(seed.labor).toHaveLength(0);
     expect(seed.materials).toHaveLength(1);
+  });
+});
+
+describe("production-rate calculations", () => {
+  it("calculates sqft-per-hour labor from a measurement and production rate", () => {
+    expect(calculateProductionHours({ measurement: 620, productionRate: 85, basis: "SQFT_PER_HOUR" })).toBe(7.29);
+  });
+
+  it("calculates linear-feet-per-hour labor from a measurement and production rate", () => {
+    expect(calculateProductionHours({ measurement: 84, productionRate: 40, basis: "LINEAR_FT_PER_HOUR" })).toBe(2.1);
+  });
+
+  it("calculates hours-per-item labor for fixed counts", () => {
+    expect(calculateProductionHours({ measurement: 4, productionRate: 1.5, basis: "HOURS_PER_ITEM" })).toBe(6);
+  });
+
+  it("supports fixed-hour work items", () => {
+    expect(calculateProductionHours({ measurement: 0, productionRate: 0, basis: "FIXED_HOURS", fixedHours: 3.5 })).toBe(3.5);
+  });
+
+  it("uses adjusted hours when present while preserving the calculated value", () => {
+    expect(calculateProductionHours({ measurement: 620, productionRate: 85, basis: "SQFT_PER_HOUR", adjustedHours: 8.5 })).toBe(8.5);
+  });
+});
+
+describe("paint material calculations", () => {
+  it("calculates gallons before waste for coverage-based paint", () => {
+    expect(calculatePaintMaterialQuantity({ measurement: 620, coats: 2, coveragePerUnit: 350 })).toBe(3.54);
+  });
+
+  it("includes configured waste percentage", () => {
+    const result = calculatePaintMaterialQuantity({ measurement: 620, coats: 2, coveragePerUnit: 350, wastePercent: 10 });
+    expect(result).toBe(3.9);
+  });
+
+  it("supports adjusted quantity overrides while preserving the calculated quantity", () => {
+    const result = calculatePaintMaterialQuantity({ measurement: 620, coats: 2, coveragePerUnit: 350, adjustedQuantity: 4 });
+    expect(result).toBe(4);
+  });
+
+  it("guards against invalid coverage and zero measurement safety", () => {
+    expect(() => calculatePaintMaterialQuantity({ measurement: 0, coats: 2, coveragePerUnit: 350 })).toThrow();
+    expect(() => calculatePaintMaterialQuantity({ measurement: 620, coats: 2, coveragePerUnit: 0 })).toThrow();
+  });
+});
+
+describe("selling price and summary metrics", () => {
+  it("calculates markup price for a cost base", () => {
+    expect(calculateMarkupPrice({ cost: 7000, markupPercent: 0.3 })).toBe(9100);
+  });
+
+  it("calculates gross margin price for a target margin", () => {
+    expect(calculateGrossMarginPrice({ cost: 7000, desiredMarginPercent: 30 })).toBe(10000);
+  });
+
+  it("calculates the effective sales rate", () => {
+    expect(calculateEffectiveSalesRate({ finalProposalPrice: 12500, estimatedPainterHours: 125 })).toBe(100);
+  });
+});
+
+describe("draft naming helpers", () => {
+  it("uses Untitled Proposal when project name is blank", () => {
+    expect(normalizeProposalProjectName("")).toBe("Untitled Proposal");
+    expect(normalizeProposalProjectName("   ")).toBe("Untitled Proposal");
+    expect(normalizeProposalProjectName("Kitchen Remodel")).toBe("Kitchen Remodel");
   });
 });
 

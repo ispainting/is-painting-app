@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { api } from "@/trpc/react";
 import { computeScopeEstimate } from "@/lib/proposal-pricing";
+import { calculateProductionHours, calculatePaintMaterialQuantity } from "@/lib/proposal-pricing";
 import { formatCurrency } from "@/lib/utils";
 
 export type SectionMaterialDraft = {
@@ -13,11 +14,22 @@ export type SectionMaterialDraft = {
   quantity: string;
   unitCost: string;
   markupPercent: string;
+  coveragePerUnit: string;
+  wastePercent: string;
+  calculatedQuantity: string;
+  adjustedQuantity: string;
 };
 
 export type SectionEstimateDraft = {
+  areaName: string;
+  measurementType: string;
+  measurementValue: string;
+  coats: string;
+  prepLevel: string;
+  productionRateId: number | null;
+  calculatedLaborHours: string;
+  adjustedLaborHours: string;
   materials: SectionMaterialDraft[];
-  estimatedLaborHours: string;
   laborSellRateOverride: string;
   additionalCharges: string;
 };
@@ -47,13 +59,14 @@ export function SectionMaterialsAndLabor({
   makeMaterialKey: () => string;
 }) {
   const inventory = api.inventory.list.useQuery();
+  const productionRates = api.productionRates.list.useQuery();
   const config = api.config.get.useQuery();
 
   const defaultLaborSellRate = config.data?.defaultLaborSellRate != null ? Number(config.data.defaultLaborSellRate) : null;
   const defaultMarkup = config.data ? Number(config.data.defaultMarkup) : 27;
 
   const laborSellRate = value.laborSellRateOverride.trim() ? toNumber(value.laborSellRateOverride) : defaultLaborSellRate;
-  const laborHours = toNumber(value.estimatedLaborHours);
+  const laborHours = toNumber(value.adjustedLaborHours || value.calculatedLaborHours);
   const missingLaborRate = laborHours > 0 && laborSellRate == null;
 
   const estimate = useMemo(() => {
@@ -68,14 +81,24 @@ export function SectionMaterialsAndLabor({
       labor: laborHours > 0 && laborSellRate != null ? { hours: laborHours, sellRate: laborSellRate } : null,
       additionalCharges: toNumber(value.additionalCharges),
     });
-  }, [value.materials, value.estimatedLaborHours, value.additionalCharges, laborSellRate, laborHours, defaultMarkup]);
+  }, [value.materials, value.additionalCharges, laborSellRate, laborHours, defaultMarkup]);
+
+  const selectedProductionRate = productionRates.data?.find((rate) => rate.id === value.productionRateId);
+  const calculatedHours = selectedProductionRate && toNumber(value.measurementValue) >= 0
+    ? calculateProductionHours({
+        measurement: toNumber(value.measurementValue),
+        productionRate: Number(selectedProductionRate.rateValue),
+        basis: selectedProductionRate.basis,
+        fixedHours: selectedProductionRate.basis === "FIXED_HOURS" ? Number(selectedProductionRate.rateValue) : undefined,
+      })
+    : 0;
 
   const addMaterial = () => {
     onChange({
       ...value,
       materials: [
         ...value.materials,
-        { key: makeMaterialKey(), inventoryItemId: null, name: "", unit: "unit", quantity: "1", unitCost: "0", markupPercent: "" },
+        { key: makeMaterialKey(), inventoryItemId: null, name: "", unit: "unit", quantity: "1", unitCost: "0", markupPercent: "", coveragePerUnit: "", wastePercent: "", calculatedQuantity: "", adjustedQuantity: "" },
       ],
     });
   };
@@ -99,6 +122,8 @@ export function SectionMaterialsAndLabor({
       name: item.name,
       unit: item.unit,
       unitCost: String(Number(item.costPerUnit)),
+      coveragePerUnit: item.coveragePerUnit == null ? "" : String(Number(item.coveragePerUnit)),
+      wastePercent: String(Number(item.defaultWastePercent ?? 0)),
       markupPercent: item.defaultMarkupPercent != null ? String(Number(item.defaultMarkupPercent)) : "",
     });
   };
@@ -116,6 +141,66 @@ export function SectionMaterialsAndLabor({
         </div>
       )}
 
+      <div className="grid md:grid-cols-4 gap-3">
+        <div>
+          <label className="label">Area</label>
+          <input className="input" value={value.areaName} onChange={(e) => onChange({ ...value, areaName: e.target.value })} disabled={disabled} placeholder="Living Room" />
+        </div>
+        <div>
+          <label className="label">Measurement type</label>
+          <select className="input" value={value.measurementType} onChange={(e) => onChange({ ...value, measurementType: e.target.value })} disabled={disabled}>
+            <option value="SQFT">Square feet</option>
+            <option value="LINEAR_FT">Linear feet</option>
+            <option value="COUNT">Count</option>
+            <option value="FIXED_HOURS">Fixed hours</option>
+          </select>
+        </div>
+        <div>
+          <label className="label">Measurement</label>
+          <input className="input" inputMode="decimal" value={value.measurementValue} onChange={(e) => onChange({ ...value, measurementValue: e.target.value, calculatedLaborHours: "" })} disabled={disabled} placeholder="Direct quantity" />
+        </div>
+        <div>
+          <label className="label">Coats</label>
+          <input className="input" inputMode="numeric" value={value.coats} onChange={(e) => onChange({ ...value, coats: e.target.value })} disabled={disabled} placeholder="2" />
+        </div>
+        <div>
+          <label className="label">Prep / difficulty</label>
+          <input className="input" value={value.prepLevel} onChange={(e) => onChange({ ...value, prepLevel: e.target.value })} disabled={disabled} placeholder="Normal" />
+        </div>
+      </div>
+
+      <div className="grid md:grid-cols-4 gap-3">
+        <div className="md:col-span-2">
+          <label className="label">Production rate</label>
+          <select
+            className="input"
+            value={value.productionRateId ?? ""}
+            onChange={(e) => {
+              const rate = productionRates.data?.find((item) => item.id === Number(e.target.value));
+              onChange({
+                ...value,
+                productionRateId: rate?.id ?? null,
+                calculatedLaborHours: rate ? String(calculateProductionHours({ measurement: toNumber(value.measurementValue), productionRate: Number(rate.rateValue), basis: rate.basis, fixedHours: rate.basis === "FIXED_HOURS" ? Number(rate.rateValue) : undefined })) : "",
+              });
+            }}
+            disabled={disabled}
+          >
+            <option value="">Manual hours / select later</option>
+            {productionRates.data?.map((rate) => (
+              <option key={rate.id} value={rate.id}>{rate.name} · {Number(rate.rateValue)} · {rate.basis}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="label">Calculated hours</label>
+          <input className="input bg-slate-100" value={value.calculatedLaborHours || (selectedProductionRate ? String(calculatedHours) : "0")} disabled readOnly />
+        </div>
+        <div>
+          <label className="label">Adjusted hours</label>
+          <input className="input" inputMode="decimal" value={value.adjustedLaborHours} onChange={(e) => onChange({ ...value, adjustedLaborHours: e.target.value })} disabled={disabled} placeholder="Optional override" />
+        </div>
+      </div>
+
       <div className="grid md:grid-cols-3 gap-3">
         <div>
           <label className="label">Estimated painter-hours</label>
@@ -123,10 +208,10 @@ export function SectionMaterialsAndLabor({
             type="text"
             inputMode="decimal"
             className="input"
-            value={value.estimatedLaborHours}
-            onChange={(e) => onChange({ ...value, estimatedLaborHours: e.target.value })}
+            value={value.adjustedLaborHours || value.calculatedLaborHours}
+            onChange={(e) => onChange({ ...value, adjustedLaborHours: e.target.value })}
             disabled={disabled}
-            placeholder="0"
+            placeholder="Calculated from production rate"
           />
         </div>
         <div>

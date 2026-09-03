@@ -82,23 +82,41 @@ type SectionMaterialDraft = {
   quantity: string;
   unitCost: string;
   markupPercent: string;
+  coveragePerUnit: string;
+  wastePercent: string;
+  calculatedQuantity: string;
+  adjustedQuantity: string;
 };
 
 type SectionDraft = {
   templateKey: string;
   title: string;
+  areaName: string;
   description: string;
   bulletItems: string[];
   notes: string;
   sortOrder: number;
-  estimatedLaborHours: string;
+  measurementType: string;
+  measurementValue: string;
+  coats: string;
+  prepLevel: string;
+  productionRateId: number | null;
+  calculatedLaborHours: string;
+  adjustedLaborHours: string;
   laborSellRateOverride: string;
   additionalCharges: string;
   materials: SectionMaterialDraft[];
 };
 
 const EMPTY_ESTIMATE_FIELDS = {
-  estimatedLaborHours: "",
+  areaName: "",
+  measurementType: "SQFT",
+  measurementValue: "",
+  coats: "2",
+  prepLevel: "Normal",
+  productionRateId: null as number | null,
+  calculatedLaborHours: "",
+  adjustedLaborHours: "",
   laborSellRateOverride: "",
   additionalCharges: "0",
   materials: [] as SectionMaterialDraft[],
@@ -133,7 +151,7 @@ const SECTION_TEMPLATES = [
 
 const SECTION_PRESETS: Record<
   (typeof SECTION_TEMPLATES)[number],
-  Omit<SectionDraft, "sortOrder" | "estimatedLaborHours" | "laborSellRateOverride" | "additionalCharges" | "materials">
+  Omit<SectionDraft, "sortOrder" | "areaName" | "measurementType" | "measurementValue" | "coats" | "prepLevel" | "productionRateId" | "calculatedLaborHours" | "adjustedLaborHours" | "laborSellRateOverride" | "additionalCharges" | "materials">
 > = {
   interior_painting: {
     templateKey: "interior_painting",
@@ -427,7 +445,7 @@ export default function ProposalDetailPage() {
     const defaultLaborSellRate = config.data?.defaultLaborSellRate != null ? Number(config.data.defaultLaborSellRate) : null;
     const defaultMarkup = config.data ? Number(config.data.defaultMarkup) : 27;
     const subtotals = form.sections.map((section) => {
-      const laborHours = Number(section.estimatedLaborHours) || 0;
+      const laborHours = Number(section.adjustedLaborHours || section.calculatedLaborHours) || 0;
       const laborSellRate = section.laborSellRateOverride.trim() ? Number(section.laborSellRateOverride) : defaultLaborSellRate;
       return computeScopeEstimate({
         materials: section.materials
@@ -519,11 +537,18 @@ export default function ProposalDetailPage() {
         ? proposal.sections.map((section) => ({
             templateKey: section.templateKey || "custom_section",
             title: section.title,
+            areaName: section.areaName || "",
             description: section.description || "",
             bulletItems: section.bulletItems.length ? section.bulletItems : [""],
             notes: section.notes || "",
             sortOrder: section.sortOrder,
-            estimatedLaborHours: section.estimatedLaborHours == null ? "" : String(section.estimatedLaborHours),
+            measurementType: section.measurementType || "SQFT",
+            measurementValue: section.measurementValue == null ? "" : String(section.measurementValue),
+            coats: section.coats == null ? "2" : String(section.coats),
+            prepLevel: section.prepLevel || "Normal",
+            productionRateId: section.productionRateId ?? null,
+            calculatedLaborHours: section.calculatedLaborHours == null ? "" : String(section.calculatedLaborHours),
+            adjustedLaborHours: section.adjustedLaborHours == null ? "" : String(section.adjustedLaborHours),
             laborSellRateOverride: section.laborSellRateSnapshot == null ? "" : String(section.laborSellRateSnapshot),
             additionalCharges: String(section.additionalCharges ?? 0),
             materials: section.materials.map((m) => ({
@@ -534,6 +559,10 @@ export default function ProposalDetailPage() {
               quantity: String(m.quantity),
               unitCost: String(m.unitCostSnapshot),
               markupPercent: String(m.markupPercentSnapshot),
+              coveragePerUnit: m.coveragePerUnitSnapshot == null ? "" : String(m.coveragePerUnitSnapshot),
+              wastePercent: m.wastePercentSnapshot == null ? "" : String(m.wastePercentSnapshot),
+              calculatedQuantity: m.calculatedQuantity == null ? "" : String(m.calculatedQuantity),
+              adjustedQuantity: m.adjustedQuantity == null ? "" : String(m.adjustedQuantity),
             })),
           }))
         : buildLegacySections(proposal),
@@ -703,7 +732,7 @@ export default function ProposalDetailPage() {
       }));
 
     const sectionsPayload = form.sections
-      .filter((section) => isMeaningfulRow([section.title, section.description, section.notes]) || section.bulletItems.some((item) => item.trim().length > 0) || section.materials.length > 0 || Number(section.estimatedLaborHours) > 0)
+      .filter((section) => isMeaningfulRow([section.title, section.description, section.notes]) || section.bulletItems.some((item) => item.trim().length > 0) || section.materials.length > 0 || Number(section.adjustedLaborHours || section.calculatedLaborHours) > 0)
       .map((section, index) => ({
         templateKey: section.templateKey || undefined,
         title: section.title.trim() || `Section ${index + 1}`,
@@ -711,7 +740,15 @@ export default function ProposalDetailPage() {
         bulletItems: section.bulletItems.map((item) => item.trim()).filter(Boolean),
         notes: section.notes.trim() || undefined,
         sortOrder: section.sortOrder || index,
-        estimatedLaborHours: section.estimatedLaborHours.trim() ? Number(section.estimatedLaborHours) : null,
+        areaName: section.areaName?.trim() || section.title.trim() || undefined,
+        measurementType: section.measurementType,
+        measurementValue: section.measurementValue.trim() ? Number(section.measurementValue) : null,
+        coats: section.coats.trim() ? Number(section.coats) : null,
+        prepLevel: section.prepLevel.trim() || undefined,
+        productionRateId: section.productionRateId,
+        calculatedLaborHours: section.calculatedLaborHours.trim() ? Number(section.calculatedLaborHours) : null,
+        adjustedLaborHours: section.adjustedLaborHours.trim() ? Number(section.adjustedLaborHours) : null,
+        directLaborCostRate: null,
         laborSellRateOverride: section.laborSellRateOverride.trim() ? Number(section.laborSellRateOverride) : null,
         additionalCharges: section.additionalCharges.trim() ? Number(section.additionalCharges) : 0,
         materials: section.materials
@@ -723,6 +760,10 @@ export default function ProposalDetailPage() {
             quantity: Number(m.quantity) || 0,
             unitCost: Number(m.unitCost) || 0,
             markupPercent: m.markupPercent.trim() ? Number(m.markupPercent) : null,
+            coveragePerUnit: m.coveragePerUnit.trim() ? Number(m.coveragePerUnit) : null,
+            wastePercent: m.wastePercent.trim() ? Number(m.wastePercent) : 0,
+            calculatedQuantity: m.calculatedQuantity.trim() ? Number(m.calculatedQuantity) : null,
+            adjustedQuantity: m.adjustedQuantity.trim() ? Number(m.adjustedQuantity) : null,
             sortOrder: mIndex,
           })),
       }));
@@ -1219,8 +1260,15 @@ export default function ProposalDetailPage() {
                           <FieldArea label="Notes" value={section.notes} onChange={(v) => setForm((f) => ({ ...f, sections: f.sections.map((item, i) => i === index ? { ...item, notes: v } : item) }))} disabled={isReadOnly} />
                           <SectionMaterialsAndLabor
                             value={{
+                              areaName: section.areaName,
                               materials: section.materials,
-                              estimatedLaborHours: section.estimatedLaborHours,
+                              measurementType: section.measurementType,
+                              measurementValue: section.measurementValue,
+                              coats: section.coats,
+                              prepLevel: section.prepLevel,
+                              productionRateId: section.productionRateId,
+                              calculatedLaborHours: section.calculatedLaborHours,
+                              adjustedLaborHours: section.adjustedLaborHours,
                               laborSellRateOverride: section.laborSellRateOverride,
                               additionalCharges: section.additionalCharges,
                             }}
