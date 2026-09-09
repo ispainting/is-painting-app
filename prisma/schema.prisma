@@ -900,6 +900,8 @@ model ProposalSection {
   scopeSubtotalSnapshot         Decimal  @default(0) @db.Decimal(12, 2)
 
   areaName                        String?
+  workCategory                    ProductionRateCategory?
+  surfaceType                     String?
   measurementType                 String?
   measurementValue                Decimal? @db.Decimal(12, 2)
   coats                           Int?

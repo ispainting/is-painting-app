@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildJobEstimateFromProposal } from "@/lib/proposal-pricing";
+import { TRPCError } from "@trpc/server";
 import {
   buildAuthoritativeProposalEstimate,
   buildProposalEstimatePersistence,
@@ -53,6 +54,8 @@ const sectionInput = {
   laborSellRateOverride: null,
   additionalCharges: 0,
   areaName: "Kitchen",
+  workCategory: "INTERIOR" as const,
+  surfaceType: "Walls",
   measurementType: "SQFT",
   measurementValue: 620,
   coats: 2,
@@ -95,6 +98,8 @@ describe("proposal estimator server authority", () => {
     const persisted = buildProposalEstimatePersistence(authoritative, input, defaults);
 
     expect(sections[0].effectiveLaborHours).toBe(8);
+    expect(sections[0].workCategory).toBe("INTERIOR");
+    expect(sections[0].surfaceType).toBe("Walls");
     expect(sections[0].directLaborCostSnapshot).toBe(400);
     expect(sections[0].wcPercentSnapshot).toBe(3.5);
     expect(sections[0].wcCostSnapshot).toBe(14);
@@ -151,6 +156,18 @@ describe("proposal estimator server authority", () => {
     expect(persisted.estimateEffectiveSalesRate).toBe(162.5);
   });
 
+  it("validates labor cost rate availability before saving labor estimates", () => {
+    const sections = sanitizeSections([{ ...sectionInput, directLaborCostRate: null }], { ...defaults, defaultLaborCostRate: null });
+
+    expect(() =>
+      buildAuthoritativeProposalEstimate(
+        sections,
+        baseInput(),
+        { ...defaults, defaultLaborCostRate: null }
+      )
+    ).toThrowError(TRPCError);
+  });
+
   it("keeps saved snapshots stable after later config or catalog changes", () => {
     const sections = sanitizeSections([sectionInput], defaults);
     const persisted = buildProposalEstimatePersistence(
@@ -163,6 +180,25 @@ describe("proposal estimator server authority", () => {
     expect(persisted.estimateTrueJobCost).toBe(845.6);
     expect(sections[0].materials[0].unitCostSnapshot).toBe(40);
     expect(changedDefaults.defaultOverhead).toBe(99);
+  });
+
+  it("supports coverage-based material quantities even when manual quantity is blank", () => {
+    const sections = sanitizeSections([
+      {
+        ...sectionInput,
+        materials: [
+          {
+            ...sectionInput.materials[0],
+            quantity: 0,
+            adjustedQuantity: null,
+          },
+        ],
+      },
+    ], defaults);
+
+    expect(sections[0].materials[0].calculatedQuantity).toBe(3.9);
+    expect(sections[0].materials[0].quantity).toBe(3.9);
+    expect(sections[0].materials[0].materialCostSnapshot).toBe(156);
   });
 
   it("convertToJob uses saved proposal snapshots and saved final estimator price", () => {

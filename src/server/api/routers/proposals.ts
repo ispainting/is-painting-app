@@ -105,6 +105,8 @@ const proposalSectionInput = z.object({
   additionalCharges: z.number().min(0).default(0),
   materials: z.array(proposalSectionMaterialInput).default([]),
   areaName: z.string().optional(),
+  workCategory: ProductionRateCategoryZ.nullable().optional(),
+  surfaceType: z.string().optional(),
   measurementType: z.string().optional(),
   measurementValue: z.number().min(0).nullable().optional(),
   coats: z.number().int().min(1).nullable().optional(),
@@ -171,16 +173,35 @@ export function sanitizeSectionMaterials(
   coats: number | null | undefined
 ) {
   return materials
-    .filter((m) => m.name.trim().length > 0 && m.quantity > 0)
+    .filter((m) => {
+      if (m.name.trim().length === 0) return false;
+      const hasManualQuantity = m.quantity > 0;
+      const hasAdjustedQuantity = (m.adjustedQuantity ?? 0) > 0;
+      const hasCoverageQuantity =
+        m.coveragePerUnit != null &&
+        m.coveragePerUnit > 0 &&
+        (measurementValue ?? 0) > 0 &&
+        (coats ?? 0) > 0;
+      return hasManualQuantity || hasAdjustedQuantity || hasCoverageQuantity;
+    })
     .map((m, index) => {
       const markupPercent = m.markupPercent ?? defaultMarkupPercent;
-      const quantities = calculateMaterialQuantitySnapshot({
-        measurement: measurementValue ?? 0,
-        coats: coats ?? 0,
-        coveragePerUnit: m.coveragePerUnit ?? null,
-        wastePercent: m.wastePercent,
-        adjustedQuantity: m.adjustedQuantity,
-      });
+      const quantities =
+        m.coveragePerUnit != null &&
+        m.coveragePerUnit > 0 &&
+        (measurementValue ?? 0) > 0 &&
+        (coats ?? 0) > 0
+          ? calculateMaterialQuantitySnapshot({
+              measurement: measurementValue ?? 0,
+              coats: coats ?? 0,
+              coveragePerUnit: m.coveragePerUnit ?? null,
+              wastePercent: m.wastePercent,
+              adjustedQuantity: m.adjustedQuantity,
+            })
+          : {
+              calculatedQuantity: m.calculatedQuantity ?? null,
+              effectiveQuantity: m.adjustedQuantity ?? (m.quantity > 0 ? m.quantity : null),
+            };
       const effectiveQuantity = quantities.effectiveQuantity ?? m.quantity;
       const line = computeScopeEstimate({
         materials: [{ quantity: effectiveQuantity, unitCost: m.unitCost, markupPercent }],
@@ -213,8 +234,15 @@ export function sanitizeSections(
     const description = (s.description || "").trim();
     const notes = (s.notes || "").trim();
     const bullets = s.bulletItems.filter((item) => item.trim().length > 0);
-    const hasMaterials = s.materials.some((m) => m.name.trim().length > 0 && m.quantity > 0);
-    const hasLabor = (s.estimatedLaborHours ?? 0) > 0;
+    const hasMaterials = s.materials.some((m) =>
+      m.name.trim().length > 0 &&
+      (
+        m.quantity > 0 ||
+        (m.adjustedQuantity ?? 0) > 0 ||
+        (m.coveragePerUnit ?? 0) > 0
+      )
+    );
+    const hasLabor = (s.adjustedLaborHours ?? s.calculatedLaborHours ?? s.estimatedLaborHours ?? 0) > 0;
     return title.length > 0 || description.length > 0 || notes.length > 0 || bullets.length > 0 || hasMaterials || hasLabor;
   });
 
@@ -244,6 +272,8 @@ export function sanitizeSections(
       notes: (s.notes || "").trim() || undefined,
       sortOrder: s.sortOrder ?? index,
       areaName: s.areaName?.trim() || undefined,
+      workCategory: s.workCategory ?? undefined,
+      surfaceType: s.surfaceType?.trim() || undefined,
       measurementType: s.measurementType?.trim() || undefined,
       measurementValue: s.measurementValue ?? undefined,
       coats: s.coats ?? undefined,
@@ -677,7 +707,12 @@ export function buildAuthoritativeProposalEstimate(
   defaults: ProposalPricingDefaults
 ) {
   const hasEstimatorData = sections.some((section) =>
-    section.measurementValue != null || section.productionRateId != null || section.calculatedLaborHours != null || section.adjustedLaborHours != null || section.materials.length > 0
+    section.measurementValue != null ||
+    section.productionRateId != null ||
+    section.calculatedLaborHours != null ||
+    section.adjustedLaborHours != null ||
+    section.additionalCharges > 0 ||
+    section.materials.length > 0
   );
   if (!hasEstimatorData) return null;
 
@@ -789,6 +824,8 @@ function buildSectionCreateData(s: ReturnType<typeof sanitizeSections>[number], 
     additionalCharges: s.additionalCharges,
     scopeSubtotalSnapshot: s.scopeSubtotalSnapshot,
     areaName: s.areaName,
+    workCategory: s.workCategory,
+    surfaceType: s.surfaceType,
     measurementType: s.measurementType,
     measurementValue: s.measurementValue,
     coats: s.coats,
