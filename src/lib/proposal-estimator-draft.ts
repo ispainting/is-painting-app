@@ -1,313 +1,321 @@
-import { calculateMaterialQuantitySnapshot, computeProposalEstimate, computeScopeEstimate, round2, type ProposalEstimateResult } from "./proposal-pricing";
-
-export type ProposalPricingMethod = "GROSS_MARGIN" | "MARKUP";
-export type ProposalWorkCategory = "INTERIOR" | "EXTERIOR" | "PREP" | "SPECIALTY";
+import {
+  computeProposalEstimate,
+  type ProposalEstimateMethod,
+  type ProposalGeneralLiabilityMode,
+  type ProposalLaborMode,
+  type ProposalMaterialLineType,
+  type ProposalMaterialPriceSourceType,
+  type ProposalPriceVisibilityMode,
+  type ProposalProductionRateBasis,
+  type ProposalUnitPriceRateSource,
+} from "./proposal-estimate-engine";
+import { round2 } from "./proposal-pricing";
 
 export type DraftValue = string | number | null | undefined;
 
+export interface DraftLaborLineLike {
+  key: string;
+  label: string;
+  mode: ProposalLaborMode;
+  workers?: DraftValue;
+  hoursPerWorker?: DraftValue;
+  days?: DraftValue;
+  hoursPerDay?: DraftValue;
+  hourlyCost?: DraftValue;
+  manualTotalOverride?: DraftValue;
+  internalNote?: string;
+}
+
 export interface DraftMaterialLike {
+  key: string;
+  type: ProposalMaterialLineType;
+  inventoryItemId?: number | null;
   name: string;
+  unit: string;
   quantity?: DraftValue;
   unitCost?: DraftValue;
-  markupPercent?: DraftValue;
+  manualTotal?: DraftValue;
   coveragePerUnit?: DraftValue;
   wastePercent?: DraftValue;
   adjustedQuantity?: DraftValue;
+  note?: string;
+  priceSourceType?: ProposalMaterialPriceSourceType | null;
+  priceSourceLabel?: string;
+  priceSourceExpenseId?: number | null;
+  priceSourceExpenseLineItemId?: number | null;
 }
 
 export interface DraftSectionLike {
+  key: string;
+  templateKey: string;
   title: string;
-  areaName?: string | null;
-  workCategory?: ProposalWorkCategory | "" | null;
-  surfaceType?: string | null;
-  measurementValue?: DraftValue;
-  coats?: DraftValue;
-  calculatedLaborHours?: DraftValue;
-  adjustedLaborHours?: DraftValue;
-  laborSellRateOverride?: DraftValue;
-  additionalCharges?: DraftValue;
+  customerTitle?: string;
+  areaName?: string;
+  phaseName?: string;
+  workCategoryLabel?: string;
+  description?: string;
+  bulletItems?: string[];
+  notes?: string;
+  sortOrder?: number;
+  estimateMethod?: ProposalEstimateMethod | "" | null;
+  priceVisibilityMode: ProposalPriceVisibilityMode;
+  clientNotes?: string;
+  internalNotes?: string;
+  laborLines: DraftLaborLineLike[];
   materials: DraftMaterialLike[];
+  unitPrice?: {
+    templateId?: number | null;
+    serviceName: string;
+    variantName: string;
+    unitLabel: string;
+    quantity?: DraftValue;
+    pricePerUnit?: DraftValue;
+    lineTotalOverride?: DraftValue;
+    laborAllowance?: DraftValue;
+    materialAllowance?: DraftValue;
+    note?: string;
+    rateSource: ProposalUnitPriceRateSource;
+  } | null;
+  manualTotal?: {
+    customerTotal?: DraftValue;
+    internalCost?: DraftValue;
+    note?: string;
+  } | null;
+  production?: {
+    workCategory?: string;
+    surfaceType?: string;
+    measurementUnit?: string;
+    measurementValue?: DraftValue;
+    productionRateBasis: ProposalProductionRateBasis;
+    productionRateValue?: DraftValue;
+    calculatedLaborHours?: DraftValue;
+    adjustedLaborHours?: DraftValue;
+    crewSize?: DraftValue;
+    hoursPerDay?: DraftValue;
+    hourlyCostPerWorker?: DraftValue;
+    note?: string;
+    productionRateId?: number | null;
+  } | null;
 }
 
 export interface ProposalEstimatorDefaults {
-  defaultLaborSellRate: number | null;
   defaultLaborCostRate: number | null;
-  defaultMarkup: number;
   defaultWcPercent: number;
-  defaultOverhead: number;
-  defaultProposalPricingMethod: ProposalPricingMethod;
+  defaultDesiredProfitMarginPercent: number;
+  defaultGlPercent: number;
+  defaultGeneralLiabilityMode: ProposalGeneralLiabilityMode;
+  defaultMassTaxRate: number;
+  defaultFederalTaxRate: number;
+  defaultWorkDayHours: number;
 }
 
 export interface ProposalEstimatorPricingInput {
-  estimatePricingMethod?: ProposalPricingMethod | null;
-  estimateTargetMarginPercent?: DraftValue;
-  estimateTargetMarkupPercent?: DraftValue;
+  desiredProfitMarginPercent?: DraftValue;
   estimatePriceOverride?: DraftValue;
-  estimateSubcontractorCost?: DraftValue;
-  estimateEquipmentCost?: DraftValue;
-  estimateLogisticsCost?: DraftValue;
-  estimateMiscProjectCost?: DraftValue;
-}
-
-export interface DraftMaterialEstimate {
-  name: string;
-  quantity: number;
-  calculatedQuantity: number | null;
-  adjustedQuantity: number | null;
-  unitCost: number;
-  markupPercent: number;
-  materialCost: number;
-  sellingPrice: number;
-}
-
-export interface DraftSectionEstimate {
-  areaName: string;
-  title: string;
-  workCategory: ProposalWorkCategory | null;
-  surfaceType: string;
-  measurementValue: number;
-  coats: number;
-  calculatedLaborHours: number;
-  adjustedLaborHours: number | null;
-  effectiveLaborHours: number;
-  laborSellRate: number | null;
-  directLaborCostRate: number;
-  directLaborCost: number;
-  laborBurdenCost: number;
-  loadedLaborCost: number;
-  laborSellingPrice: number;
-  additionalCharges: number;
-  materialsCost: number;
-  materialsSellingPrice: number;
-  subtotal: number;
-  materials: DraftMaterialEstimate[];
+  workersCompPercentOverride?: DraftValue;
+  includeWorkersCompInRecommendedPrice?: boolean;
+  generalLiabilityMode?: ProposalGeneralLiabilityMode | null;
+  generalLiabilityPercent?: DraftValue;
+  generalLiabilityFlatAmount?: DraftValue;
+  includeGeneralLiabilityInRecommendedPrice?: boolean;
+  massTaxRate?: DraftValue;
+  federalTaxRate?: DraftValue;
+  showTaxPlanning?: boolean;
+  includeTaxReserveInRecommendedPrice?: boolean;
+  otherCosts: Array<{
+    key: string;
+    label: string;
+    description?: string;
+    amount?: DraftValue;
+    includeInRecommendedPrice: boolean;
+    internalNote?: string;
+  }>;
 }
 
 export interface DraftAreaEstimate {
   areaName: string;
-  painterHours: number;
+  workItems: Array<{
+    key: string;
+    title: string;
+    estimateMethod: ProposalEstimateMethod;
+    allocatedCustomerPrice: number;
+    directLaborCost: number;
+    materialsCost: number;
+    internalCost: number;
+  }>;
   directLaborCost: number;
-  laborBurdenCost: number;
-  loadedLaborCost: number;
-  materialCost: number;
-  materialsSellingPrice: number;
-  additionalCharges: number;
-  subtotal: number;
-  items: DraftSectionEstimate[];
+  materialsCost: number;
+  internalCost: number;
+  allocatedCustomerPrice: number;
 }
 
-export interface DraftProposalEstimateSummary {
-  hasEstimatorData: boolean;
-  pricingMethod: ProposalPricingMethod;
-  targetMarginPercent: number | null;
-  targetMarkupPercent: number | null;
-  manualPriceOverride: number | null;
-  subcontractorCost: number;
-  equipmentCost: number;
-  logisticsCost: number;
-  miscProjectCost: number;
-  areas: DraftAreaEstimate[];
-  totals: ProposalEstimateResult;
-}
-
-export function parseDraftNumber(value: DraftValue): number | null {
+function parseDraftNumber(value: DraftValue): number | null {
   if (value == null || value === "") return null;
   const parsed = typeof value === "number" ? value : Number(String(value).trim());
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function parseNonNegative(value: DraftValue, fallback = 0): number {
+function parseNonNegative(value: DraftValue, fallback = 0) {
   const parsed = parseDraftNumber(value);
   return parsed != null && parsed >= 0 ? parsed : fallback;
-}
-
-export function computeDraftMaterialEstimate(
-  material: DraftMaterialLike,
-  context: { measurementValue: DraftValue; coats: DraftValue; defaultMarkup: number }
-): DraftMaterialEstimate | null {
-  const name = material.name.trim();
-  if (!name) return null;
-
-  const measurementValue = parseNonNegative(context.measurementValue, 0);
-  const coats = parseNonNegative(context.coats, 0);
-  const manualQuantity = parseNonNegative(material.quantity, 0);
-  const unitCost = parseNonNegative(material.unitCost, 0);
-  const markupPercent = parseNonNegative(material.markupPercent, context.defaultMarkup);
-  const coveragePerUnit = parseDraftNumber(material.coveragePerUnit);
-  const adjustedQuantity = parseDraftNumber(material.adjustedQuantity);
-  const wastePercent = parseNonNegative(material.wastePercent, 0);
-
-  let calculatedQuantity: number | null = null;
-  let effectiveQuantity = manualQuantity;
-
-  if (coveragePerUnit != null && coveragePerUnit > 0 && measurementValue > 0 && coats > 0) {
-    const quantitySnapshot = calculateMaterialQuantitySnapshot({
-      measurement: measurementValue,
-      coats,
-      coveragePerUnit,
-      wastePercent,
-      adjustedQuantity: adjustedQuantity != null && adjustedQuantity >= 0 ? adjustedQuantity : null,
-    });
-    calculatedQuantity = quantitySnapshot.calculatedQuantity;
-    effectiveQuantity = quantitySnapshot.effectiveQuantity ?? manualQuantity;
-  } else if (adjustedQuantity != null && adjustedQuantity >= 0) {
-    effectiveQuantity = round2(adjustedQuantity);
-  }
-
-  if (!(effectiveQuantity > 0) && calculatedQuantity == null) return null;
-
-  const line = computeScopeEstimate({
-    materials: [{ quantity: effectiveQuantity, unitCost, markupPercent }],
-    labor: null,
-  }).materialLines[0];
-
-  return {
-    name,
-    quantity: effectiveQuantity,
-    calculatedQuantity,
-    adjustedQuantity: adjustedQuantity != null && adjustedQuantity >= 0 ? round2(adjustedQuantity) : null,
-    unitCost,
-    markupPercent,
-    materialCost: line?.materialCost ?? 0,
-    sellingPrice: line?.sellingPrice ?? 0,
-  };
-}
-
-export function computeDraftSectionEstimate(
-  section: DraftSectionLike,
-  defaults: ProposalEstimatorDefaults
-): DraftSectionEstimate {
-  const measurementValue = parseNonNegative(section.measurementValue, 0);
-  const coats = parseNonNegative(section.coats, 0);
-  const calculatedLaborHours = parseNonNegative(section.calculatedLaborHours, 0);
-  const adjustedLaborHours = parseDraftNumber(section.adjustedLaborHours);
-  const effectiveLaborHours = round2(adjustedLaborHours != null && adjustedLaborHours >= 0 ? adjustedLaborHours : calculatedLaborHours);
-  const laborSellRateOverride = parseDraftNumber(section.laborSellRateOverride);
-  const laborSellRate = effectiveLaborHours > 0
-    ? (laborSellRateOverride != null && laborSellRateOverride >= 0 ? laborSellRateOverride : defaults.defaultLaborSellRate)
-    : null;
-  const directLaborCostRate = defaults.defaultLaborCostRate ?? 0;
-  const directLaborCost = round2(effectiveLaborHours * directLaborCostRate);
-  const laborBurdenCost = round2(directLaborCost * (defaults.defaultWcPercent / 100));
-  const loadedLaborCost = round2(directLaborCost + laborBurdenCost);
-  const additionalCharges = parseNonNegative(section.additionalCharges, 0);
-
-  const materials = section.materials
-    .map((material) => computeDraftMaterialEstimate(material, { measurementValue, coats, defaultMarkup: defaults.defaultMarkup }))
-    .filter((material): material is DraftMaterialEstimate => material != null);
-
-  const materialsCost = round2(materials.reduce((sum, material) => sum + material.materialCost, 0));
-  const materialsSellingPrice = round2(materials.reduce((sum, material) => sum + material.sellingPrice, 0));
-  const laborSellingPrice = laborSellRate != null ? round2(effectiveLaborHours * laborSellRate) : 0;
-  const subtotal = round2(laborSellingPrice + materialsSellingPrice + additionalCharges);
-
-  return {
-    areaName: section.areaName?.trim() || "General Area",
-    title: section.title.trim() || "Untitled Scope Item",
-    workCategory: section.workCategory || null,
-    surfaceType: section.surfaceType?.trim() || "",
-    measurementValue,
-    coats,
-    calculatedLaborHours,
-    adjustedLaborHours: adjustedLaborHours != null && adjustedLaborHours >= 0 ? round2(adjustedLaborHours) : null,
-    effectiveLaborHours,
-    laborSellRate,
-    directLaborCostRate,
-    directLaborCost,
-    laborBurdenCost,
-    loadedLaborCost,
-    laborSellingPrice,
-    additionalCharges,
-    materialsCost,
-    materialsSellingPrice,
-    subtotal,
-    materials,
-  };
 }
 
 export function computeDraftProposalEstimateSummary(input: {
   sections: DraftSectionLike[];
   defaults: ProposalEstimatorDefaults;
   pricing: ProposalEstimatorPricingInput;
-}): DraftProposalEstimateSummary {
-  const sections = input.sections.map((section) => computeDraftSectionEstimate(section, input.defaults));
-  const hasEstimatorData = sections.some((section) =>
-    section.measurementValue > 0 ||
-    section.effectiveLaborHours > 0 ||
-    section.additionalCharges > 0 ||
-    section.materials.length > 0
-  );
-
-  const pricingMethod = input.pricing.estimatePricingMethod ?? input.defaults.defaultProposalPricingMethod;
-  const targetMarginPercent = parseDraftNumber(input.pricing.estimateTargetMarginPercent);
-  const targetMarkupPercent = parseDraftNumber(input.pricing.estimateTargetMarkupPercent);
-  const manualPriceOverride = parseDraftNumber(input.pricing.estimatePriceOverride);
-  const subcontractorCost = parseNonNegative(input.pricing.estimateSubcontractorCost, 0);
-  const equipmentCost = parseNonNegative(input.pricing.estimateEquipmentCost, 0);
-  const logisticsCost = parseNonNegative(input.pricing.estimateLogisticsCost, 0);
-  const miscProjectCost = parseNonNegative(input.pricing.estimateMiscProjectCost, 0);
+}) {
+  const summary = computeProposalEstimate({
+    workItems: input.sections
+      .filter((section) => (section.estimateMethod ?? null) != null)
+      .map((section) => ({
+        key: section.key,
+        title: section.title,
+        customerTitle: section.customerTitle,
+        description: section.description,
+        areaName: section.areaName,
+        phaseName: section.phaseName,
+        workCategoryLabel: section.workCategoryLabel,
+        estimateMethod: section.estimateMethod as ProposalEstimateMethod,
+        priceVisibility: section.priceVisibilityMode,
+        internalNotes: section.internalNotes,
+        clientNotes: section.clientNotes,
+        laborLines: section.laborLines.map((line) => ({
+          key: line.key,
+          label: line.label,
+          mode: line.mode,
+          workers: parseNonNegative(line.workers, 0),
+          hoursPerWorker: parseDraftNumber(line.hoursPerWorker),
+          days: parseDraftNumber(line.days),
+          hoursPerDay: parseDraftNumber(line.hoursPerDay),
+          hourlyCost: parseNonNegative(line.hourlyCost, input.defaults.defaultLaborCostRate ?? 0),
+          manualTotalOverride: parseDraftNumber(line.manualTotalOverride),
+          internalNote: line.internalNote,
+        })),
+        materials: section.materials.map((material) => ({
+          key: material.key,
+          type: material.type,
+          inventoryItemId: material.inventoryItemId ?? null,
+          name: material.name,
+          unit: material.unit,
+          quantity: parseDraftNumber(material.quantity),
+          unitCost: parseNonNegative(material.unitCost, 0),
+          manualTotal: parseDraftNumber(material.manualTotal),
+          coveragePerUnit: parseDraftNumber(material.coveragePerUnit),
+          wastePercent: parseNonNegative(material.wastePercent, 0),
+          adjustedQuantity: parseDraftNumber(material.adjustedQuantity),
+          note: material.note,
+          priceSourceType: material.priceSourceType ?? null,
+          priceSourceLabel: material.priceSourceLabel,
+          priceSourceExpenseId: material.priceSourceExpenseId ?? null,
+          priceSourceExpenseLineItemId: material.priceSourceExpenseLineItemId ?? null,
+        })),
+        unitPrice: section.unitPrice
+          ? {
+              templateId: section.unitPrice.templateId ?? null,
+              serviceName: section.unitPrice.serviceName,
+              variantName: section.unitPrice.variantName,
+              unitLabel: section.unitPrice.unitLabel,
+              quantity: parseNonNegative(section.unitPrice.quantity, 0),
+              pricePerUnit: parseNonNegative(section.unitPrice.pricePerUnit, 0),
+              lineTotalOverride: parseDraftNumber(section.unitPrice.lineTotalOverride),
+              laborAllowance: parseDraftNumber(section.unitPrice.laborAllowance),
+              materialAllowance: parseDraftNumber(section.unitPrice.materialAllowance),
+              note: section.unitPrice.note,
+              rateSource: section.unitPrice.rateSource,
+            }
+          : null,
+        manualTotal: section.manualTotal
+          ? {
+              customerTotal: parseNonNegative(section.manualTotal.customerTotal, 0),
+              internalCost: parseDraftNumber(section.manualTotal.internalCost),
+              note: section.manualTotal.note,
+            }
+          : null,
+        production: section.production
+          ? {
+              workCategory: section.production.workCategory,
+              surfaceType: section.production.surfaceType,
+              measurementUnit: section.production.measurementUnit,
+              measurementValue: parseNonNegative(section.production.measurementValue, 0),
+              productionRateBasis: section.production.productionRateBasis,
+              productionRateValue: parseNonNegative(section.production.productionRateValue, 0),
+              calculatedLaborHours: parseDraftNumber(section.production.calculatedLaborHours),
+              adjustedLaborHours: parseDraftNumber(section.production.adjustedLaborHours),
+              crewSize: parseDraftNumber(section.production.crewSize),
+              hoursPerDay: parseDraftNumber(section.production.hoursPerDay),
+              hourlyCostPerWorker: parseDraftNumber(section.production.hourlyCostPerWorker) ?? input.defaults.defaultLaborCostRate ?? 0,
+              note: section.production.note,
+            }
+          : null,
+      })),
+    settings: {
+      desiredProfitMarginPercent: parseDraftNumber(input.pricing.desiredProfitMarginPercent) ?? input.defaults.defaultDesiredProfitMarginPercent,
+      finalPriceOverride: parseDraftNumber(input.pricing.estimatePriceOverride),
+      workersCompPercent: parseDraftNumber(input.pricing.workersCompPercentOverride) ?? input.defaults.defaultWcPercent,
+      includeWorkersCompInRecommendedPrice: input.pricing.includeWorkersCompInRecommendedPrice ?? true,
+      generalLiabilityMode: input.pricing.generalLiabilityMode ?? input.defaults.defaultGeneralLiabilityMode,
+      generalLiabilityPercent: parseDraftNumber(input.pricing.generalLiabilityPercent) ?? input.defaults.defaultGlPercent,
+      generalLiabilityFlatAmount: parseDraftNumber(input.pricing.generalLiabilityFlatAmount),
+      includeGeneralLiabilityInRecommendedPrice: input.pricing.includeGeneralLiabilityInRecommendedPrice ?? true,
+      massTaxRate: parseDraftNumber(input.pricing.massTaxRate) ?? input.defaults.defaultMassTaxRate,
+      federalTaxRate: parseDraftNumber(input.pricing.federalTaxRate) ?? input.defaults.defaultFederalTaxRate,
+      showTaxPlanning: input.pricing.showTaxPlanning ?? true,
+      includeTaxReserveInRecommendedPrice: input.pricing.includeTaxReserveInRecommendedPrice ?? false,
+      defaultWorkDayHours: input.defaults.defaultWorkDayHours,
+      otherCosts: input.pricing.otherCosts.map((line) => ({
+        key: line.key,
+        label: line.label,
+        description: line.description,
+        amount: parseNonNegative(line.amount, 0),
+        includeInRecommendedPrice: line.includeInRecommendedPrice,
+        internalNote: line.internalNote,
+      })),
+    },
+  });
 
   const areasByName = new Map<string, DraftAreaEstimate>();
-  for (const section of sections) {
-    const areaName = section.areaName || "General Area";
+  for (const workItem of summary.workItems) {
+    const areaName = workItem.areaName || "General";
     const existing = areasByName.get(areaName);
     if (!existing) {
       areasByName.set(areaName, {
         areaName,
-        painterHours: section.effectiveLaborHours,
-        directLaborCost: section.directLaborCost,
-        laborBurdenCost: section.laborBurdenCost,
-        loadedLaborCost: section.loadedLaborCost,
-        materialCost: section.materialsCost,
-        materialsSellingPrice: section.materialsSellingPrice,
-        additionalCharges: section.additionalCharges,
-        subtotal: section.subtotal,
-        items: [section],
+        workItems: [{
+          key: workItem.key,
+          title: workItem.title,
+          estimateMethod: workItem.estimateMethod,
+          allocatedCustomerPrice: workItem.allocatedCustomerPrice,
+          directLaborCost: workItem.directLaborCost,
+          materialsCost: workItem.materialsCost,
+          internalCost: workItem.internalCost,
+        }],
+        directLaborCost: workItem.directLaborCost,
+        materialsCost: workItem.materialsCost,
+        internalCost: workItem.internalCost,
+        allocatedCustomerPrice: workItem.allocatedCustomerPrice,
       });
       continue;
     }
 
-    existing.painterHours = round2(existing.painterHours + section.effectiveLaborHours);
-    existing.directLaborCost = round2(existing.directLaborCost + section.directLaborCost);
-    existing.laborBurdenCost = round2(existing.laborBurdenCost + section.laborBurdenCost);
-    existing.loadedLaborCost = round2(existing.loadedLaborCost + section.loadedLaborCost);
-    existing.materialCost = round2(existing.materialCost + section.materialsCost);
-    existing.materialsSellingPrice = round2(existing.materialsSellingPrice + section.materialsSellingPrice);
-    existing.additionalCharges = round2(existing.additionalCharges + section.additionalCharges);
-    existing.subtotal = round2(existing.subtotal + section.subtotal);
-    existing.items.push(section);
+    existing.workItems.push({
+      key: workItem.key,
+      title: workItem.title,
+      estimateMethod: workItem.estimateMethod,
+      allocatedCustomerPrice: workItem.allocatedCustomerPrice,
+      directLaborCost: workItem.directLaborCost,
+      materialsCost: workItem.materialsCost,
+      internalCost: workItem.internalCost,
+    });
+    existing.directLaborCost = round2(existing.directLaborCost + workItem.directLaborCost);
+    existing.materialsCost = round2(existing.materialsCost + workItem.materialsCost);
+    existing.internalCost = round2(existing.internalCost + workItem.internalCost);
+    existing.allocatedCustomerPrice = round2(existing.allocatedCustomerPrice + workItem.allocatedCustomerPrice);
   }
 
-  const totals = computeProposalEstimate({
-    workItems: sections.map((section) => ({
-      calculatedLaborHours: section.calculatedLaborHours,
-      adjustedLaborHours: section.adjustedLaborHours,
-      directLaborCostRate: section.directLaborCostRate,
-      materialsCost: section.materialsCost,
-    })),
-    wcPercent: input.defaults.defaultWcPercent,
-    overheadPercent: input.defaults.defaultOverhead,
-    subcontractorCost,
-    equipmentCost,
-    logisticsCost,
-    miscDirectCost: miscProjectCost,
-    pricingMethod,
-    targetMarginPercent,
-    targetMarkupPercent,
-    manualPriceOverride,
-  });
-
   return {
-    hasEstimatorData,
-    pricingMethod,
-    targetMarginPercent,
-    targetMarkupPercent,
-    manualPriceOverride,
-    subcontractorCost,
-    equipmentCost,
-    logisticsCost,
-    miscProjectCost,
+    hasEstimatorData: summary.workItems.length > 0 || summary.otherCosts.length > 0,
     areas: Array.from(areasByName.values()),
-    totals,
+    totals: summary,
   };
 }

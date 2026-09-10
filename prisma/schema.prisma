@@ -90,6 +90,44 @@ enum ProposalPricingMethod {
   MARKUP
 }
 
+enum ProposalEstimateMethod {
+  LABOR_AND_MATERIALS
+  UNIT_PRICE
+  MANUAL_TOTAL
+  PRODUCTION_RATE
+}
+
+enum ProposalPriceVisibilityMode {
+  ITEMIZED
+  GROUPED
+  HIDDEN
+}
+
+enum GeneralLiabilityMode {
+  PERCENT_OF_LABOR
+  PERCENT_OF_REVENUE
+  FLAT_AMOUNT
+  EXCLUDED
+}
+
+enum UnitPriceRateSource {
+  SEEDED
+  MANUAL
+  HISTORICAL
+}
+
+enum ProposalMaterialPriceSourceType {
+  INVENTORY_DEFAULT
+  EXPENSE_HISTORY
+  MANUAL
+}
+
+enum ProposalMaterialLineType {
+  CATALOG
+  CUSTOM
+  MANUAL_TOTAL
+}
+
 enum ProposalCategory {
   interior_painting
   exterior_painting
@@ -797,6 +835,7 @@ model Proposal {
   estimateGrossMarginPercent      Decimal? @db.Decimal(5, 2)
   estimateEffectiveSalesRate      Decimal? @db.Decimal(10, 2)
   estimatePainterHoursTotal       Decimal? @db.Decimal(8, 2)
+  estimateSummaryJson             Json?
   expectedStartDate   DateTime?
   expectedEndDate     DateTime?
   sentAt              DateTime?
@@ -835,6 +874,34 @@ model ProductionRate {
 
   @@index([category, surfaceType, isActive])
   @@index([isActive, isDefault])
+}
+
+model UnitPriceTemplate {
+  id                         Int                 @id @default(autoincrement())
+  templateKey                String              @unique @db.VarChar(120)
+  serviceName                String
+  variantName                String
+  unitLabel                  String              @db.VarChar(80)
+  defaultPricePerUnit        Decimal             @db.Decimal(12, 2)
+  defaultLaborAllowance      Decimal?            @db.Decimal(12, 2)
+  defaultMaterialAllowance   Decimal?            @db.Decimal(12, 2)
+  notes                      String?             @db.Text
+  isActive                   Boolean             @default(true)
+  effectiveDate              DateTime            @default(now())
+  rateSource                 UnitPriceRateSource @default(SEEDED)
+  comparableJobsCount        Int                 @default(0)
+  averageActualLaborPerUnit  Decimal?            @db.Decimal(12, 2)
+  averageActualMaterialPerUnit Decimal?          @db.Decimal(12, 2)
+  averageActualTotalCostPerUnit Decimal?         @db.Decimal(12, 2)
+  averageSellingPricePerUnit Decimal?            @db.Decimal(12, 2)
+  latestComparableCompletedAt DateTime?
+  createdAt                  DateTime            @default(now())
+  updatedAt                  DateTime            @updatedAt
+
+  proposalSections ProposalSection[]
+
+  @@index([serviceName, variantName, isActive])
+  @@index([isActive, effectiveDate])
 }
 
 model ProposalExample {
@@ -922,10 +989,19 @@ model ProposalSection {
   customerDisplayLabel            String?
   priceVisibility                 String? @default("SHOW")
   groupIntoAreaPrice              Boolean @default(false)
+  phaseName                       String?
+  workCategoryLabel               String?
+  clientNotes                     String?  @db.Text
+  internalNotes                   String?  @db.Text
+  estimateMethod                  ProposalEstimateMethod?
+  priceVisibilityMode             ProposalPriceVisibilityMode? @default(ITEMIZED)
+  estimateDataJson                Json?
+  unitPriceTemplateId             Int?
 
   proposal  Proposal                  @relation(fields: [proposalId], references: [id], onDelete: Cascade)
   materials ProposalSectionMaterial[]
   productionRate ProductionRate? @relation(fields: [productionRateId], references: [id], onDelete: SetNull)
+  unitPriceTemplate UnitPriceTemplate? @relation(fields: [unitPriceTemplateId], references: [id], onDelete: SetNull)
 
   @@index([proposalId])
   @@index([proposalId, sortOrder])
@@ -950,12 +1026,21 @@ model ProposalSectionMaterial {
   adjustedQuantity      Decimal? @db.Decimal(10, 2)
   coveragePerUnitSnapshot Decimal? @db.Decimal(10, 2)
   wastePercentSnapshot  Decimal? @db.Decimal(5, 2)
+  lineType              ProposalMaterialLineType? @default(CATALOG)
+  manualTotalAmount     Decimal? @db.Decimal(12, 2)
+  internalNotes         String?  @db.Text
+  priceSourceType       ProposalMaterialPriceSourceType?
+  priceSourceLabel      String?
+  priceSourceExpenseId  Int?
+  priceSourceExpenseLineItemId Int?
   sortOrder             Int      @default(0)
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
   proposalSection ProposalSection @relation(fields: [proposalSectionId], references: [id], onDelete: Cascade)
   inventoryItem   InventoryItem?  @relation(fields: [inventoryItemId], references: [id])
+  priceSourceExpense Expense? @relation(fields: [priceSourceExpenseId], references: [id])
+  priceSourceExpenseLineItem ExpenseLineItem? @relation(fields: [priceSourceExpenseLineItemId], references: [id])
 
   @@index([proposalSectionId])
   @@index([proposalSectionId, sortOrder])
@@ -1124,6 +1209,7 @@ model Expense {
   duplicateCandidates Expense[]             @relation("ExpenseDuplicateLink")
   lineItems           ExpenseLineItem[]
   attachments         ExpenseAttachment[]
+  proposalMaterials   ProposalSectionMaterial[]
 
   @@index([jobId])
   @@index([submittedById])
@@ -1216,6 +1302,7 @@ model ExpenseLineItem {
   updatedAt   DateTime @updatedAt
 
   expense Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  proposalMaterials ProposalSectionMaterial[]
 
   @@index([expenseId])
 }
@@ -1435,6 +1522,11 @@ model Config {
   /// used only for internal margin visibility, never shown on customer-facing output.
   defaultLaborCostRate Decimal? @db.Decimal(10, 2)
   defaultProposalPricingMethod ProposalPricingMethod @default(GROSS_MARGIN)
+  defaultDesiredProfitMarginPercent Decimal @default(35) @db.Decimal(5, 2)
+  defaultGeneralLiabilityMode GeneralLiabilityMode @default(PERCENT_OF_REVENUE)
+  defaultMassTaxRate Decimal @default(5) @db.Decimal(5, 2)
+  defaultFederalTaxRate Decimal @default(12) @db.Decimal(5, 2)
+  defaultWorkDayHours Decimal @default(8) @db.Decimal(5, 2)
 
   updatedAt         DateTime @updatedAt
 }

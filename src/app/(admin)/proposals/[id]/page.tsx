@@ -8,8 +8,8 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { toast } from "sonner";
-import { SectionMaterialsAndLabor } from "./SectionMaterialsAndLabor";
-import { computeDraftProposalEstimateSummary, type ProposalWorkCategory } from "@/lib/proposal-estimator-draft";
+import { SectionMaterialsAndLabor, type LaborLineDraft, type SectionEstimateDraft, type SectionMaterialDraft } from "./SectionMaterialsAndLabor";
+import { computeDraftProposalEstimateSummary } from "@/lib/proposal-estimator-draft";
 
 const TABS = [
   { id: "scope", label: "Scope" },
@@ -74,62 +74,78 @@ type PaintColorDraft = {
   sortOrder: number;
 };
 
-type SectionMaterialDraft = {
+type OtherCostDraft = {
   key: string;
-  inventoryItemId: number | null;
-  name: string;
-  unit: string;
-  quantity: string;
-  unitCost: string;
-  markupPercent: string;
-  coveragePerUnit: string;
-  wastePercent: string;
-  calculatedQuantity: string;
-  adjustedQuantity: string;
+  label: string;
+  description: string;
+  amount: number;
+  includeInRecommendedPrice: boolean;
+  internalNote: string;
 };
 
-type SectionDraft = {
+type SectionDraft = SectionEstimateDraft & {
+  key: string;
   templateKey: string;
   title: string;
-  areaName: string;
-  workCategory: ProposalWorkCategory | "";
-  surfaceType: string;
   description: string;
   bulletItems: string[];
   notes: string;
   sortOrder: number;
-  measurementType: string;
-  measurementValue: string;
-  coats: string;
-  prepLevel: string;
-  productionRateId: number | null;
-  calculatedLaborHours: string;
-  adjustedLaborHours: string;
-  laborSellRateOverride: string;
-  additionalCharges: string;
-  materials: SectionMaterialDraft[];
+};
+
+type SavedEstimateSummary = {
+  input?: { settings?: { otherCosts?: OtherCostDraft[] } };
+  summary?: {
+    desiredProfitMarginPercent?: number | null;
+    workersCompPercent?: number;
+    includeWorkersCompInRecommendedPrice?: boolean;
+    generalLiabilityMode?: "PERCENT_OF_LABOR" | "PERCENT_OF_REVENUE" | "FLAT_AMOUNT" | "EXCLUDED";
+    generalLiabilityPercent?: number | null;
+    generalLiabilityFlatAmount?: number | null;
+    includeGeneralLiabilityInRecommendedPrice?: boolean;
+    massTaxRate?: number;
+    federalTaxRate?: number;
+    showTaxPlanning?: boolean;
+    includeTaxReserveInRecommendedPrice?: boolean;
+  };
+};
+
+type SavedSectionEstimateData = {
+  input?: SectionDraft;
 };
 
 const EMPTY_ESTIMATE_FIELDS = {
   areaName: "",
-  workCategory: "" as ProposalWorkCategory | "",
-  surfaceType: "",
-  measurementType: "SQFT",
-  measurementValue: "",
-  coats: "2",
-  prepLevel: "Normal",
-  productionRateId: null as number | null,
-  calculatedLaborHours: "",
-  adjustedLaborHours: "",
-  laborSellRateOverride: "",
-  additionalCharges: "0",
+  phaseName: "",
+  workCategoryLabel: "",
+  customerTitle: "",
+  estimateMethod: "" as SectionEstimateDraft["estimateMethod"],
+  priceVisibilityMode: "ITEMIZED" as const,
+  clientNotes: "",
+  internalNotes: "",
+  laborLines: [] as LaborLineDraft[],
   materials: [] as SectionMaterialDraft[],
+  unitPrice: null as SectionEstimateDraft["unitPrice"],
+  manualTotal: null as SectionEstimateDraft["manualTotal"],
+  production: null as SectionEstimateDraft["production"],
 };
+
+let sectionDraftKeySeq = 0;
+function nextSectionDraftKey() {
+  sectionDraftKeySeq += 1;
+  return `s-${sectionDraftKeySeq}`;
+}
 
 let materialDraftKeySeq = 0;
 function nextMaterialDraftKey() {
   materialDraftKeySeq += 1;
   return `m-${materialDraftKeySeq}`;
+}
+
+let laborDraftKeySeq = 0;
+function nextLaborDraftKey() {
+  laborDraftKeySeq += 1;
+  return `l-${laborDraftKeySeq}`;
 }
 
 const ATTACHMENT_CATEGORIES = [
@@ -139,13 +155,6 @@ const ATTACHMENT_CATEGORIES = [
   "Estimate Breakdown",
   "Other",
 ] as const;
-
-const WORK_CATEGORIES: Array<{ value: ProposalWorkCategory; label: string }> = [
-  { value: "INTERIOR", label: "Interior" },
-  { value: "EXTERIOR", label: "Exterior" },
-  { value: "PREP", label: "Prep" },
-  { value: "SPECIALTY", label: "Specialty" },
-];
 
 const SECTION_TEMPLATES = [
   "interior_painting",
@@ -162,7 +171,7 @@ const SECTION_TEMPLATES = [
 
 const SECTION_PRESETS: Record<
   (typeof SECTION_TEMPLATES)[number],
-  Omit<SectionDraft, "sortOrder" | "areaName" | "workCategory" | "surfaceType" | "measurementType" | "measurementValue" | "coats" | "prepLevel" | "productionRateId" | "calculatedLaborHours" | "adjustedLaborHours" | "laborSellRateOverride" | "additionalCharges" | "materials">
+  Omit<SectionDraft, "key" | "sortOrder" | keyof typeof EMPTY_ESTIMATE_FIELDS>
 > = {
   interior_painting: {
     templateKey: "interior_painting",
@@ -255,14 +264,22 @@ function parseCurrencyValue(value: string) {
   return Number.isFinite(parsed) ? parsed : NaN;
 }
 
-function hasEstimatorMaterialInput(material: SectionMaterialDraft) {
+function readEstimateSummary(value: unknown): SavedEstimateSummary | null {
+  return value && typeof value === "object" ? (value as SavedEstimateSummary) : null;
+}
+
+function readSectionEstimateData(value: unknown): SavedSectionEstimateData | null {
+  return value && typeof value === "object" ? (value as SavedSectionEstimateData) : null;
+}
+
+function hasEstimatorContent(section: SectionDraft) {
   return (
-    material.name.trim().length > 0 &&
-    (
-      Number(material.quantity) > 0 ||
-      Number(material.adjustedQuantity) > 0 ||
-      Number(material.coveragePerUnit) > 0
-    )
+    section.estimateMethod.trim().length > 0 ||
+    section.laborLines.length > 0 ||
+    section.materials.some((material) => material.name.trim().length > 0) ||
+    Boolean(section.unitPrice && (section.unitPrice.quantity.trim().length > 0 || section.unitPrice.pricePerUnit.trim().length > 0)) ||
+    Boolean(section.manualTotal && section.manualTotal.customerTotal.trim().length > 0) ||
+    Boolean(section.production && section.production.measurementValue.trim().length > 0)
   );
 }
 
@@ -455,14 +472,19 @@ export default function ProposalDetailPage() {
     laborBudget: 0,
     subcontractorBudget: 0,
     totalAmount: 0,
-    estimatePricingMethod: "GROSS_MARGIN" as "GROSS_MARGIN" | "MARKUP",
-    estimateTargetMarginPercent: "",
-    estimateTargetMarkupPercent: "",
+    desiredProfitMarginPercent: "",
     estimatePriceOverride: "",
-    estimateSubcontractorCost: 0,
-    estimateEquipmentCost: 0,
-    estimateLogisticsCost: 0,
-    estimateMiscProjectCost: 0,
+    workersCompPercentOverride: "",
+    includeWorkersCompInRecommendedPrice: true,
+    generalLiabilityMode: "PERCENT_OF_REVENUE" as "PERCENT_OF_LABOR" | "PERCENT_OF_REVENUE" | "FLAT_AMOUNT" | "EXCLUDED",
+    generalLiabilityPercent: "",
+    generalLiabilityFlatAmount: "",
+    includeGeneralLiabilityInRecommendedPrice: true,
+    massTaxRate: "",
+    federalTaxRate: "",
+    showTaxPlanning: true,
+    includeTaxReserveInRecommendedPrice: false,
+    otherCosts: [] as OtherCostDraft[],
     expectedStartDate: "",
     expectedEndDate: "",
     sections: [] as SectionDraft[],
@@ -474,12 +496,14 @@ export default function ProposalDetailPage() {
   const config = api.config.get.useQuery();
   const estimatorDefaults = useMemo(
     () => ({
-      defaultLaborSellRate: config.data?.defaultLaborSellRate != null ? Number(config.data.defaultLaborSellRate) : null,
       defaultLaborCostRate: config.data?.defaultLaborCostRate != null ? Number(config.data.defaultLaborCostRate) : null,
-      defaultMarkup: config.data ? Number(config.data.defaultMarkup) : 27,
       defaultWcPercent: config.data ? Number(config.data.defaultWcPercent) : 3.5,
-      defaultOverhead: config.data ? Number(config.data.defaultOverhead) : 12,
-      defaultProposalPricingMethod: config.data?.defaultProposalPricingMethod ?? "GROSS_MARGIN",
+      defaultDesiredProfitMarginPercent: config.data ? Number(config.data.defaultDesiredProfitMarginPercent ?? 35) : 35,
+      defaultGlPercent: config.data ? Number(config.data.defaultGlPercent ?? 0) : 0,
+      defaultGeneralLiabilityMode: config.data?.defaultGeneralLiabilityMode ?? "PERCENT_OF_REVENUE",
+      defaultMassTaxRate: config.data ? Number(config.data.defaultMassTaxRate ?? 5) : 5,
+      defaultFederalTaxRate: config.data ? Number(config.data.defaultFederalTaxRate ?? 12) : 12,
+      defaultWorkDayHours: config.data ? Number(config.data.defaultWorkDayHours ?? 8) : 8,
     }),
     [config.data]
   );
@@ -490,22 +514,27 @@ export default function ProposalDetailPage() {
         sections: form.sections,
         defaults: estimatorDefaults,
         pricing: {
-          estimatePricingMethod: form.estimatePricingMethod,
-          estimateTargetMarginPercent: form.estimateTargetMarginPercent,
-          estimateTargetMarkupPercent: form.estimateTargetMarkupPercent,
+          desiredProfitMarginPercent: form.desiredProfitMarginPercent,
           estimatePriceOverride: form.estimatePriceOverride,
-          estimateSubcontractorCost: form.estimateSubcontractorCost,
-          estimateEquipmentCost: form.estimateEquipmentCost,
-          estimateLogisticsCost: form.estimateLogisticsCost,
-          estimateMiscProjectCost: form.estimateMiscProjectCost,
+          workersCompPercentOverride: form.workersCompPercentOverride,
+          includeWorkersCompInRecommendedPrice: form.includeWorkersCompInRecommendedPrice,
+          generalLiabilityMode: form.generalLiabilityMode,
+          generalLiabilityPercent: form.generalLiabilityPercent,
+          generalLiabilityFlatAmount: form.generalLiabilityFlatAmount,
+          includeGeneralLiabilityInRecommendedPrice: form.includeGeneralLiabilityInRecommendedPrice,
+          massTaxRate: form.massTaxRate,
+          federalTaxRate: form.federalTaxRate,
+          showTaxPlanning: form.showTaxPlanning,
+          includeTaxReserveInRecommendedPrice: form.includeTaxReserveInRecommendedPrice,
+          otherCosts: form.otherCosts,
         },
       }),
-    [form.sections, form.estimatePricingMethod, form.estimateTargetMarginPercent, form.estimateTargetMarkupPercent, form.estimatePriceOverride, form.estimateSubcontractorCost, form.estimateEquipmentCost, form.estimateLogisticsCost, form.estimateMiscProjectCost, estimatorDefaults]
+    [form.sections, form.desiredProfitMarginPercent, form.estimatePriceOverride, form.workersCompPercentOverride, form.includeWorkersCompInRecommendedPrice, form.generalLiabilityMode, form.generalLiabilityPercent, form.generalLiabilityFlatAmount, form.includeGeneralLiabilityInRecommendedPrice, form.massTaxRate, form.federalTaxRate, form.showTaxPlanning, form.includeTaxReserveInRecommendedPrice, form.otherCosts, estimatorDefaults]
   );
 
-  const computedScopesTotal = estimatorSummary.areas.reduce((sum, area) => sum + area.subtotal, 0);
+  const computedScopesTotal = estimatorSummary.areas.reduce((sum, area) => sum + area.allocatedCustomerPrice, 0);
   const displayFinalProposalPrice = estimatorSummary.hasEstimatorData
-    ? estimatorSummary.totals.finalProposalPrice ?? estimatorSummary.totals.recommendedSellingPrice ?? form.totalAmount
+    ? estimatorSummary.totals.finalCustomerPrice ?? estimatorSummary.totals.recommendedCustomerPrice ?? form.totalAmount
     : form.totalAmount;
 
   const update = api.proposals.update.useMutation({
@@ -532,6 +561,7 @@ export default function ProposalDetailPage() {
         totalAmount: current.totalAmount > 0 ? current.totalAmount : draft.totalAmount ?? current.totalAmount,
         sections: draft.sections.length
           ? draft.sections.map((section, index) => ({
+              key: nextSectionDraftKey(),
               templateKey: section.templateKey || "custom_section",
               title: section.title,
               description: section.description || "",
@@ -549,6 +579,8 @@ export default function ProposalDetailPage() {
 
   useEffect(() => {
     if (!proposal) return;
+    const estimateSummary = readEstimateSummary(proposal.estimateSummaryJson);
+
     setCustomerSearch(proposal.customer?.name ?? "");
     setForm({
       customerId: proposal.customerId ?? 0,
@@ -577,56 +609,84 @@ export default function ProposalDetailPage() {
       laborBudget: Number(proposal.laborBudget),
       subcontractorBudget: Number(proposal.subcontractorBudget),
       totalAmount: Number(proposal.totalAmount),
-      estimatePricingMethod: (proposal.estimatePricingMethod as "GROSS_MARGIN" | "MARKUP" | null) || (config.data?.defaultProposalPricingMethod ?? "GROSS_MARGIN"),
-      estimateTargetMarginPercent: proposal.estimateTargetMarginPercent == null ? "" : String(proposal.estimateTargetMarginPercent),
-      estimateTargetMarkupPercent: proposal.estimateTargetMarkupPercent == null ? "" : String(proposal.estimateTargetMarkupPercent),
+      desiredProfitMarginPercent:
+        estimateSummary?.summary?.desiredProfitMarginPercent == null
+          ? proposal.estimateTargetMarginPercent == null ? "" : String(proposal.estimateTargetMarginPercent)
+          : String(estimateSummary.summary.desiredProfitMarginPercent),
       estimatePriceOverride: proposal.estimatePriceOverride == null ? "" : String(proposal.estimatePriceOverride),
-      estimateSubcontractorCost: Number(proposal.estimateSubcontractorCost ?? 0),
-      estimateEquipmentCost: Number(proposal.estimateEquipmentCost ?? 0),
-      estimateLogisticsCost: Number(proposal.estimateLogisticsCost ?? 0),
-      estimateMiscProjectCost: Number(proposal.estimateMiscProjectCost ?? 0),
+      workersCompPercentOverride:
+        estimateSummary?.summary?.workersCompPercent == null ? "" : String(estimateSummary.summary.workersCompPercent),
+      includeWorkersCompInRecommendedPrice: estimateSummary?.summary?.includeWorkersCompInRecommendedPrice ?? true,
+      generalLiabilityMode: estimateSummary?.summary?.generalLiabilityMode ?? "PERCENT_OF_REVENUE",
+      generalLiabilityPercent:
+        estimateSummary?.summary?.generalLiabilityPercent == null ? "" : String(estimateSummary.summary.generalLiabilityPercent),
+      generalLiabilityFlatAmount:
+        estimateSummary?.summary?.generalLiabilityFlatAmount == null ? "" : String(estimateSummary.summary.generalLiabilityFlatAmount),
+      includeGeneralLiabilityInRecommendedPrice: estimateSummary?.summary?.includeGeneralLiabilityInRecommendedPrice ?? true,
+      massTaxRate: estimateSummary?.summary?.massTaxRate == null ? "" : String(estimateSummary.summary.massTaxRate),
+      federalTaxRate: estimateSummary?.summary?.federalTaxRate == null ? "" : String(estimateSummary.summary.federalTaxRate),
+      showTaxPlanning: estimateSummary?.summary?.showTaxPlanning ?? true,
+      includeTaxReserveInRecommendedPrice: estimateSummary?.summary?.includeTaxReserveInRecommendedPrice ?? false,
+      otherCosts: estimateSummary?.input?.settings?.otherCosts?.length
+        ? estimateSummary.input.settings.otherCosts.map((line) => ({
+            key: line.key,
+            label: line.label,
+            description: line.description || "",
+            amount: Number(line.amount ?? 0),
+            includeInRecommendedPrice: line.includeInRecommendedPrice,
+            internalNote: line.internalNote || "",
+          }))
+        : [
+            { key: "subcontractors", label: "Subcontractors", description: "", amount: Number(proposal.estimateSubcontractorCost ?? 0), includeInRecommendedPrice: true, internalNote: "" },
+            { key: "equipment", label: "Equipment rentals", description: "", amount: Number(proposal.estimateEquipmentCost ?? 0), includeInRecommendedPrice: true, internalNote: "" },
+            { key: "travel", label: "Fuel and transportation", description: "", amount: Number(proposal.estimateLogisticsCost ?? 0), includeInRecommendedPrice: true, internalNote: "" },
+            { key: "misc", label: "Miscellaneous costs", description: "", amount: Number(proposal.estimateMiscProjectCost ?? 0), includeInRecommendedPrice: true, internalNote: "" },
+          ].filter((line) => line.amount > 0),
       expectedStartDate: proposal.expectedStartDate ? new Date(proposal.expectedStartDate).toISOString().slice(0, 10) : "",
       expectedEndDate: proposal.expectedEndDate ? new Date(proposal.expectedEndDate).toISOString().slice(0, 10) : "",
       sections: proposal.sections.length
         ? proposal.sections.map((section) => {
-            const estimatorSection = section as typeof section & {
-              workCategory?: ProposalWorkCategory | null;
-              surfaceType?: string | null;
-            };
-
+            const estimateData = readSectionEstimateData(section.estimateDataJson);
+            const inputSection = estimateData?.input;
             return {
-            templateKey: section.templateKey || "custom_section",
-            title: section.title,
-            areaName: section.areaName || "",
-            workCategory: estimatorSection.workCategory || "",
-            surfaceType: estimatorSection.surfaceType || "",
-            description: section.description || "",
-            bulletItems: section.bulletItems.length ? section.bulletItems : [""],
-            notes: section.notes || "",
-            sortOrder: section.sortOrder,
-            measurementType: section.measurementType || "SQFT",
-            measurementValue: section.measurementValue == null ? "" : String(section.measurementValue),
-            coats: section.coats == null ? "2" : String(section.coats),
-            prepLevel: section.prepLevel || "Normal",
-            productionRateId: section.productionRateId ?? null,
-            calculatedLaborHours: section.calculatedLaborHours == null ? "" : String(section.calculatedLaborHours),
-            adjustedLaborHours: section.adjustedLaborHours == null ? "" : String(section.adjustedLaborHours),
-            laborSellRateOverride: section.laborSellRateSnapshot == null ? "" : String(section.laborSellRateSnapshot),
-            additionalCharges: String(section.additionalCharges ?? 0),
-            materials: section.materials.map((m) => ({
-              key: nextMaterialDraftKey(),
-              inventoryItemId: m.inventoryItemId,
-              name: m.nameSnapshot,
-              unit: m.unitSnapshot,
-              quantity: m.calculatedQuantity != null && m.adjustedQuantity == null ? "" : String(m.quantity),
-              unitCost: String(m.unitCostSnapshot),
-              markupPercent: String(m.markupPercentSnapshot),
-              coveragePerUnit: m.coveragePerUnitSnapshot == null ? "" : String(m.coveragePerUnitSnapshot),
-              wastePercent: m.wastePercentSnapshot == null ? "" : String(m.wastePercentSnapshot),
-              calculatedQuantity: m.calculatedQuantity == null ? "" : String(m.calculatedQuantity),
-              adjustedQuantity: m.adjustedQuantity == null ? "" : String(m.adjustedQuantity),
-            })),
-          };
+              key: inputSection?.key || nextSectionDraftKey(),
+              templateKey: section.templateKey || "custom_section",
+              title: section.title,
+              description: section.description || "",
+              bulletItems: section.bulletItems.length ? section.bulletItems : [""],
+              notes: section.notes || "",
+              sortOrder: section.sortOrder,
+              areaName: inputSection?.areaName || section.areaName || "",
+              phaseName: inputSection?.phaseName || section.phaseName || "",
+              workCategoryLabel: inputSection?.workCategoryLabel || section.workCategoryLabel || "",
+              customerTitle: inputSection?.customerTitle || section.customerDisplayLabel || "",
+              estimateMethod: inputSection?.estimateMethod || (section.estimateMethod ?? ""),
+              priceVisibilityMode: inputSection?.priceVisibilityMode || (section.priceVisibilityMode ?? "ITEMIZED"),
+              clientNotes: inputSection?.clientNotes || (section.clientNotes ?? ""),
+              internalNotes: inputSection?.internalNotes || (section.internalNotes ?? ""),
+              laborLines: inputSection?.laborLines ?? [],
+              materials: inputSection?.materials ?? section.materials.map((m) => ({
+                key: nextMaterialDraftKey(),
+                inventoryItemId: m.inventoryItemId,
+                type: m.lineType ?? "CUSTOM",
+                name: m.nameSnapshot,
+                unit: m.unitSnapshot,
+                quantity: String(m.quantity ?? ""),
+                unitCost: String(m.unitCostSnapshot ?? ""),
+                manualTotal: m.manualTotalAmount == null ? "" : String(m.manualTotalAmount),
+                coveragePerUnit: m.coveragePerUnitSnapshot == null ? "" : String(m.coveragePerUnitSnapshot),
+                wastePercent: m.wastePercentSnapshot == null ? "" : String(m.wastePercentSnapshot),
+                adjustedQuantity: m.adjustedQuantity == null ? "" : String(m.adjustedQuantity),
+                note: m.internalNotes ?? "",
+                priceSourceType: m.priceSourceType ?? null,
+                priceSourceLabel: m.priceSourceLabel ?? "",
+                priceSourceExpenseId: m.priceSourceExpenseId ?? null,
+                priceSourceExpenseLineItemId: m.priceSourceExpenseLineItemId ?? null,
+              })),
+              unitPrice: inputSection?.unitPrice ?? null,
+              manualTotal: inputSection?.manualTotal ?? null,
+              production: inputSection?.production ?? null,
+            };
           })
         : buildLegacySections(proposal),
       options: proposal.options.map((o) => ({
@@ -709,6 +769,21 @@ export default function ProposalDetailPage() {
     [savedSectionsPreview]
   );
 
+  const previewWorkItemsByKey = useMemo(
+    () => new Map(estimatorSummary.totals.workItems.map((item) => [item.key, item])),
+    [estimatorSummary.totals.workItems]
+  );
+
+  const groupedPreviewPrices = useMemo(() => {
+    const grouped = new Map<string, number>();
+    for (const item of estimatorSummary.totals.workItems) {
+      if (item.priceVisibility !== "GROUPED") continue;
+      const current = grouped.get(item.areaName) ?? 0;
+      grouped.set(item.areaName, current + item.allocatedCustomerPrice);
+    }
+    return Array.from(grouped.entries()).map(([areaName, total]) => ({ areaName, total }));
+  }, [estimatorSummary.totals.workItems]);
+
   const activityItems = useMemo(() => {
     if (!proposal) return [] as { label: string; timestamp: Date; detail?: string }[];
 
@@ -748,9 +823,9 @@ export default function ProposalDetailPage() {
   }, [proposal]);
 
   const onSave = () => {
-    const legacyMaterialsBudget = estimatorSummary.hasEstimatorData ? estimatorSummary.totals.materialCost : form.materialsBudget;
-    const legacyLaborBudget = estimatorSummary.hasEstimatorData ? estimatorSummary.totals.loadedLaborCost : form.laborBudget;
-    const legacySubcontractorBudget = estimatorSummary.hasEstimatorData ? estimatorSummary.totals.subcontractorCost : form.subcontractorBudget;
+    const legacyMaterialsBudget = estimatorSummary.hasEstimatorData ? estimatorSummary.totals.materialsCost : form.materialsBudget;
+    const legacyLaborBudget = estimatorSummary.hasEstimatorData ? estimatorSummary.totals.directLaborCost : form.laborBudget;
+    const legacySubcontractorBudget = form.otherCosts.find((line) => line.key === "subcontractors")?.amount ?? form.subcontractorBudget;
     const totalAmount = estimatorSummary.hasEstimatorData ? displayFinalProposalPrice : form.totalAmount;
 
     const optionsPayload = form.options
@@ -791,42 +866,97 @@ export default function ProposalDetailPage() {
       }));
 
     const sectionsPayload = form.sections
-      .filter((section) => isMeaningfulRow([section.title, section.description, section.notes]) || section.bulletItems.some((item) => item.trim().length > 0) || section.materials.some(hasEstimatorMaterialInput) || Number(section.adjustedLaborHours || section.calculatedLaborHours) > 0)
+      .filter((section) => isMeaningfulRow([section.title, section.description, section.notes]) || section.bulletItems.some((item) => item.trim().length > 0) || hasEstimatorContent(section))
       .map((section, index) => ({
+        key: section.key,
         templateKey: section.templateKey || undefined,
         title: section.title.trim() || `Section ${index + 1}`,
+        customerTitle: section.customerTitle.trim() || undefined,
         description: section.description.trim() || undefined,
         bulletItems: section.bulletItems.map((item) => item.trim()).filter(Boolean),
         notes: section.notes.trim() || undefined,
         sortOrder: section.sortOrder || index,
         areaName: section.areaName?.trim() || section.title.trim() || undefined,
-        workCategory: section.workCategory || null,
-        surfaceType: section.surfaceType.trim() || undefined,
-        measurementType: section.measurementType,
-        measurementValue: section.measurementValue.trim() ? Number(section.measurementValue) : null,
-        coats: section.coats.trim() ? Number(section.coats) : null,
-        prepLevel: section.prepLevel.trim() || undefined,
-        productionRateId: section.productionRateId,
-        calculatedLaborHours: section.calculatedLaborHours.trim() ? Number(section.calculatedLaborHours) : null,
-        adjustedLaborHours: section.adjustedLaborHours.trim() ? Number(section.adjustedLaborHours) : null,
-        directLaborCostRate: null,
-        laborSellRateOverride: section.laborSellRateOverride.trim() ? Number(section.laborSellRateOverride) : null,
-        additionalCharges: section.additionalCharges.trim() ? Number(section.additionalCharges) : 0,
+        phaseName: section.phaseName.trim() || undefined,
+        workCategoryLabel: section.workCategoryLabel.trim() || undefined,
+        estimateMethod: section.estimateMethod || null,
+        priceVisibilityMode: section.priceVisibilityMode,
+        clientNotes: section.clientNotes.trim() || undefined,
+        internalNotes: section.internalNotes.trim() || undefined,
+        laborLines: section.laborLines
+          .filter((line) => line.label.trim().length > 0 || Number(line.manualTotalOverride) > 0 || Number(line.workers) > 0)
+          .map((line) => ({
+            key: line.key,
+            label: line.label.trim() || "Labor",
+            mode: line.mode,
+            workers: Number(line.workers) || 0,
+            hoursPerWorker: line.hoursPerWorker.trim() ? Number(line.hoursPerWorker) : null,
+            days: line.days.trim() ? Number(line.days) : null,
+            hoursPerDay: line.hoursPerDay.trim() ? Number(line.hoursPerDay) : null,
+            hourlyCost: Number(line.hourlyCost) || 0,
+            manualTotalOverride: line.manualTotalOverride.trim() ? Number(line.manualTotalOverride) : null,
+            internalNote: line.internalNote.trim() || undefined,
+          })),
         materials: section.materials
-          .filter(hasEstimatorMaterialInput)
+          .filter((m) => m.name.trim().length > 0)
           .map((m, mIndex) => ({
+            key: m.key,
             inventoryItemId: m.inventoryItemId,
+            type: m.type,
             name: m.name.trim(),
             unit: m.unit.trim() || "unit",
-            quantity: Number(m.quantity) || 0,
-            unitCost: Number(m.unitCost) || 0,
-            markupPercent: m.markupPercent.trim() ? Number(m.markupPercent) : null,
+            quantity: m.quantity.trim() ? Number(m.quantity) : null,
+            unitCost: m.unitCost.trim() ? Number(m.unitCost) : null,
+            manualTotal: m.manualTotal.trim() ? Number(m.manualTotal) : null,
             coveragePerUnit: m.coveragePerUnit.trim() ? Number(m.coveragePerUnit) : null,
             wastePercent: m.wastePercent.trim() ? Number(m.wastePercent) : 0,
-            calculatedQuantity: m.calculatedQuantity.trim() ? Number(m.calculatedQuantity) : null,
             adjustedQuantity: m.adjustedQuantity.trim() ? Number(m.adjustedQuantity) : null,
+            note: m.note.trim() || undefined,
+            priceSourceType: m.priceSourceType,
+            priceSourceLabel: m.priceSourceLabel.trim() || undefined,
+            priceSourceExpenseId: m.priceSourceExpenseId,
+            priceSourceExpenseLineItemId: m.priceSourceExpenseLineItemId,
             sortOrder: mIndex,
           })),
+        unitPrice: section.unitPrice
+          ? {
+              templateId: section.unitPrice.templateId,
+              serviceName: section.unitPrice.serviceName.trim() || undefined,
+              variantName: section.unitPrice.variantName.trim() || undefined,
+              unitLabel: section.unitPrice.unitLabel.trim() || undefined,
+              quantity: Number(section.unitPrice.quantity) || 0,
+              pricePerUnit: Number(section.unitPrice.pricePerUnit) || 0,
+              lineTotalOverride: section.unitPrice.lineTotalOverride.trim() ? Number(section.unitPrice.lineTotalOverride) : null,
+              laborAllowance: section.unitPrice.laborAllowance.trim() ? Number(section.unitPrice.laborAllowance) : null,
+              materialAllowance: section.unitPrice.materialAllowance.trim() ? Number(section.unitPrice.materialAllowance) : null,
+              note: section.unitPrice.note.trim() || undefined,
+              rateSource: section.unitPrice.rateSource,
+            }
+          : null,
+        manualTotal: section.manualTotal
+          ? {
+              customerTotal: Number(section.manualTotal.customerTotal) || 0,
+              internalCost: section.manualTotal.internalCost.trim() ? Number(section.manualTotal.internalCost) : null,
+              note: section.manualTotal.note.trim() || undefined,
+            }
+          : null,
+        production: section.production
+          ? {
+              workCategory: section.production.workCategory.trim() || undefined,
+              surfaceType: section.production.surfaceType.trim() || undefined,
+              measurementUnit: section.production.measurementUnit.trim() || undefined,
+              measurementValue: Number(section.production.measurementValue) || 0,
+              productionRateBasis: section.production.productionRateBasis,
+              productionRateValue: Number(section.production.productionRateValue) || 0,
+              calculatedLaborHours: section.production.calculatedLaborHours.trim() ? Number(section.production.calculatedLaborHours) : null,
+              adjustedLaborHours: section.production.adjustedLaborHours.trim() ? Number(section.production.adjustedLaborHours) : null,
+              crewSize: section.production.crewSize.trim() ? Number(section.production.crewSize) : null,
+              hoursPerDay: section.production.hoursPerDay.trim() ? Number(section.production.hoursPerDay) : null,
+              hourlyCostPerWorker: section.production.hourlyCostPerWorker.trim() ? Number(section.production.hourlyCostPerWorker) : null,
+              note: section.production.note.trim() || undefined,
+              productionRateId: section.production.productionRateId,
+            }
+          : null,
       }));
 
     update.mutate({
@@ -858,14 +988,26 @@ export default function ProposalDetailPage() {
         laborBudget: legacyLaborBudget,
         subcontractorBudget: legacySubcontractorBudget,
         totalAmount,
-        estimatePricingMethod: form.estimatePricingMethod,
-        estimateTargetMarginPercent: form.estimatePricingMethod === "GROSS_MARGIN" && form.estimateTargetMarginPercent.trim() ? Number(form.estimateTargetMarginPercent) : null,
-        estimateTargetMarkupPercent: form.estimatePricingMethod === "MARKUP" && form.estimateTargetMarkupPercent.trim() ? Number(form.estimateTargetMarkupPercent) : null,
+        estimatePricingMethod: "GROSS_MARGIN",
+        estimateTargetMarginPercent: form.desiredProfitMarginPercent.trim() ? Number(form.desiredProfitMarginPercent) : null,
+        estimateTargetMarkupPercent: null,
         estimatePriceOverride: form.estimatePriceOverride.trim() ? Number(form.estimatePriceOverride) : null,
-        estimateSubcontractorCost: form.estimateSubcontractorCost,
-        estimateEquipmentCost: form.estimateEquipmentCost,
-        estimateLogisticsCost: form.estimateLogisticsCost,
-        estimateMiscProjectCost: form.estimateMiscProjectCost,
+        estimateSubcontractorCost: form.otherCosts.find((line) => line.key === "subcontractors")?.amount ?? 0,
+        estimateEquipmentCost: form.otherCosts.find((line) => line.key === "equipment")?.amount ?? 0,
+        estimateLogisticsCost: form.otherCosts.find((line) => line.key === "travel")?.amount ?? 0,
+        estimateMiscProjectCost: form.otherCosts.find((line) => line.key === "misc")?.amount ?? 0,
+        desiredProfitMarginPercent: form.desiredProfitMarginPercent.trim() ? Number(form.desiredProfitMarginPercent) : null,
+        workersCompPercentOverride: form.workersCompPercentOverride.trim() ? Number(form.workersCompPercentOverride) : null,
+        includeWorkersCompInRecommendedPrice: form.includeWorkersCompInRecommendedPrice,
+        generalLiabilityMode: form.generalLiabilityMode,
+        generalLiabilityPercent: form.generalLiabilityPercent.trim() ? Number(form.generalLiabilityPercent) : null,
+        generalLiabilityFlatAmount: form.generalLiabilityFlatAmount.trim() ? Number(form.generalLiabilityFlatAmount) : null,
+        includeGeneralLiabilityInRecommendedPrice: form.includeGeneralLiabilityInRecommendedPrice,
+        massTaxRate: form.massTaxRate.trim() ? Number(form.massTaxRate) : null,
+        federalTaxRate: form.federalTaxRate.trim() ? Number(form.federalTaxRate) : null,
+        showTaxPlanning: form.showTaxPlanning,
+        includeTaxReserveInRecommendedPrice: form.includeTaxReserveInRecommendedPrice,
+        otherCosts: form.otherCosts,
         expectedStartDate: form.expectedStartDate ? new Date(form.expectedStartDate) : null,
         expectedEndDate: form.expectedEndDate ? new Date(form.expectedEndDate) : null,
         sections: sectionsPayload,
@@ -919,6 +1061,7 @@ export default function ProposalDetailPage() {
       sections: [
         ...current.sections,
         {
+          key: nextSectionDraftKey(),
           ...preset,
           ...EMPTY_ESTIMATE_FIELDS,
           areaName: areaName?.trim() || "",
@@ -940,7 +1083,9 @@ export default function ProposalDetailPage() {
                 section,
                 {
                   ...target,
+                  key: nextSectionDraftKey(),
                   bulletItems: [...target.bulletItems],
+                  laborLines: target.laborLines.map((line) => ({ ...line, key: nextLaborDraftKey() })),
                   materials: target.materials.map((m) => ({ ...m, key: nextMaterialDraftKey() })),
                   sortOrder: current.sections.length,
                 },
@@ -1326,10 +1471,10 @@ export default function ProposalDetailPage() {
                   {estimatorSummary.areas.map((area) => (
                     <div key={area.areaName} className="rounded-md border border-slate-200 bg-white p-3 text-sm">
                       <div className="font-medium">{area.areaName}</div>
-                      <div className="text-slate-600 mt-1">{area.items.length} item{area.items.length === 1 ? "" : "s"}</div>
-                      <div className="text-slate-600">Hours: {area.painterHours.toFixed(2)}</div>
-                      <div className="text-slate-600">Loaded labor: {formatCurrency(area.loadedLaborCost)}</div>
-                      <div className="font-semibold mt-1">Subtotal: {formatCurrency(area.subtotal)}</div>
+                      <div className="text-slate-600 mt-1">{area.workItems.length} item{area.workItems.length === 1 ? "" : "s"}</div>
+                      <div className="text-slate-600">Direct labor: {formatCurrency(area.directLaborCost)}</div>
+                      <div className="text-slate-600">Internal cost: {formatCurrency(area.internalCost)}</div>
+                      <div className="font-semibold mt-1">Allocated price: {formatCurrency(area.allocatedCustomerPrice)}</div>
                     </div>
                   ))}
                 </div>
@@ -1349,7 +1494,7 @@ export default function ProposalDetailPage() {
                           {collapsed ? "▶" : "▼"} {section.title || `Scope Item ${index + 1}`}
                         </button>
                         <div className="text-xs text-slate-500">
-                          {(section.areaName || "General Area")}{section.workCategory ? ` · ${WORK_CATEGORIES.find((option) => option.value === section.workCategory)?.label}` : ""}{section.surfaceType ? ` · ${section.surfaceType}` : ""}
+                          {[section.areaName || "General Area", section.phaseName, section.workCategoryLabel, section.estimateMethod].filter(Boolean).join(" · ")}
                         </div>
                         <div className="flex gap-2">
                           <button className="btn btn-secondary" disabled={isReadOnly || index === 0} onClick={() => moveSection(index, -1)}>Up</button>
@@ -1367,18 +1512,18 @@ export default function ProposalDetailPage() {
                           <SectionMaterialsAndLabor
                             value={{
                               areaName: section.areaName,
-                              workCategory: section.workCategory,
-                              surfaceType: section.surfaceType,
+                              phaseName: section.phaseName,
+                              workCategoryLabel: section.workCategoryLabel,
+                              customerTitle: section.customerTitle,
+                              estimateMethod: section.estimateMethod,
+                              priceVisibilityMode: section.priceVisibilityMode,
+                              clientNotes: section.clientNotes,
+                              internalNotes: section.internalNotes,
+                              laborLines: section.laborLines,
                               materials: section.materials,
-                              measurementType: section.measurementType,
-                              measurementValue: section.measurementValue,
-                              coats: section.coats,
-                              prepLevel: section.prepLevel,
-                              productionRateId: section.productionRateId,
-                              calculatedLaborHours: section.calculatedLaborHours,
-                              adjustedLaborHours: section.adjustedLaborHours,
-                              laborSellRateOverride: section.laborSellRateOverride,
-                              additionalCharges: section.additionalCharges,
+                              unitPrice: section.unitPrice,
+                              manualTotal: section.manualTotal,
+                              production: section.production,
                             }}
                             onChange={(next) =>
                               setForm((f) => ({
@@ -1388,6 +1533,7 @@ export default function ProposalDetailPage() {
                             }
                             disabled={isReadOnly}
                             makeMaterialKey={nextMaterialDraftKey}
+                            makeLaborKey={nextLaborDraftKey}
                           />
                         </div>
                       )}
@@ -1404,100 +1550,132 @@ export default function ProposalDetailPage() {
         <div className="space-y-4">
           <div className="grid md:grid-cols-2 gap-4">
             <div className="card p-5">
-            <div className="flex items-center justify-between gap-3 mb-3">
-              <div>
-                <h2 className="text-base font-semibold">Estimator Controls</h2>
-                <p className="text-sm text-slate-500">Set the pricing method, project costs, and optional final-price override.</p>
-              </div>
-              {estimatorSummary.hasEstimatorData ? (
-                <div className="text-right">
-                  <div className="text-xs uppercase tracking-wide text-slate-500">Current Final Price</div>
-                  <div className="text-lg font-semibold text-slate-900">{formatCurrency(displayFinalProposalPrice)}</div>
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <div>
+                  <h2 className="text-base font-semibold">Estimator Controls</h2>
+                  <p className="text-sm text-slate-500">Set margin, other project costs, insurance, taxes, and any final override.</p>
                 </div>
-              ) : null}
-            </div>
-            <div className="grid md:grid-cols-2 gap-3">
-              <div>
-                <label className="label">Pricing Method</label>
-                <select
-                  className="input"
-                  value={form.estimatePricingMethod}
-                  disabled={isReadOnly}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      estimatePricingMethod: e.target.value as "GROSS_MARGIN" | "MARKUP",
-                    }))
-                  }
-                >
-                  <option value="GROSS_MARGIN">Gross margin</option>
-                  <option value="MARKUP">Markup</option>
-                </select>
+                {estimatorSummary.hasEstimatorData ? (
+                  <div className="text-right">
+                    <div className="text-xs uppercase tracking-wide text-slate-500">Final customer price</div>
+                    <div className="text-lg font-semibold text-slate-900">{formatCurrency(displayFinalProposalPrice)}</div>
+                  </div>
+                ) : null}
               </div>
-              <div>
-                <label className="label">
-                  {form.estimatePricingMethod === "GROSS_MARGIN" ? "Target Gross Margin %" : "Target Markup %"}
-                </label>
-                <input
-                  className="input"
-                  type="text"
-                  inputMode="decimal"
-                  value={form.estimatePricingMethod === "GROSS_MARGIN" ? form.estimateTargetMarginPercent : form.estimateTargetMarkupPercent}
-                  disabled={isReadOnly}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      [f.estimatePricingMethod === "GROSS_MARGIN" ? "estimateTargetMarginPercent" : "estimateTargetMarkupPercent"]: sanitizeNumericInput(e.target.value),
-                    }))
-                  }
-                />
-              </div>
-              <FieldNumber label="Subcontractor Cost" value={form.estimateSubcontractorCost} onChange={(v) => setForm((f) => ({ ...f, estimateSubcontractorCost: v }))} disabled={isReadOnly} />
-              <FieldNumber label="Equipment Cost" value={form.estimateEquipmentCost} onChange={(v) => setForm((f) => ({ ...f, estimateEquipmentCost: v }))} disabled={isReadOnly} />
-              <FieldNumber label="Logistics Cost" value={form.estimateLogisticsCost} onChange={(v) => setForm((f) => ({ ...f, estimateLogisticsCost: v }))} disabled={isReadOnly} />
-              <FieldNumber label="Miscellaneous Cost" value={form.estimateMiscProjectCost} onChange={(v) => setForm((f) => ({ ...f, estimateMiscProjectCost: v }))} disabled={isReadOnly} />
-              <div className="md:col-span-2">
-                <label className="label">Authorized Final Price Override</label>
-                <div className="flex gap-2">
+              <div className="grid md:grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Desired profit margin %</label>
+                  <input className="input" type="text" inputMode="decimal" value={form.desiredProfitMarginPercent} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, desiredProfitMarginPercent: sanitizeNumericInput(e.target.value) }))} />
+                </div>
+                <div>
+                  <label className="label">Authorized final price override</label>
+                  <input className="input" type="text" inputMode="decimal" value={form.estimatePriceOverride} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, estimatePriceOverride: sanitizeNumericInput(e.target.value) }))} />
+                </div>
+                <div>
+                  <label className="label">Workers' comp %</label>
+                  <input className="input" type="text" inputMode="decimal" value={form.workersCompPercentOverride} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, workersCompPercentOverride: sanitizeNumericInput(e.target.value) }))} placeholder={String(estimatorDefaults.defaultWcPercent)} />
+                </div>
+                <div className="flex items-end">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={form.includeWorkersCompInRecommendedPrice} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, includeWorkersCompInRecommendedPrice: e.target.checked }))} />
+                    Include workers' comp in recommended price
+                  </label>
+                </div>
+                <div>
+                  <label className="label">General liability basis</label>
+                  <select className="input" value={form.generalLiabilityMode} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, generalLiabilityMode: e.target.value as typeof form.generalLiabilityMode }))}>
+                    <option value="PERCENT_OF_LABOR">% of labor</option>
+                    <option value="PERCENT_OF_REVENUE">% of revenue</option>
+                    <option value="FLAT_AMOUNT">Flat amount</option>
+                    <option value="EXCLUDED">Excluded</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="label">{form.generalLiabilityMode === "FLAT_AMOUNT" ? "General liability flat amount" : "General liability rate %"}</label>
                   <input
-                    className="input flex-1"
+                    className="input"
                     type="text"
                     inputMode="decimal"
-                    placeholder={estimatorSummary.totals.recommendedSellingPrice != null ? `Recommended ${formatCurrency(estimatorSummary.totals.recommendedSellingPrice)}` : "Leave blank to use recommendation"}
-                    value={form.estimatePriceOverride}
+                    value={form.generalLiabilityMode === "FLAT_AMOUNT" ? form.generalLiabilityFlatAmount : form.generalLiabilityPercent}
                     disabled={isReadOnly}
-                    onChange={(e) => setForm((f) => ({ ...f, estimatePriceOverride: sanitizeNumericInput(e.target.value) }))}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        [f.generalLiabilityMode === "FLAT_AMOUNT" ? "generalLiabilityFlatAmount" : "generalLiabilityPercent"]: sanitizeNumericInput(e.target.value),
+                      }))
+                    }
                   />
+                </div>
+                <div className="flex items-end">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={form.includeGeneralLiabilityInRecommendedPrice} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, includeGeneralLiabilityInRecommendedPrice: e.target.checked }))} />
+                    Include general liability in recommended price
+                  </label>
+                </div>
+                <div className="flex items-end">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={form.showTaxPlanning} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, showTaxPlanning: e.target.checked }))} />
+                    Show estimated tax planning
+                  </label>
+                </div>
+                <div>
+                  <label className="label">Mass. tax reserve %</label>
+                  <input className="input" type="text" inputMode="decimal" value={form.massTaxRate} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, massTaxRate: sanitizeNumericInput(e.target.value) }))} placeholder={String(estimatorDefaults.defaultMassTaxRate)} />
+                </div>
+                <div>
+                  <label className="label">Federal tax reserve %</label>
+                  <input className="input" type="text" inputMode="decimal" value={form.federalTaxRate} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, federalTaxRate: sanitizeNumericInput(e.target.value) }))} placeholder={String(estimatorDefaults.defaultFederalTaxRate)} />
+                </div>
+                <div className="md:col-span-2 flex items-end">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={form.includeTaxReserveInRecommendedPrice} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, includeTaxReserveInRecommendedPrice: e.target.checked }))} />
+                    Include estimated tax reserve in recommended price
+                  </label>
+                </div>
+              </div>
+              <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="font-medium text-slate-900">Other Project Costs</div>
                   <button
                     type="button"
                     className="btn btn-secondary"
-                    disabled={isReadOnly || !form.estimatePriceOverride}
-                    onClick={() => setForm((f) => ({ ...f, estimatePriceOverride: "" }))}
+                    disabled={isReadOnly}
+                    onClick={() =>
+                      setForm((f) => ({
+                        ...f,
+                        otherCosts: [
+                          ...f.otherCosts,
+                          { key: `other-${f.otherCosts.length + 1}`, label: "", description: "", amount: 0, includeInRecommendedPrice: true, internalNote: "" },
+                        ],
+                      }))
+                    }
                   >
-                    Clear
+                    Add Cost
                   </button>
                 </div>
-                <p className="text-xs text-slate-500 mt-1">The calculated recommendation is preserved even when you override the client-facing final price.</p>
+                <div className="space-y-3">
+                  {form.otherCosts.map((cost, index) => (
+                    <div key={cost.key} className="grid gap-3 md:grid-cols-5">
+                      <FieldText label="Label" value={cost.label} onChange={(v) => setForm((f) => ({ ...f, otherCosts: f.otherCosts.map((item, i) => i === index ? { ...item, label: v } : item) }))} disabled={isReadOnly} />
+                      <FieldText label="Description" value={cost.description} onChange={(v) => setForm((f) => ({ ...f, otherCosts: f.otherCosts.map((item, i) => i === index ? { ...item, description: v } : item) }))} disabled={isReadOnly} />
+                      <FieldNumber label="Amount" value={cost.amount} onChange={(v) => setForm((f) => ({ ...f, otherCosts: f.otherCosts.map((item, i) => i === index ? { ...item, amount: v } : item) }))} disabled={isReadOnly} />
+                      <div className="flex items-end">
+                        <label className="flex items-center gap-2 text-sm">
+                          <input type="checkbox" checked={cost.includeInRecommendedPrice} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, otherCosts: f.otherCosts.map((item, i) => i === index ? { ...item, includeInRecommendedPrice: e.target.checked } : item) }))} />
+                          Include in price
+                        </label>
+                      </div>
+                      <div className="flex items-end justify-end">
+                        <button className="btn btn-secondary" disabled={isReadOnly} onClick={() => setForm((f) => ({ ...f, otherCosts: f.otherCosts.filter((_, i) => i !== index) }))}>Remove</button>
+                      </div>
+                    </div>
+                  ))}
+                  {form.otherCosts.length === 0 ? <div className="text-sm text-slate-500">No extra project costs yet.</div> : null}
+                </div>
               </div>
-              <div className="md:col-span-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
-                <div className="flex items-center justify-between">
-                  <span>Scope subtotal from all work items</span>
-                  <strong>{formatCurrency(computedScopesTotal)}</strong>
-                </div>
-                <div className="flex items-center justify-between mt-1">
-                  <span>Recommended selling price</span>
-                  <strong>{estimatorSummary.totals.recommendedSellingPrice != null ? formatCurrency(estimatorSummary.totals.recommendedSellingPrice) : "Set a target margin or markup"}</strong>
-                </div>
-                <div className="flex items-center justify-between mt-1">
-                  <span>Final proposal price</span>
-                  <strong>{formatCurrency(displayFinalProposalPrice)}</strong>
-                </div>
-              </div>
-              <FieldArea label="Payment Schedule" value={form.paymentSchedule} onChange={(v) => setForm((f) => ({ ...f, paymentSchedule: v }))} disabled={isReadOnly} className="md:col-span-2" />
-              <FieldArea label="Terms" value={form.termsAndConditions} onChange={(v) => setForm((f) => ({ ...f, termsAndConditions: v }))} disabled={isReadOnly} className="md:col-span-2" />
+              <FieldArea label="Payment Schedule" value={form.paymentSchedule} onChange={(v) => setForm((f) => ({ ...f, paymentSchedule: v }))} disabled={isReadOnly} className="mt-4" />
+              <FieldArea label="Terms" value={form.termsAndConditions} onChange={(v) => setForm((f) => ({ ...f, termsAndConditions: v }))} disabled={isReadOnly} />
             </div>
-          </div>
-
             <div className="card p-5">
               <h2 className="text-base font-semibold mb-3">Estimator Summary</h2>
               {!estimatorSummary.hasEstimatorData ? (
@@ -1506,22 +1684,22 @@ export default function ProposalDetailPage() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <EstimateStat label="Painter Hours" value={estimatorSummary.totals.totalPainterHours} unit="hrs" />
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                  <EstimateStat label="Line items subtotal" value={estimatorSummary.totals.lineItemsSubtotal} currency />
                   <EstimateStat label="Direct Labor Cost" value={estimatorSummary.totals.directLaborCost} currency />
-                  <EstimateStat label="Labor Burden" value={estimatorSummary.totals.laborBurdenCost} currency />
-                  <EstimateStat label="Loaded Labor Cost" value={estimatorSummary.totals.loadedLaborCost} currency />
-                  <EstimateStat label="Material Cost" value={estimatorSummary.totals.materialCost} currency />
-                  <EstimateStat label="Equipment Cost" value={estimatorSummary.totals.equipmentCost} currency />
-                  <EstimateStat label="Logistics Cost" value={estimatorSummary.totals.logisticsCost} currency />
-                  <EstimateStat label="Subcontractor Cost" value={estimatorSummary.totals.subcontractorCost} currency />
-                  <EstimateStat label="Miscellaneous Cost" value={estimatorSummary.totals.miscDirectCost} currency />
-                  <EstimateStat label="Direct Project Cost" value={estimatorSummary.totals.directProjectCost} currency />
-                  <EstimateStat label="Overhead" value={estimatorSummary.totals.overheadDollars} currency />
-                  <EstimateStat label="True Job Cost" value={estimatorSummary.totals.trueJobCost} currency />
-                  <EstimateStat label="Recommended Price" value={estimatorSummary.totals.recommendedSellingPrice} currency />
-                  <EstimateStat label="Gross Profit" value={estimatorSummary.totals.grossProfitDollars} currency />
-                  <EstimateStat label="Gross Margin" value={estimatorSummary.totals.grossMarginPercent} unit="%" />
+                  <EstimateStat label="Materials" value={estimatorSummary.totals.materialsCost} currency />
+                  <EstimateStat label="Other Costs" value={estimatorSummary.totals.otherDirectCosts} currency />
+                  <EstimateStat label="Workers' Comp" value={estimatorSummary.totals.workersCompAmount} currency />
+                  <EstimateStat label="General Liability" value={estimatorSummary.totals.generalLiabilityAmount} currency />
+                  <EstimateStat label="Total Internal Cost" value={estimatorSummary.totals.totalInternalCost} currency />
+                  <EstimateStat label="Recoverable Project Cost" value={estimatorSummary.totals.recoverableProjectCost} currency />
+                  <EstimateStat label="Desired Profit Margin" value={estimatorSummary.totals.desiredProfitMarginPercent} unit="%" />
+                  <EstimateStat label="Recommended Price" value={estimatorSummary.totals.recommendedCustomerPrice} currency />
+                  <EstimateStat label="Projected Profit" value={estimatorSummary.totals.projectedProfitBeforeTaxes} currency />
+                  <EstimateStat label="Estimated Taxes" value={estimatorSummary.totals.totalEstimatedTaxReserve} currency />
+                  <EstimateStat label="Owner Take-Home" value={estimatorSummary.totals.estimatedOwnerTakeHome} currency />
+                  <EstimateStat label="Actual Profit" value={estimatorSummary.totals.actualProfit} currency />
+                  <EstimateStat label="Actual Margin" value={estimatorSummary.totals.actualMarginPercent} unit="%" />
                   <EstimateStat label="Final Proposal Price" value={displayFinalProposalPrice} currency highlight />
                 </div>
 
@@ -1533,18 +1711,16 @@ export default function ProposalDetailPage() {
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div>
                             <div className="font-medium">{area.areaName}</div>
-                            <div className="text-xs text-slate-500">{area.items.length} scope item{area.items.length === 1 ? "" : "s"}</div>
+                            <div className="text-xs text-slate-500">{area.workItems.length} scope item{area.workItems.length === 1 ? "" : "s"}</div>
                           </div>
                           <div className="text-right text-sm">
-                            <div>Painter hours: {area.painterHours.toFixed(2)}</div>
-                            <div>Subtotal: {formatCurrency(area.subtotal)}</div>
+                            <div>Internal cost: {formatCurrency(area.internalCost)}</div>
+                            <div>Allocated price: {formatCurrency(area.allocatedCustomerPrice)}</div>
                           </div>
                         </div>
                         <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-600">
-                          <div>Loaded labor: {formatCurrency(area.loadedLaborCost)}</div>
-                          <div>Material cost: {formatCurrency(area.materialCost)}</div>
-                          <div>Additional charges: {formatCurrency(area.additionalCharges)}</div>
-                          <div>Materials sell: {formatCurrency(area.materialsSellingPrice)}</div>
+                          <div>Direct labor: {formatCurrency(area.directLaborCost)}</div>
+                          <div>Material cost: {formatCurrency(area.materialsCost)}</div>
                         </div>
                       </div>
                     ))}
@@ -1552,12 +1728,14 @@ export default function ProposalDetailPage() {
                 </div>
 
                 <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
-                  <div className="font-medium text-slate-900 mb-2">Compatibility Snapshot</div>
+                  <div className="font-medium text-slate-900 mb-2">Compact Summary</div>
                   <div className="grid grid-cols-2 gap-2 text-slate-600">
-                    <div>Legacy materials budget: {formatCurrency(estimatorSummary.totals.materialCost)}</div>
-                    <div>Legacy labor budget: {formatCurrency(estimatorSummary.totals.loadedLaborCost)}</div>
-                    <div>Legacy subcontractor budget: {formatCurrency(estimatorSummary.totals.subcontractorCost)}</div>
-                    <div>Stored proposal total: {formatCurrency(displayFinalProposalPrice)}</div>
+                    <div>Labor: {formatCurrency(estimatorSummary.totals.directLaborCost)}</div>
+                    <div>Materials: {formatCurrency(estimatorSummary.totals.materialsCost)}</div>
+                    <div>Other costs: {formatCurrency(estimatorSummary.totals.otherDirectCosts)}</div>
+                    <div>Insurance: {formatCurrency(estimatorSummary.totals.workersCompAmount + estimatorSummary.totals.generalLiabilityAmount)}</div>
+                    <div>Recommended price: {formatCurrency(estimatorSummary.totals.recommendedCustomerPrice)}</div>
+                    <div>Owner take-home: {formatCurrency(estimatorSummary.totals.estimatedOwnerTakeHome)}</div>
                   </div>
                 </div>
                 </div>
@@ -1795,21 +1973,43 @@ export default function ProposalDetailPage() {
                   {savedSectionsPreview
                     .slice()
                     .sort((a, b) => a.sortOrder - b.sortOrder)
-                    .map((section, index) => (
+                    .map((section, index) => {
+                      const pricedWorkItem = previewWorkItemsByKey.get(section.key);
+                      return (
                       <div key={`${section.title}-${index}`} className="border border-slate-100 rounded-md p-4">
-                        <div className="font-semibold text-base mb-2">{section.title}</div>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="font-semibold text-base mb-2">{section.customerTitle || section.title}</div>
+                          {pricedWorkItem && pricedWorkItem.priceVisibility === "ITEMIZED" ? (
+                            <div className="font-semibold">{formatCurrency(pricedWorkItem.allocatedCustomerPrice)}</div>
+                          ) : null}
+                        </div>
                         {section.description ? <p className="text-slate-700 whitespace-pre-wrap mb-2">{section.description}</p> : null}
                         {section.bulletItems.filter((item) => item.trim().length > 0).length ? (
                           <ul className="list-disc ml-5 space-y-1 mb-2">
                             {section.bulletItems.filter((item) => item.trim().length > 0).map((item, bulletIndex) => <li key={bulletIndex}>{item}</li>)}
                           </ul>
                         ) : null}
+                        {section.clientNotes ? <p className="text-slate-600 whitespace-pre-wrap mb-2">{section.clientNotes}</p> : null}
                         {section.notes ? <p className="text-slate-600 whitespace-pre-wrap">{section.notes}</p> : null}
                       </div>
-                    ))}
+                    );})}
                 </div>
               )}
             </div>
+
+            {groupedPreviewPrices.length > 0 ? (
+              <div>
+                <h3 className="font-semibold mb-2">Area Pricing</h3>
+                <div className="space-y-2">
+                  {groupedPreviewPrices.map((group) => (
+                    <div key={group.areaName} className="border border-slate-100 rounded-md p-3 flex items-center justify-between">
+                      <span>{group.areaName}</span>
+                      <strong>{formatCurrency(group.total)}</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             <PreviewSection title="Recommendations" text={form.recommendations} />
             <PreviewSection title="Important Notes" text={form.importantNotes} />
@@ -1973,6 +2173,7 @@ function buildLegacySections(proposal: {
   return legacy
     .filter(([, , value]) => (value || "").trim().length > 0)
     .map(([templateKey, title, value], sortOrder) => ({
+      key: nextSectionDraftKey(),
       templateKey,
       title,
       description: value || "",

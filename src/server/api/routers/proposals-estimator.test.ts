@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { buildJobEstimateFromProposal } from "@/lib/proposal-pricing";
-import { TRPCError } from "@trpc/server";
 import {
   buildAuthoritativeProposalEstimate,
   buildProposalEstimatePersistence,
@@ -9,12 +8,14 @@ import {
 } from "./proposals";
 
 const defaults = {
-  defaultLaborSellRate: 80,
   defaultLaborCostRate: 50,
-  defaultMarkup: 25,
-  defaultWcPercent: 3.5,
-  defaultOverhead: 12,
-  defaultProposalPricingMethod: "GROSS_MARGIN" as const,
+  defaultWcPercent: 3,
+  defaultDesiredProfitMarginPercent: 35,
+  defaultGeneralLiabilityMode: "PERCENT_OF_REVENUE" as const,
+  defaultGlPercent: 7.5,
+  defaultMassTaxRate: 5,
+  defaultFederalTaxRate: 12,
+  defaultWorkDayHours: 8,
 };
 
 function baseInput(overrides: Record<string, unknown> = {}) {
@@ -27,13 +28,25 @@ function baseInput(overrides: Record<string, unknown> = {}) {
     subcontractorBudget: 0,
     totalAmount: 1,
     estimatePricingMethod: "GROSS_MARGIN" as const,
-    estimateTargetMarginPercent: 30,
+    estimateTargetMarginPercent: null,
     estimateTargetMarkupPercent: null,
     estimatePriceOverride: null,
-    estimateSubcontractorCost: 100,
-    estimateEquipmentCost: 50,
-    estimateLogisticsCost: 25,
-    estimateMiscProjectCost: 10,
+    estimateSubcontractorCost: 0,
+    estimateEquipmentCost: 0,
+    estimateLogisticsCost: 0,
+    estimateMiscProjectCost: 0,
+    desiredProfitMarginPercent: 35,
+    workersCompPercentOverride: 3,
+    includeWorkersCompInRecommendedPrice: true,
+    generalLiabilityMode: "PERCENT_OF_LABOR" as const,
+    generalLiabilityPercent: 7,
+    generalLiabilityFlatAmount: null,
+    includeGeneralLiabilityInRecommendedPrice: true,
+    massTaxRate: 5,
+    federalTaxRate: 12,
+    showTaxPlanning: true,
+    includeTaxReserveInRecommendedPrice: false,
+    otherCosts: [{ key: "travel", label: "Travel", amount: 120, includeInRecommendedPrice: true }],
     expectedStartDate: null,
     expectedEndDate: null,
     sections: [],
@@ -41,148 +54,123 @@ function baseInput(overrides: Record<string, unknown> = {}) {
     attachments: [],
     paintColors: [],
     ...overrides,
-  } as any;
+  };
 }
 
 const sectionInput = {
+  key: "kitchen-walls",
+  templateKey: "custom_section",
   title: "Kitchen walls",
   description: "",
   bulletItems: [],
   notes: "",
   sortOrder: 0,
-  estimatedLaborHours: null,
-  laborSellRateOverride: null,
-  additionalCharges: 0,
   areaName: "Kitchen",
-  workCategory: "INTERIOR" as const,
-  surfaceType: "Walls",
-  measurementType: "SQFT",
-  measurementValue: 620,
-  coats: 2,
-  prepLevel: "Normal",
-  productionRateId: null,
-  calculatedLaborHours: 7.29,
-  adjustedLaborHours: 8,
-  directLaborCostRate: 50,
-  customerDisplayLabel: "Kitchen walls",
-  priceVisibility: "SHOW" as const,
-  groupIntoAreaPrice: false,
+  phaseName: "Painting",
+  workCategoryLabel: "Main scope",
+  estimateMethod: "LABOR_AND_MATERIALS" as const,
+  priceVisibilityMode: "ITEMIZED" as const,
+  clientNotes: "",
+  internalNotes: "",
+  laborLines: [
+    {
+      key: "labor-1",
+      label: "Crew",
+      mode: "HOURS" as const,
+      workers: 2,
+      hoursPerWorker: 8,
+      days: null,
+      hoursPerDay: null,
+      hourlyCost: 50,
+      manualTotalOverride: null,
+      internalNote: "",
+    },
+  ],
   materials: [
     {
+      key: "material-1",
       inventoryItemId: 10,
+      type: "CATALOG" as const,
       name: "Wall paint",
       unit: "gallon",
-      quantity: 1,
+      quantity: 4,
       unitCost: 40,
-      markupPercent: 25,
-      coveragePerUnit: 350,
-      wastePercent: 10,
-      calculatedQuantity: null,
+      manualTotal: null,
+      coveragePerUnit: null,
+      wastePercent: 0,
       adjustedQuantity: null,
+      note: "",
+      priceSourceType: "INVENTORY_DEFAULT" as const,
+      priceSourceLabel: "Latest catalog price",
+      priceSourceExpenseId: null,
+      priceSourceExpenseLineItemId: null,
       sortOrder: 0,
     },
   ],
+  unitPrice: null,
+  manualTotal: null,
+  production: null,
 };
 
 describe("proposal estimator server authority", () => {
-  it("derives and persists authoritative economics instead of trusting client totals", () => {
+  it("persists authoritative hybrid estimator totals", () => {
     const sections = sanitizeSections([sectionInput], defaults);
-    const input = baseInput({
-      estimateWcCost: 9999,
-      estimateTrueJobCost: 1,
-      estimateGrossMarginPercent: 99,
-      estimateRecommendedSellingPrice: 2,
-    });
+    const authoritative = buildAuthoritativeProposalEstimate(sections, baseInput({ sections: [sectionInput] }), defaults);
+    const persisted = buildProposalEstimatePersistence(authoritative, baseInput({ sections: [sectionInput] }), defaults);
 
+    expect(sections[0]?.estimateMethod).toBe("LABOR_AND_MATERIALS");
+    expect(sections[0]?.materials[0]?.materialCostSnapshot).toBe(160);
+    expect(authoritative?.estimate.directLaborCost).toBe(800);
+    expect(authoritative?.estimate.materialsCost).toBe(160);
+    expect(authoritative?.estimate.totalInternalCost).toBe(1160);
+    expect(persisted.estimateEngineVersion).toBe(2);
+    expect(persisted.estimateRecommendedSellingPrice).toBe(1784.62);
+    expect(persisted.estimateTrueJobCost).toBe(1160);
+    expect(persisted.estimateGrossMarginPercent).toBe(35);
+  });
+
+  it("uses the selected workers comp and general liability inputs instead of legacy defaults", () => {
+    const sections = sanitizeSections([sectionInput], { ...defaults, defaultWcPercent: 17.5, defaultGlPercent: 2 });
+    const authoritative = buildAuthoritativeProposalEstimate(
+      sections,
+      baseInput({
+        sections: [sectionInput],
+        workersCompPercentOverride: 3,
+        generalLiabilityMode: "PERCENT_OF_LABOR",
+        generalLiabilityPercent: 7,
+      }),
+      { ...defaults, defaultWcPercent: 17.5, defaultGlPercent: 2 }
+    );
+    const persisted = buildProposalEstimatePersistence(
+      authoritative,
+      baseInput({
+        sections: [sectionInput],
+        workersCompPercentOverride: 3,
+        generalLiabilityMode: "PERCENT_OF_LABOR",
+        generalLiabilityPercent: 7,
+      }),
+      { ...defaults, defaultWcPercent: 17.5, defaultGlPercent: 2 }
+    );
+
+    expect(authoritative?.estimate.workersCompPercent).toBe(3);
+    expect(authoritative?.estimate.workersCompAmount).toBe(24);
+    expect(authoritative?.estimate.generalLiabilityAmount).toBe(56);
+    expect(persisted.estimateLaborBurdenCost).toBe(80);
+  });
+
+  it("keeps the recommendation while allowing a final price override", () => {
+    const sections = sanitizeSections([sectionInput], defaults);
+    const input = baseInput({ sections: [sectionInput], estimatePriceOverride: 2000 });
     const authoritative = buildAuthoritativeProposalEstimate(sections, input, defaults);
     const persisted = buildProposalEstimatePersistence(authoritative, input, defaults);
 
-    expect(sections[0].effectiveLaborHours).toBe(8);
-    expect(sections[0].workCategory).toBe("INTERIOR");
-    expect(sections[0].surfaceType).toBe("Walls");
-    expect(sections[0].directLaborCostSnapshot).toBe(400);
-    expect(sections[0].wcPercentSnapshot).toBe(3.5);
-    expect(sections[0].wcCostSnapshot).toBe(14);
-    expect(sections[0].laborBurdenCostSnapshot).toBe(14);
-    expect(sections[0].loadedLaborCostSnapshot).toBe(414);
-    expect(sections[0].materials[0].calculatedQuantity).toBe(3.9);
-    expect(sections[0].materials[0].quantity).toBe(3.9);
-    expect(sections[0].materials[0].materialCostSnapshot).toBe(156);
-    expect(persisted.estimateEngineVersion).toBe(1);
-    expect(persisted.estimateDirectLaborCost).toBe(400);
-    expect(persisted.estimateLaborBurdenCost).toBe(14);
-    expect(persisted.estimateLoadedLaborCost).toBe(414);
-    expect(persisted.estimateMaterialCost).toBe(156);
-    expect(persisted.estimateDirectProjectCost).toBe(755);
-    expect(persisted.estimateOverheadPercentSnapshot).toBe(12);
-    expect(persisted.estimateOverheadDollars).toBe(90.6);
-    expect(persisted.estimateTrueJobCost).toBe(845.6);
-    expect(persisted.estimateRecommendedSellingPrice).toBe(1208);
-    expect(persisted.estimateGrossMarginPercent).toBe(30);
-    expect(persisted.estimateEffectiveSalesRate).toBe(151);
+    expect(authoritative?.estimate.recommendedCustomerPrice).toBe(1784.62);
+    expect(authoritative?.estimate.finalCustomerPrice).toBe(2000);
+    expect(persisted.estimateRecommendedSellingPrice).toBe(1784.62);
+    expect(persisted.estimateFinalProposalPrice).toBe(2000);
   });
 
-  it("never includes GL in labor burden and never uses the legacy 17.5 WC value", () => {
-    const sections = sanitizeSections([sectionInput], defaults);
-    const persisted = buildProposalEstimatePersistence(
-      buildAuthoritativeProposalEstimate(sections, baseInput(), { ...defaults, defaultGlPercent: 7.5 } as any),
-      baseInput(),
-      { ...defaults, defaultGlPercent: 7.5 } as any
-    );
-
-    expect(persisted.estimateLaborBurdenCost).toBe(14);
-    expect(persisted.estimateLaborBurdenCost).not.toBe(70);
-  });
-
-  it("uses markup mode and manual override according to saved raw inputs", () => {
-    const sections = sanitizeSections([sectionInput], defaults);
-    const input = baseInput({
-      estimatePricingMethod: "MARKUP",
-      estimateTargetMarginPercent: null,
-      estimateTargetMarkupPercent: 20,
-      estimatePriceOverride: 1300,
-    });
-
-    const persisted = buildProposalEstimatePersistence(
-      buildAuthoritativeProposalEstimate(sections, input, defaults),
-      input,
-      defaults
-    );
-
-    expect(persisted.estimateRecommendedSellingPrice).toBe(1014.72);
-    expect(persisted.estimateFinalProposalPrice).toBe(1300);
-    expect(persisted.estimateGrossProfitDollars).toBe(454.4);
-    expect(persisted.estimateGrossMarginPercent).toBe(34.95);
-    expect(persisted.estimateEffectiveSalesRate).toBe(162.5);
-  });
-
-  it("validates labor cost rate availability before saving labor estimates", () => {
-    const sections = sanitizeSections([{ ...sectionInput, directLaborCostRate: null }], { ...defaults, defaultLaborCostRate: null });
-
-    expect(() =>
-      buildAuthoritativeProposalEstimate(
-        sections,
-        baseInput(),
-        { ...defaults, defaultLaborCostRate: null }
-      )
-    ).toThrowError(TRPCError);
-  });
-
-  it("keeps saved snapshots stable after later config or catalog changes", () => {
-    const sections = sanitizeSections([sectionInput], defaults);
-    const persisted = buildProposalEstimatePersistence(
-      buildAuthoritativeProposalEstimate(sections, baseInput(), defaults),
-      baseInput(),
-      defaults
-    );
-    const changedDefaults = { ...defaults, defaultLaborCostRate: 200, defaultWcPercent: 17.5, defaultOverhead: 99 };
-
-    expect(persisted.estimateTrueJobCost).toBe(845.6);
-    expect(sections[0].materials[0].unitCostSnapshot).toBe(40);
-    expect(changedDefaults.defaultOverhead).toBe(99);
-  });
-
-  it("supports coverage-based material quantities even when manual quantity is blank", () => {
+  it("supports coverage-based material quantities when manual quantity is blank", () => {
     const sections = sanitizeSections([
       {
         ...sectionInput,
@@ -190,18 +178,89 @@ describe("proposal estimator server authority", () => {
           {
             ...sectionInput.materials[0],
             quantity: 0,
+            coveragePerUnit: 350,
+            wastePercent: 10,
             adjustedQuantity: null,
           },
         ],
+        production: {
+          workCategory: "INTERIOR",
+          surfaceType: "Walls",
+          measurementUnit: "SQFT",
+          measurementValue: 620,
+          productionRateBasis: "SQFT_PER_HOUR" as const,
+          productionRateValue: 0,
+          calculatedLaborHours: null,
+          adjustedLaborHours: null,
+          crewSize: null,
+          hoursPerDay: null,
+          hourlyCostPerWorker: null,
+          note: "",
+          productionRateId: null,
+        },
       },
     ], defaults);
 
-    expect(sections[0].materials[0].calculatedQuantity).toBe(3.9);
-    expect(sections[0].materials[0].quantity).toBe(3.9);
-    expect(sections[0].materials[0].materialCostSnapshot).toBe(156);
+    expect(sections[0]?.materials[0]?.calculatedQuantity).toBe(1.95);
+    expect(sections[0]?.materials[0]?.quantity).toBe(1.95);
+    expect(sections[0]?.materials[0]?.materialCostSnapshot).toBe(78);
   });
 
-  it("convertToJob uses saved proposal snapshots and saved final estimator price", () => {
+  it("keeps saved snapshots stable after later config changes", () => {
+    const sections = sanitizeSections([sectionInput], defaults);
+    const authoritative = buildAuthoritativeProposalEstimate(sections, baseInput({ sections: [sectionInput] }), defaults);
+    const persisted = buildProposalEstimatePersistence(authoritative, baseInput({ sections: [sectionInput] }), defaults);
+    const changedDefaults = {
+      ...defaults,
+      defaultLaborCostRate: 200,
+      defaultWcPercent: 17.5,
+      defaultGlPercent: 15,
+      defaultDesiredProfitMarginPercent: 50,
+    };
+
+    expect(sections[0]?.materials[0]?.unitCostSnapshot).toBe(40);
+    expect(persisted.estimateTrueJobCost).toBe(1160);
+    expect(changedDefaults.defaultLaborCostRate).toBe(200);
+  });
+
+  it("preserves saved summaries for job conversion", () => {
+    const snapshot = buildProposalEstimateSnapshotFromSavedProposal({
+      totalAmount: 1,
+      estimateFinalProposalPrice: 5500,
+      estimateSummaryJson: {
+        summary: {
+          workItems: [
+            {
+              title: "Cabinet refinishing",
+              totalWorkerHours: 12,
+              allocatedCustomerPrice: 5500,
+              materialsCost: 700,
+              materialLines: [
+                {
+                  name: "Milesi topcoat",
+                  unit: "gallon",
+                  quantity: 2,
+                  unitCost: 125,
+                  lineTotal: 250,
+                },
+              ],
+            },
+          ],
+        },
+      },
+      sections: [],
+    });
+
+    const seed = buildJobEstimateFromProposal(snapshot);
+    expect(seed.totalEstimate).toBe(5500);
+    expect(seed.materialsBudget).toBe(700);
+    expect(seed.laborBudget).toBe(5500);
+    expect(seed.materials[0]?.name).toBe("Cabinet refinishing — Milesi topcoat");
+    expect(seed.materials[0]?.totalCost).toBe(250);
+    expect(seed.labor[0]?.hours).toBe(12);
+  });
+
+  it("falls back to legacy saved section snapshots when estimateSummaryJson is absent", () => {
     const snapshot = buildProposalEstimateSnapshotFromSavedProposal({
       totalAmount: 1,
       estimateFinalProposalPrice: 1300,
@@ -233,7 +292,7 @@ describe("proposal estimator server authority", () => {
     expect(seed.totalEstimate).toBe(1300);
     expect(seed.materialsBudget).toBe(195);
     expect(seed.laborBudget).toBe(640);
-    expect(seed.materials[0].totalCost).toBe(156);
-    expect(seed.labor[0].hours).toBe(8);
+    expect(seed.materials[0]?.totalCost).toBe(156);
+    expect(seed.labor[0]?.hours).toBe(8);
   });
 });

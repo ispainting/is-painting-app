@@ -2,118 +2,130 @@ import { describe, expect, it } from "vitest";
 import { computeDraftProposalEstimateSummary } from "./proposal-estimator-draft";
 
 const defaults = {
-  defaultLaborSellRate: 80,
   defaultLaborCostRate: 50,
-  defaultMarkup: 25,
-  defaultWcPercent: 3.5,
-  defaultOverhead: 12,
-  defaultProposalPricingMethod: "GROSS_MARGIN" as const,
+  defaultWcPercent: 3,
+  defaultDesiredProfitMarginPercent: 35,
+  defaultGlPercent: 7.5,
+  defaultGeneralLiabilityMode: "PERCENT_OF_REVENUE" as const,
+  defaultMassTaxRate: 5,
+  defaultFederalTaxRate: 12,
+  defaultWorkDayHours: 8,
 };
 
 describe("computeDraftProposalEstimateSummary", () => {
-  it("rolls scope-item calculations into area totals and proposal totals", () => {
+  it("calculates hourly labor, material totals, taxes, and owner take-home", () => {
     const summary = computeDraftProposalEstimateSummary({
       defaults,
       pricing: {
-        estimatePricingMethod: "GROSS_MARGIN",
-        estimateTargetMarginPercent: "30",
-        estimateSubcontractorCost: 100,
-        estimateEquipmentCost: 50,
-        estimateLogisticsCost: 25,
-        estimateMiscProjectCost: 10,
+        desiredProfitMarginPercent: "35",
+        workersCompPercentOverride: "3",
+        includeWorkersCompInRecommendedPrice: true,
+        generalLiabilityMode: "PERCENT_OF_LABOR",
+        generalLiabilityPercent: "7",
+        includeGeneralLiabilityInRecommendedPrice: true,
+        massTaxRate: "5",
+        federalTaxRate: "12",
+        showTaxPlanning: true,
+        includeTaxReserveInRecommendedPrice: false,
+        otherCosts: [
+          { key: "travel", label: "Fuel", amount: "120", includeInRecommendedPrice: true },
+        ],
       },
       sections: [
         {
+          key: "kitchen-walls",
+          templateKey: "custom_section",
           title: "Kitchen walls",
           areaName: "Kitchen",
-          workCategory: "INTERIOR",
-          surfaceType: "Walls",
-          measurementValue: "620",
-          coats: "2",
-          calculatedLaborHours: "7.29",
-          adjustedLaborHours: "8",
-          laborSellRateOverride: "",
-          additionalCharges: "0",
-          materials: [
+          priceVisibilityMode: "ITEMIZED",
+          estimateMethod: "LABOR_AND_MATERIALS",
+          laborLines: [
             {
-              name: "Wall paint",
-              quantity: "",
-              unitCost: "40",
-              markupPercent: "25",
-              coveragePerUnit: "350",
-              wastePercent: "10",
-              adjustedQuantity: "",
+              key: "labor-1",
+              label: "Prep and paint",
+              mode: "HOURS",
+              workers: "2",
+              hoursPerWorker: "8",
+              days: "",
+              hoursPerDay: "",
+              hourlyCost: "50",
+              manualTotalOverride: "",
+              internalNote: "",
             },
           ],
-        },
-        {
-          title: "Kitchen trim",
-          areaName: "Kitchen",
-          workCategory: "INTERIOR",
-          surfaceType: "Trim",
-          measurementValue: "120",
-          coats: "2",
-          calculatedLaborHours: "3",
-          adjustedLaborHours: "",
-          laborSellRateOverride: "",
-          additionalCharges: "45",
-          materials: [],
+          materials: [
+            {
+              key: "material-1",
+              type: "CATALOG",
+              name: "Wall paint",
+              unit: "gallon",
+              quantity: "4",
+              unitCost: "40",
+              manualTotal: "",
+              coveragePerUnit: "",
+              wastePercent: "0",
+              adjustedQuantity: "",
+              note: "",
+              priceSourceType: "INVENTORY_DEFAULT",
+              priceSourceLabel: "Latest catalog price",
+              priceSourceExpenseId: null,
+              priceSourceExpenseLineItemId: null,
+            },
+          ],
         },
       ],
     });
 
-    expect(summary.areas).toHaveLength(1);
-    expect(summary.areas[0]?.areaName).toBe("Kitchen");
-    expect(summary.areas[0]?.painterHours).toBe(11);
-    expect(summary.areas[0]?.materialCost).toBe(156);
-    expect(summary.areas[0]?.subtotal).toBe(1120);
-    expect(summary.totals.totalPainterHours).toBe(11);
-    expect(summary.totals.directLaborCost).toBe(550);
-    expect(summary.totals.laborBurdenCost).toBe(19.25);
-    expect(summary.totals.loadedLaborCost).toBe(569.25);
-    expect(summary.totals.materialCost).toBe(156);
-    expect(summary.totals.trueJobCost).toBe(1019.48);
-    expect(summary.totals.recommendedSellingPrice).toBe(1456.4);
+    expect(summary.areas[0]?.allocatedCustomerPrice).toBe(summary.totals.finalCustomerPrice);
+    expect(summary.totals.directLaborCost).toBe(800);
+    expect(summary.totals.materialsCost).toBe(160);
+    expect(summary.totals.otherDirectCosts).toBe(120);
+    expect(summary.totals.workersCompAmount).toBe(24);
+    expect(summary.totals.generalLiabilityAmount).toBe(56);
+    expect(summary.totals.totalInternalCost).toBe(1160);
+    expect(summary.totals.recommendedCustomerPrice).toBe(1784.62);
+    expect(summary.totals.massTaxAmount).toBeGreaterThan(0);
+    expect(summary.totals.estimatedOwnerTakeHome).toBeGreaterThan(0);
   });
 
-  it("keeps the recommendation while allowing a final-price override", () => {
+  it("supports unit-price work with a final total override", () => {
     const summary = computeDraftProposalEstimateSummary({
       defaults,
       pricing: {
-        estimatePricingMethod: "MARKUP",
-        estimateTargetMarkupPercent: "20",
-        estimatePriceOverride: "1300",
+        desiredProfitMarginPercent: "35",
+        estimatePriceOverride: "5500",
+        otherCosts: [],
       },
       sections: [
         {
-          title: "Kitchen walls",
+          key: "cabinets",
+          templateKey: "cabinets",
+          title: "Cabinet refinishing",
           areaName: "Kitchen",
-          workCategory: "INTERIOR",
-          surfaceType: "Walls",
-          measurementValue: "620",
-          coats: "2",
-          calculatedLaborHours: "7.29",
-          adjustedLaborHours: "8",
-          laborSellRateOverride: "",
-          additionalCharges: "0",
-          materials: [
-            {
-              name: "Wall paint",
-              quantity: "",
-              unitCost: "40",
-              markupPercent: "25",
-              coveragePerUnit: "350",
-              wastePercent: "10",
-              adjustedQuantity: "",
-            },
-          ],
+          priceVisibilityMode: "ITEMIZED",
+          estimateMethod: "UNIT_PRICE",
+          laborLines: [],
+          materials: [],
+          unitPrice: {
+            templateId: 1,
+            serviceName: "Cabinet refinishing",
+            variantName: "Milesi",
+            unitLabel: "Door",
+            quantity: "40",
+            pricePerUnit: "135",
+            lineTotalOverride: "",
+            laborAllowance: "1800",
+            materialAllowance: "700",
+            note: "",
+            rateSource: "SEEDED",
+          },
         },
       ],
     });
 
-    expect(summary.totals.recommendedSellingPrice).toBe(766.08);
-    expect(summary.totals.finalProposalPrice).toBe(1300);
-    expect(summary.totals.grossProfitDollars).toBe(661.6);
-    expect(summary.manualPriceOverride).toBe(1300);
+    expect(summary.totals.recommendedCustomerPrice).toBe(5400);
+    expect(summary.totals.finalCustomerPrice).toBe(5500);
+    expect(summary.totals.actualProfit).toBe(2587.5);
+    expect(summary.totals.actualMarginPercent).toBe(47.05);
   });
 });
