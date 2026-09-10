@@ -874,6 +874,8 @@ export default function ProposalDetailPage() {
     onError: (e) => toast.error(e.message),
   });
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [showProjectDetails, setShowProjectDetails] = useState(false);
+  const [showDeleteMenu, setShowDeleteMenu] = useState(false);
 
   const isReadOnly = form.status === "converted";
   const savedOptionsPreview = useMemo(
@@ -1307,7 +1309,7 @@ export default function ProposalDetailPage() {
   return (
     <>
       <PageHeader
-        title={proposal.projectName}
+        title={proposal.projectName || "Untitled proposal"}
         description={`${proposal.proposalNumber} · ${proposal.customer?.name ?? "Client not linked"}`}
         actions={
           <div className="flex items-center gap-2">
@@ -1316,19 +1318,161 @@ export default function ProposalDetailPage() {
                 Open Customer
               </Link>
             )}
-            <button
-              className="btn bg-rose-600 text-white hover:bg-rose-700"
-              type="button"
-              onClick={() => setConfirmDeleteOpen(true)}
-            >
-              Delete Proposal
-            </button>
+            <div className="relative">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                aria-label="Proposal actions"
+                onClick={() => setShowDeleteMenu((value) => !value)}
+              >
+                ⋯
+              </button>
+              {showDeleteMenu && (
+                <div className="absolute right-0 top-full z-20 mt-2 w-52 rounded-md border border-slate-200 bg-white p-2 shadow-lg">
+                  <button
+                    type="button"
+                    className="w-full rounded-md px-3 py-2 text-left text-sm text-rose-700 hover:bg-rose-50"
+                    onClick={() => {
+                      setShowDeleteMenu(false);
+                      setConfirmDeleteOpen(true);
+                    }}
+                  >
+                    Delete Proposal
+                  </button>
+                </div>
+              )}
+            </div>
             <button className="btn btn-primary" disabled={update.isPending || isReadOnly} onClick={onSave}>
               {update.isPending ? "Saving..." : "Save Proposal"}
             </button>
           </div>
         }
       />
+
+      <div className="card p-4 mb-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Proposal</div>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-lg font-semibold text-slate-900">
+              <span>{proposal.proposalNumber}</span>
+              <span className="text-slate-400">•</span>
+              <span>{proposal.projectName || "Untitled proposal"}</span>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+              <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-medium uppercase tracking-wide text-slate-700">{proposal.status}</span>
+              <span>{proposal.customer?.name ?? "Client not linked"}</span>
+              {(proposal.city || proposal.address) && (
+                <>
+                  <span className="text-slate-400">•</span>
+                  <span>{[proposal.city, proposal.state].filter(Boolean).join(", ") || proposal.address}</span>
+                </>
+              )}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setShowProjectDetails((value) => !value)}
+            >
+              Edit project details
+            </button>
+            {proposal.customerId && !isReadOnly && (
+              <button
+                className="btn btn-secondary"
+                disabled={convertToJob.isPending || !proposal.customerId || !form.projectName.trim()}
+                onClick={() => {
+                  if (!proposal.customerId) {
+                    toast.error("Client not linked. Link a customer before converting to a Job.");
+                    return;
+                  }
+                  if (!form.projectName.trim()) {
+                    toast.error("Add a project name before converting to a Job.");
+                    return;
+                  }
+                  convertToJob.mutate({ id });
+                }}
+              >
+                {convertToJob.isPending ? "Converting…" : "Convert to Job"}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {showProjectDetails && (
+          <div className="mt-4 border-t border-slate-200 pt-4">
+            <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3 items-start">
+              <div className="md:col-span-2">
+                <label className="label">Customer</label>
+                <div className="relative">
+                  <input
+                    className="input"
+                    value={customerSearch}
+                    onFocus={() => setShowCustomerResults(true)}
+                    onChange={(e) => {
+                      setCustomerSearch(e.target.value);
+                      setShowCustomerResults(true);
+                    }}
+                    disabled={isReadOnly}
+                    placeholder="Search customer"
+                  />
+                  {showCustomerResults && customerSearch.trim().length > 0 && !isReadOnly && (
+                    <div className="absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-md border border-slate-200 bg-white shadow-sm">
+                      {customers.isLoading ? (
+                        <div className="px-3 py-2 text-sm text-slate-500">Searching...</div>
+                      ) : customers.data && customers.data.length > 0 ? (
+                        customers.data.map((c) => (
+                          <button
+                            key={c.id}
+                            type="button"
+                            className="w-full text-left px-3 py-2 hover:bg-slate-50 border-b border-slate-100 last:border-b-0"
+                            onClick={() => selectCustomer(c)}
+                          >
+                            <div className="text-sm font-medium text-slate-900">{c.name}</div>
+                            <div className="text-xs text-slate-600">{c.address || "No address on file"}</div>
+                          </button>
+                        ))
+                      ) : (
+                        <div className="px-3 py-2 text-sm text-slate-500">No matching customers.</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <FieldText label="Project Name" value={form.projectName} onChange={(v) => setForm((f) => ({ ...f, projectName: v }))} disabled={isReadOnly} />
+              <div>
+                <label className="label">Status</label>
+                <select
+                  className="input"
+                  value={form.status}
+                  onChange={(e) => {
+                    const next = e.target.value as (typeof PROPOSAL_STATUSES)[number];
+                    if ((next === "sent" || next === "approved") && form.customerId <= 0) {
+                      toast.error("Client not linked. Link a customer before you can send or approve this proposal.");
+                      return;
+                    }
+                    setForm((f) => ({ ...f, status: next }));
+                  }}
+                  disabled={isReadOnly}
+                >
+                  {STATUS_OPTIONS.map((status) => (
+                    <option key={status.value} value={status.value}>{status.label}</option>
+                  ))}
+                  {form.status === "follow_up" ? <option value="follow_up">Follow Up (Legacy)</option> : null}
+                </select>
+              </div>
+
+              <FieldText label="Property Address" value={form.address} onChange={(v) => setForm((f) => ({ ...f, address: v }))} disabled={isReadOnly} className="md:col-span-2" />
+              <FieldText label="City" value={form.city} onChange={(v) => setForm((f) => ({ ...f, city: v }))} disabled={isReadOnly} />
+              <FieldText label="State" value={form.state} onChange={(v) => setForm((f) => ({ ...f, state: v }))} disabled={isReadOnly} />
+              <FieldText label="ZIP" value={form.zipCode} onChange={(v) => setForm((f) => ({ ...f, zipCode: v }))} disabled={isReadOnly} />
+              <FieldDate label="Expected Start" value={form.expectedStartDate} onChange={(v) => setForm((f) => ({ ...f, expectedStartDate: v }))} disabled={isReadOnly} />
+              <FieldDate label="Expected Finish" value={form.expectedEndDate} onChange={(v) => setForm((f) => ({ ...f, expectedEndDate: v }))} disabled={isReadOnly} />
+            </div>
+          </div>
+        )}
+      </div>
 
       {isReadOnly && (
         <div className="card p-4 mb-4 border border-amber-200 bg-amber-50 text-amber-800 text-sm">
@@ -1379,99 +1523,6 @@ export default function ProposalDetailPage() {
         </div>
       )}
 
-      <div className="card p-5 mb-4">
-        <div className="grid md:grid-cols-4 gap-3 items-start">
-          <HeaderStat label="Proposal Number" value={proposal.proposalNumber} />
-          <HeaderStat label="Created" value={formatDateTime(proposal.createdAt)} />
-          <HeaderStat label="Last Updated" value={formatDateTime(proposal.updatedAt)} />
-          <div className="flex gap-2 md:justify-end">
-            <button
-              className="btn btn-secondary"
-              disabled={isReadOnly || convertToJob.isPending}
-              onClick={() => {
-                if (!isLinked) {
-                  toast.error("Client not linked. Link a customer before converting to a Job.");
-                  return;
-                }
-                convertToJob.mutate({ id });
-              }}
-            >
-              {convertToJob.isPending ? "Converting…" : "Convert to Job"}
-            </button>
-          </div>
-
-          <div className="md:col-span-2">
-            <label className="label">Customer</label>
-            <div className="relative">
-              <input
-                className="input"
-                value={customerSearch}
-                onFocus={() => setShowCustomerResults(true)}
-                onChange={(e) => {
-                  setCustomerSearch(e.target.value);
-                  setShowCustomerResults(true);
-                }}
-                disabled={isReadOnly}
-                placeholder="Search customer"
-              />
-              {showCustomerResults && customerSearch.trim().length > 0 && !isReadOnly && (
-                <div className="absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-md border border-slate-200 bg-white shadow-sm">
-                  {customers.isLoading ? (
-                    <div className="px-3 py-2 text-sm text-slate-500">Searching...</div>
-                  ) : customers.data && customers.data.length > 0 ? (
-                    customers.data.map((c) => (
-                      <button
-                        key={c.id}
-                        type="button"
-                        className="w-full text-left px-3 py-2 hover:bg-slate-50 border-b border-slate-100 last:border-b-0"
-                        onClick={() => selectCustomer(c)}
-                      >
-                        <div className="text-sm font-medium text-slate-900">{c.name}</div>
-                        <div className="text-xs text-slate-600">{c.address || "No address on file"}</div>
-                      </button>
-                    ))
-                  ) : (
-                    <div className="px-3 py-2 text-sm text-slate-500">No matching customers.</div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <FieldText label="Project Name" value={form.projectName} onChange={(v) => setForm((f) => ({ ...f, projectName: v }))} disabled={isReadOnly} className="md:col-span-2" />
-          <FieldText label="Property Address" value={form.address} onChange={(v) => setForm((f) => ({ ...f, address: v }))} disabled={isReadOnly} className="md:col-span-2" />
-          <FieldText label="City" value={form.city} onChange={(v) => setForm((f) => ({ ...f, city: v }))} disabled={isReadOnly} />
-          <FieldText label="State" value={form.state} onChange={(v) => setForm((f) => ({ ...f, state: v }))} disabled={isReadOnly} />
-          <FieldText label="Zip" value={form.zipCode} onChange={(v) => setForm((f) => ({ ...f, zipCode: v }))} disabled={isReadOnly} />
-
-          <div>
-            <label className="label">Status</label>
-            <select
-              className="input"
-              value={form.status}
-              onChange={(e) => {
-                const next = e.target.value as (typeof PROPOSAL_STATUSES)[number];
-                if ((next === "sent" || next === "approved") && form.customerId <= 0) {
-                  toast.error("Client not linked. Link a customer before you can send or approve this proposal.");
-                  return;
-                }
-                setForm((f) => ({ ...f, status: next }));
-              }}
-              disabled={isReadOnly}
-            >
-              {STATUS_OPTIONS.map((status) => (
-                <option key={status.value} value={status.value}>
-                  {status.label}
-                </option>
-              ))}
-              {form.status === "follow_up" ? <option value="follow_up">Follow Up (Legacy)</option> : null}
-            </select>
-          </div>
-          <FieldDate label="Expected Start" value={form.expectedStartDate} onChange={(v) => setForm((f) => ({ ...f, expectedStartDate: v }))} disabled={isReadOnly} />
-          <FieldDate label="Expected Finish" value={form.expectedEndDate} onChange={(v) => setForm((f) => ({ ...f, expectedEndDate: v }))} disabled={isReadOnly} />
-        </div>
-      </div>
-
       <ConfirmDialog
         open={confirmDeleteOpen}
         title="Delete Proposal"
@@ -1500,6 +1551,22 @@ export default function ProposalDetailPage() {
           ))}
         </div>
       </div>
+
+      {tab === "pricing" && (
+        <div className="sticky top-0 z-10 mb-4 overflow-x-auto border-b border-slate-200 bg-white/95 backdrop-blur-sm pb-3 pt-1">
+          <div className="flex min-w-max items-center gap-3">
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Internal cost</div>
+            <div className="text-sm font-semibold text-slate-900">{formatCurrency(estimatorSummary.totals.totalInternalCost)}</div>
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Recommended</div>
+            <div className="text-sm font-semibold text-slate-900">{formatCurrency(estimatorSummary.totals.recommendedCustomerPrice)}</div>
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Final</div>
+            <div className="text-sm font-semibold text-slate-900">{formatCurrency(displayFinalProposalPrice)}</div>
+            <button className="btn btn-primary ml-auto" disabled={update.isPending || isReadOnly} onClick={onSave}>
+              {update.isPending ? "Saving..." : "Save Proposal"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {tab === "scope" && (
         <div className="grid md:grid-cols-[280px,1fr] gap-4">
