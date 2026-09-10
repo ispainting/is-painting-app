@@ -47,6 +47,7 @@ function baseInput(overrides: Record<string, unknown> = {}) {
     showTaxPlanning: true,
     includeTaxReserveInRecommendedPrice: false,
     otherCosts: [{ key: "travel", label: "Travel", amount: 120, includeInRecommendedPrice: true }],
+    estimateWorkItems: [],
     expectedStartDate: null,
     expectedEndDate: null,
     sections: [],
@@ -113,6 +114,71 @@ const sectionInput = {
 };
 
 describe("proposal estimator server authority", () => {
+  it("calculates proposal-level pricing with zero scope items", () => {
+    const laborAndMaterials = {
+      ...sectionInput,
+      key: "pricing-labor-materials",
+      title: "Labor and materials",
+      areaName: "",
+      laborLines: [
+        {
+          ...sectionInput.laborLines[0],
+          workers: 3,
+          hoursPerWorker: 40,
+          hourlyCost: 23,
+        },
+        {
+          ...sectionInput.laborLines[0],
+          key: "labor-2",
+          mode: "DAYS" as const,
+          workers: 3,
+          hoursPerWorker: null,
+          days: 5,
+          hoursPerDay: 8,
+          hourlyCost: 23,
+          manualTotalOverride: 3000,
+        },
+      ],
+      materials: [
+        { ...sectionInput.materials[0], quantity: 4, unitCost: 40 },
+        { ...sectionInput.materials[0], key: "material-total", type: "MANUAL_TOTAL" as const, name: "Combined supplies", quantity: null, unitCost: null, manualTotal: 500 },
+      ],
+    };
+    const cabinets = {
+      ...sectionInput,
+      key: "pricing-unit-1",
+      title: "Cabinet refinishing",
+      areaName: "",
+      estimateMethod: "UNIT_PRICE" as const,
+      laborLines: [],
+      materials: [],
+      unitPrice: {
+        templateId: 1,
+        serviceName: "Cabinet refinishing",
+        variantName: "Milesi",
+        unitLabel: "Door",
+        quantity: 40,
+        pricePerUnit: 135,
+        lineTotalOverride: null,
+        laborAllowance: 1800,
+        materialAllowance: 700,
+        note: "",
+        rateSource: "SEEDED" as const,
+      },
+    };
+    const input = baseInput({ sections: [], estimateWorkItems: [laborAndMaterials, cabinets], otherCosts: [] });
+    const authoritative = buildAuthoritativeProposalEstimate([], input, defaults);
+    const persisted = buildProposalEstimatePersistence(authoritative, input, defaults);
+
+    expect(authoritative?.estimate.directLaborCost).toBe(5760);
+    expect(authoritative?.estimate.materialsCost).toBe(660);
+    expect(authoritative?.estimate.workItems[0]?.laborLines[0]?.calculatedLaborCost).toBe(2760);
+    expect(authoritative?.estimate.workItems[0]?.laborLines[1]?.calculatedLaborCost).toBe(2760);
+    expect(authoritative?.estimate.workItems[0]?.laborLines[1]?.usedLaborCost).toBe(3000);
+    expect(authoritative?.estimate.workItems[1]?.baseCustomerPrice).toBe(5400);
+    expect((persisted.estimateSummaryJson as { draftWorkItems: unknown[] }).draftWorkItems).toHaveLength(2);
+  });
+
   it("persists authoritative hybrid estimator totals", () => {
     const sections = sanitizeSections([sectionInput], defaults);
     const authoritative = buildAuthoritativeProposalEstimate(sections, baseInput({ sections: [sectionInput] }), defaults);

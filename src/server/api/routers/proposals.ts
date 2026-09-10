@@ -253,6 +253,7 @@ const proposalInput = z.object({
   showTaxPlanning: z.boolean().default(true),
   includeTaxReserveInRecommendedPrice: z.boolean().default(false),
   otherCosts: z.array(proposalOtherCostInput).default([]),
+  estimateWorkItems: z.array(proposalSectionInput).default([]),
   expectedStartDate: z.date().nullable().optional(),
   expectedEndDate: z.date().nullable().optional(),
   sections: z.array(proposalSectionInput).default([]),
@@ -888,7 +889,11 @@ export function buildAuthoritativeProposalEstimate(
   input: z.infer<typeof proposalInput>,
   defaults: ProposalPricingDefaults
 ) {
-  const workItems = sections.map((section) => section.workItem).filter((section): section is ProposalEstimateWorkItemInput => section != null);
+  const proposalLevelItems = sanitizeSections(input.estimateWorkItems, defaults);
+  const sanitizedByKey = new Map([...sections, ...proposalLevelItems].map((section) => [section.key, section] as const));
+  const workItems = Array.from(sanitizedByKey.values())
+    .map((section) => section.workItem)
+    .filter((section): section is ProposalEstimateWorkItemInput => section != null);
   const hasEstimatorData = workItems.length > 0 || sanitizeOtherCosts(input).length > 0;
   if (!hasEstimatorData) return null;
 
@@ -981,6 +986,7 @@ export function buildProposalEstimatePersistence(
     estimatePainterHoursTotal: totalPainterHours,
     estimateSummaryJson: toPrismaJson({
       input: estimateRequest,
+      draftWorkItems: input.estimateWorkItems,
       summary: estimate,
       defaults,
     }),

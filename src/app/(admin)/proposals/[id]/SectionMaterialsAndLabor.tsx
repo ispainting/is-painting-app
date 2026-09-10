@@ -534,7 +534,7 @@ export function SectionMaterialsAndLabor({
   );
 }
 
-function MaterialsEditor({
+export function MaterialsEditor({
   disabled,
   inventory,
   materials,

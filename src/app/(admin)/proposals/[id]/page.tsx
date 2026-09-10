@@ -8,7 +8,8 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { toast } from "sonner";
-import { SectionMaterialsAndLabor, type LaborLineDraft, type SectionEstimateDraft, type SectionMaterialDraft } from "./SectionMaterialsAndLabor";
+import type { LaborLineDraft, SectionEstimateDraft, SectionMaterialDraft } from "./SectionMaterialsAndLabor";
+import { ProposalPricingCalculator, createDefaultPricingWorkItems, type PricingWorkItemDraft } from "./ProposalPricingCalculator";
 import { computeDraftProposalEstimateSummary } from "@/lib/proposal-estimator-draft";
 
 const TABS = [
@@ -94,7 +95,8 @@ type SectionDraft = SectionEstimateDraft & {
 };
 
 type SavedEstimateSummary = {
-  input?: { settings?: { otherCosts?: OtherCostDraft[] } };
+  input?: { workItems?: unknown[]; settings?: { otherCosts?: OtherCostDraft[] } };
+  draftWorkItems?: unknown[];
   summary?: {
     desiredProfitMarginPercent?: number | null;
     workersCompPercent?: number;
@@ -268,6 +270,140 @@ function readEstimateSummary(value: unknown): SavedEstimateSummary | null {
   return value && typeof value === "object" ? (value as SavedEstimateSummary) : null;
 }
 
+function hydratePricingWorkItems(value: unknown): PricingWorkItemDraft[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is Record<string, any> => !!item && typeof item === "object").map((item, index) => ({
+    key: String(item.key || `pricing-${index}`),
+    templateKey: String(item.templateKey || "pricing"),
+    title: String(item.title || "Pricing item"),
+    description: String(item.description || ""),
+    bulletItems: Array.isArray(item.bulletItems) ? item.bulletItems.map(String) : [],
+    notes: String(item.notes || ""),
+    sortOrder: Number(item.sortOrder ?? index),
+    areaName: String(item.areaName === "General" ? "" : item.areaName || ""),
+    phaseName: String(item.phaseName || ""),
+    workCategoryLabel: String(item.workCategoryLabel || ""),
+    customerTitle: String(item.customerTitle || ""),
+    estimateMethod: item.estimateMethod || "",
+    priceVisibilityMode: item.priceVisibilityMode || item.priceVisibility || "HIDDEN",
+    clientNotes: String(item.clientNotes || ""),
+    internalNotes: String(item.internalNotes || ""),
+    laborLines: Array.isArray(item.laborLines) ? item.laborLines.map((line: Record<string, any>, laborIndex: number) => ({
+      key: String(line.key || `pricing-labor-${laborIndex}`), label: String(line.label || "Labor"), mode: line.mode || "HOURS",
+      workers: line.workers == null ? "" : String(line.workers), hoursPerWorker: line.hoursPerWorker == null ? "" : String(line.hoursPerWorker),
+      days: line.days == null ? "" : String(line.days), hoursPerDay: line.hoursPerDay == null ? "" : String(line.hoursPerDay),
+      hourlyCost: line.hourlyCost == null ? "" : String(line.hourlyCost), manualTotalOverride: line.manualTotalOverride == null ? "" : String(line.manualTotalOverride),
+      internalNote: String(line.internalNote || ""),
+    })) : [],
+    materials: Array.isArray(item.materials) ? item.materials.map((material: Record<string, any>, materialIndex: number) => ({
+      key: String(material.key || `pricing-material-${materialIndex}`), inventoryItemId: material.inventoryItemId ?? null, type: material.type || "CUSTOM",
+      name: String(material.name || ""), unit: String(material.unit || "unit"), quantity: material.quantity == null ? "" : String(material.quantity),
+      unitCost: material.unitCost == null ? "" : String(material.unitCost), manualTotal: material.manualTotal == null ? "" : String(material.manualTotal),
+      coveragePerUnit: material.coveragePerUnit == null ? "" : String(material.coveragePerUnit), wastePercent: material.wastePercent == null ? "0" : String(material.wastePercent),
+      adjustedQuantity: material.adjustedQuantity == null ? "" : String(material.adjustedQuantity), note: String(material.note || ""),
+      priceSourceType: material.priceSourceType ?? null, priceSourceLabel: String(material.priceSourceLabel || ""),
+      priceSourceExpenseId: material.priceSourceExpenseId ?? null, priceSourceExpenseLineItemId: material.priceSourceExpenseLineItemId ?? null,
+    })) : [],
+    unitPrice: item.unitPrice ? {
+      templateId: item.unitPrice.templateId ?? null, serviceName: String(item.unitPrice.serviceName || ""), variantName: String(item.unitPrice.variantName || ""), unitLabel: String(item.unitPrice.unitLabel || ""),
+      quantity: item.unitPrice.quantity == null ? "" : String(item.unitPrice.quantity), pricePerUnit: item.unitPrice.pricePerUnit == null ? "" : String(item.unitPrice.pricePerUnit),
+      lineTotalOverride: item.unitPrice.lineTotalOverride == null ? "" : String(item.unitPrice.lineTotalOverride), laborAllowance: item.unitPrice.laborAllowance == null ? "" : String(item.unitPrice.laborAllowance),
+      materialAllowance: item.unitPrice.materialAllowance == null ? "" : String(item.unitPrice.materialAllowance), note: String(item.unitPrice.note || ""), rateSource: item.unitPrice.rateSource || "MANUAL",
+    } : null,
+    manualTotal: item.manualTotal ? { customerTotal: String(item.manualTotal.customerTotal ?? ""), internalCost: String(item.manualTotal.internalCost ?? ""), note: String(item.manualTotal.note || "") } : null,
+    production: item.production ? {
+      workCategory: String(item.production.workCategory || ""), surfaceType: String(item.production.surfaceType || ""), measurementUnit: String(item.production.measurementUnit || ""),
+      measurementValue: String(item.production.measurementValue ?? ""), productionRateBasis: item.production.productionRateBasis || "SQFT_PER_HOUR", productionRateValue: String(item.production.productionRateValue ?? ""),
+      calculatedLaborHours: String(item.production.calculatedLaborHours ?? ""), adjustedLaborHours: String(item.production.adjustedLaborHours ?? ""), crewSize: String(item.production.crewSize ?? ""),
+      hoursPerDay: String(item.production.hoursPerDay ?? ""), hourlyCostPerWorker: String(item.production.hourlyCostPerWorker ?? ""), note: String(item.production.note || ""), productionRateId: item.production.productionRateId ?? null,
+    } : null,
+  }));
+}
+
+function serializePricingWorkItem(item: PricingWorkItemDraft, index: number) {
+  return {
+    key: item.key,
+    templateKey: item.templateKey,
+    title: item.title || `Pricing item ${index + 1}`,
+    customerTitle: item.customerTitle || undefined,
+    description: item.description || undefined,
+    bulletItems: item.bulletItems,
+    notes: item.notes || undefined,
+    sortOrder: index,
+    areaName: item.areaName || undefined,
+    phaseName: item.phaseName || undefined,
+    workCategoryLabel: item.workCategoryLabel || undefined,
+    estimateMethod: item.estimateMethod || null,
+    priceVisibilityMode: item.priceVisibilityMode,
+    clientNotes: item.clientNotes || undefined,
+    internalNotes: item.internalNotes || undefined,
+    laborLines: item.laborLines.map((line) => ({
+      key: line.key,
+      label: line.label || "Labor",
+      mode: line.mode,
+      workers: Number(line.workers) || 0,
+      hoursPerWorker: line.hoursPerWorker.trim() ? Number(line.hoursPerWorker) : null,
+      days: line.days.trim() ? Number(line.days) : null,
+      hoursPerDay: line.hoursPerDay.trim() ? Number(line.hoursPerDay) : null,
+      hourlyCost: Number(line.hourlyCost) || 0,
+      manualTotalOverride: line.manualTotalOverride.trim() ? Number(line.manualTotalOverride) : null,
+      internalNote: line.internalNote || undefined,
+    })),
+    materials: item.materials.filter((material) => material.name.trim()).map((material, materialIndex) => ({
+      key: material.key,
+      inventoryItemId: material.inventoryItemId,
+      type: material.type,
+      name: material.name.trim(),
+      unit: material.unit.trim() || "unit",
+      quantity: material.quantity.trim() ? Number(material.quantity) : null,
+      unitCost: material.unitCost.trim() ? Number(material.unitCost) : null,
+      manualTotal: material.manualTotal.trim() ? Number(material.manualTotal) : null,
+      coveragePerUnit: material.coveragePerUnit.trim() ? Number(material.coveragePerUnit) : null,
+      wastePercent: material.wastePercent.trim() ? Number(material.wastePercent) : 0,
+      adjustedQuantity: material.adjustedQuantity.trim() ? Number(material.adjustedQuantity) : null,
+      note: material.note || undefined,
+      priceSourceType: material.priceSourceType,
+      priceSourceLabel: material.priceSourceLabel || undefined,
+      priceSourceExpenseId: material.priceSourceExpenseId,
+      priceSourceExpenseLineItemId: material.priceSourceExpenseLineItemId,
+      sortOrder: materialIndex,
+    })),
+    unitPrice: item.unitPrice ? {
+      templateId: item.unitPrice.templateId,
+      serviceName: item.unitPrice.serviceName || undefined,
+      variantName: item.unitPrice.variantName || undefined,
+      unitLabel: item.unitPrice.unitLabel || undefined,
+      quantity: Number(item.unitPrice.quantity) || 0,
+      pricePerUnit: Number(item.unitPrice.pricePerUnit) || 0,
+      lineTotalOverride: item.unitPrice.lineTotalOverride.trim() ? Number(item.unitPrice.lineTotalOverride) : null,
+      laborAllowance: item.unitPrice.laborAllowance.trim() ? Number(item.unitPrice.laborAllowance) : null,
+      materialAllowance: item.unitPrice.materialAllowance.trim() ? Number(item.unitPrice.materialAllowance) : null,
+      note: item.unitPrice.note || undefined,
+      rateSource: item.unitPrice.rateSource,
+    } : null,
+    manualTotal: item.manualTotal ? {
+      customerTotal: Number(item.manualTotal.customerTotal) || 0,
+      internalCost: item.manualTotal.internalCost.trim() ? Number(item.manualTotal.internalCost) : null,
+      note: item.manualTotal.note || undefined,
+    } : null,
+    production: item.production ? {
+      workCategory: item.production.workCategory || undefined,
+      surfaceType: item.production.surfaceType || undefined,
+      measurementUnit: item.production.measurementUnit || undefined,
+      measurementValue: Number(item.production.measurementValue) || 0,
+      productionRateBasis: item.production.productionRateBasis,
+      productionRateValue: Number(item.production.productionRateValue) || 0,
+      calculatedLaborHours: item.production.calculatedLaborHours.trim() ? Number(item.production.calculatedLaborHours) : null,
+      adjustedLaborHours: item.production.adjustedLaborHours.trim() ? Number(item.production.adjustedLaborHours) : null,
+      crewSize: item.production.crewSize.trim() ? Number(item.production.crewSize) : null,
+      hoursPerDay: item.production.hoursPerDay.trim() ? Number(item.production.hoursPerDay) : null,
+      hourlyCostPerWorker: item.production.hourlyCostPerWorker.trim() ? Number(item.production.hourlyCostPerWorker) : null,
+      note: item.production.note || undefined,
+      productionRateId: item.production.productionRateId,
+    } : null,
+  };
+}
+
 function readSectionEstimateData(value: unknown): SavedSectionEstimateData | null {
   return value && typeof value === "object" ? (value as SavedSectionEstimateData) : null;
 }
@@ -410,7 +546,7 @@ export default function ProposalDetailPage() {
   const params = useParams<{ id: string }>();
   const id = Number(params.id);
   const { data: proposal, isLoading } = api.proposals.byId.useQuery({ id });
-  const [tab, setTab] = useState<ProposalTab>("scope");
+  const [tab, setTab] = useState<ProposalTab>("pricing");
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustomerResults, setShowCustomerResults] = useState(false);
   const customers = api.customers.list.useQuery({ search: customerSearch.trim() || undefined }, { enabled: !!proposal });
@@ -485,6 +621,7 @@ export default function ProposalDetailPage() {
     showTaxPlanning: true,
     includeTaxReserveInRecommendedPrice: false,
     otherCosts: [] as OtherCostDraft[],
+    estimateWorkItems: [] as PricingWorkItemDraft[],
     expectedStartDate: "",
     expectedEndDate: "",
     sections: [] as SectionDraft[],
@@ -512,6 +649,7 @@ export default function ProposalDetailPage() {
     () =>
       computeDraftProposalEstimateSummary({
         sections: form.sections,
+        estimateWorkItems: form.estimateWorkItems,
         defaults: estimatorDefaults,
         pricing: {
           desiredProfitMarginPercent: form.desiredProfitMarginPercent,
@@ -529,13 +667,18 @@ export default function ProposalDetailPage() {
           otherCosts: form.otherCosts,
         },
       }),
-    [form.sections, form.desiredProfitMarginPercent, form.estimatePriceOverride, form.workersCompPercentOverride, form.includeWorkersCompInRecommendedPrice, form.generalLiabilityMode, form.generalLiabilityPercent, form.generalLiabilityFlatAmount, form.includeGeneralLiabilityInRecommendedPrice, form.massTaxRate, form.federalTaxRate, form.showTaxPlanning, form.includeTaxReserveInRecommendedPrice, form.otherCosts, estimatorDefaults]
+    [form.sections, form.estimateWorkItems, form.desiredProfitMarginPercent, form.estimatePriceOverride, form.workersCompPercentOverride, form.includeWorkersCompInRecommendedPrice, form.generalLiabilityMode, form.generalLiabilityPercent, form.generalLiabilityFlatAmount, form.includeGeneralLiabilityInRecommendedPrice, form.massTaxRate, form.federalTaxRate, form.showTaxPlanning, form.includeTaxReserveInRecommendedPrice, form.otherCosts, estimatorDefaults]
   );
 
   const computedScopesTotal = estimatorSummary.areas.reduce((sum, area) => sum + area.allocatedCustomerPrice, 0);
   const displayFinalProposalPrice = estimatorSummary.hasEstimatorData
     ? estimatorSummary.totals.finalCustomerPrice ?? estimatorSummary.totals.recommendedCustomerPrice ?? form.totalAmount
     : form.totalAmount;
+  const hasEnteredEstimate =
+    estimatorSummary.totals.directLaborCost > 0
+    || estimatorSummary.totals.materialsCost > 0
+    || estimatorSummary.totals.otherDirectCosts > 0
+    || estimatorSummary.totals.workItems.some((item) => item.baseCustomerPrice > 0);
 
   const update = api.proposals.update.useMutation({
     onSuccess: () => {
@@ -642,6 +785,10 @@ export default function ProposalDetailPage() {
             { key: "travel", label: "Fuel and transportation", description: "", amount: Number(proposal.estimateLogisticsCost ?? 0), includeInRecommendedPrice: true, internalNote: "" },
             { key: "misc", label: "Miscellaneous costs", description: "", amount: Number(proposal.estimateMiscProjectCost ?? 0), includeInRecommendedPrice: true, internalNote: "" },
           ].filter((line) => line.amount > 0),
+      estimateWorkItems: (() => {
+        const saved = hydratePricingWorkItems(estimateSummary?.draftWorkItems ?? estimateSummary?.input?.workItems);
+        return saved.length ? saved : createDefaultPricingWorkItems(estimatorDefaults.defaultWorkDayHours, estimatorDefaults.defaultLaborCostRate ?? 0);
+      })(),
       expectedStartDate: proposal.expectedStartDate ? new Date(proposal.expectedStartDate).toISOString().slice(0, 10) : "",
       expectedEndDate: proposal.expectedEndDate ? new Date(proposal.expectedEndDate).toISOString().slice(0, 10) : "",
       sections: proposal.sections.length
@@ -1008,6 +1155,7 @@ export default function ProposalDetailPage() {
         showTaxPlanning: form.showTaxPlanning,
         includeTaxReserveInRecommendedPrice: form.includeTaxReserveInRecommendedPrice,
         otherCosts: form.otherCosts,
+        estimateWorkItems: form.estimateWorkItems.map(serializePricingWorkItem),
         expectedStartDate: form.expectedStartDate ? new Date(form.expectedStartDate) : null,
         expectedEndDate: form.expectedEndDate ? new Date(form.expectedEndDate) : null,
         sections: sectionsPayload,
@@ -1436,7 +1584,7 @@ export default function ProposalDetailPage() {
             <div className="flex flex-wrap gap-2 items-end justify-between mb-4">
               <div>
                 <h2 className="text-base font-semibold">Areas & Scope Items</h2>
-                <p className="text-sm text-slate-500">Build the estimate one area and one scope item at a time.</p>
+                <p className="text-sm text-slate-500">Write the customer-facing project description. Pricing is handled independently on the Pricing tab.</p>
               </div>
               <div className="flex gap-2">
                 <input
@@ -1483,7 +1631,7 @@ export default function ProposalDetailPage() {
 
             <div className="space-y-3">
               {form.sections.length === 0 ? (
-                <div className="text-sm text-slate-500">No scope items yet. Add an area and scope item to begin building the proposal estimate.</div>
+                <div className="text-sm text-slate-500">No scope items yet. You can add customer-facing areas and descriptions at any time.</div>
               ) : (
                 form.sections.map((section, index) => {
                   const collapsed = collapsedSections[index] ?? false;
@@ -1509,32 +1657,9 @@ export default function ProposalDetailPage() {
                           <FieldArea label="Description" value={section.description} onChange={(v) => setForm((f) => ({ ...f, sections: f.sections.map((item, i) => i === index ? { ...item, description: v } : item) }))} disabled={isReadOnly} className="md:col-span-2" />
                           <FieldArea label="Bullet Items" value={section.bulletItems.join("\n")} onChange={(v) => setForm((f) => ({ ...f, sections: f.sections.map((item, i) => i === index ? { ...item, bulletItems: v.split("\n") } : item) }))} disabled={isReadOnly} />
                           <FieldArea label="Notes" value={section.notes} onChange={(v) => setForm((f) => ({ ...f, sections: f.sections.map((item, i) => i === index ? { ...item, notes: v } : item) }))} disabled={isReadOnly} />
-                          <SectionMaterialsAndLabor
-                            value={{
-                              areaName: section.areaName,
-                              phaseName: section.phaseName,
-                              workCategoryLabel: section.workCategoryLabel,
-                              customerTitle: section.customerTitle,
-                              estimateMethod: section.estimateMethod,
-                              priceVisibilityMode: section.priceVisibilityMode,
-                              clientNotes: section.clientNotes,
-                              internalNotes: section.internalNotes,
-                              laborLines: section.laborLines,
-                              materials: section.materials,
-                              unitPrice: section.unitPrice,
-                              manualTotal: section.manualTotal,
-                              production: section.production,
-                            }}
-                            onChange={(next) =>
-                              setForm((f) => ({
-                                ...f,
-                                sections: f.sections.map((item, i) => (i === index ? { ...item, ...next } : item)),
-                              }))
-                            }
-                            disabled={isReadOnly}
-                            makeMaterialKey={nextMaterialDraftKey}
-                            makeLaborKey={nextLaborDraftKey}
-                          />
+                          <FieldText label="Area / room" value={section.areaName} onChange={(v) => setForm((f) => ({ ...f, sections: f.sections.map((item, i) => i === index ? { ...item, areaName: v } : item) }))} disabled={isReadOnly} />
+                          <FieldText label="Customer-visible price group (optional)" value={section.customerTitle} onChange={(v) => setForm((f) => ({ ...f, sections: f.sections.map((item, i) => i === index ? { ...item, customerTitle: v } : item) }))} disabled={isReadOnly} />
+                          <FieldArea label="Customer-facing scope description" value={section.clientNotes} onChange={(v) => setForm((f) => ({ ...f, sections: f.sections.map((item, i) => i === index ? { ...item, clientNotes: v } : item) }))} disabled={isReadOnly} className="md:col-span-2" />
                         </div>
                       )}
                     </div>
@@ -1548,7 +1673,98 @@ export default function ProposalDetailPage() {
 
       {tab === "pricing" && (
         <div className="space-y-4">
-          <div className="grid md:grid-cols-2 gap-4">
+          <ProposalPricingCalculator
+            value={form.estimateWorkItems}
+            onChange={(estimateWorkItems) => setForm((current) => ({ ...current, estimateWorkItems }))}
+            areas={Array.from(new Set(form.sections.map((section) => section.areaName.trim()).filter(Boolean)))}
+            disabled={isReadOnly}
+            defaultWorkDayHours={estimatorDefaults.defaultWorkDayHours}
+            defaultLaborCostRate={estimatorDefaults.defaultLaborCostRate ?? 0}
+            makeMaterialKey={nextMaterialDraftKey}
+          />
+
+          <section className="card p-5">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div><h2 className="text-base font-semibold">4. Other Project Costs</h2><p className="text-sm text-slate-500">Add direct costs and choose whether each should affect the recommended customer price.</p></div>
+              <button type="button" className="btn btn-secondary" disabled={isReadOnly} onClick={() => setForm((f) => ({ ...f, otherCosts: [...f.otherCosts, { key: `custom-${Date.now()}`, label: "Custom cost", description: "", amount: 0, includeInRecommendedPrice: true, internalNote: "" }] }))}>Add custom cost</button>
+            </div>
+            <div className="mb-4 flex flex-wrap gap-2">
+              {["Subcontractors", "Equipment", "Fuel/transportation", "Ferry/tolls", "Lodging", "Permits", "Disposal", "Miscellaneous"].map((label) => (
+                <button key={label} type="button" className="btn btn-secondary" disabled={isReadOnly || form.otherCosts.some((cost) => cost.label === label)} onClick={() => setForm((f) => ({ ...f, otherCosts: [...f.otherCosts, { key: label.toLowerCase().replace(/[^a-z]+/g, "-"), label, description: "", amount: 0, includeInRecommendedPrice: true, internalNote: "" }] }))}>+ {label}</button>
+              ))}
+            </div>
+            <div className="space-y-3">
+              {form.otherCosts.map((cost, index) => <div key={cost.key} className="grid gap-3 rounded-md border border-slate-200 p-3 md:grid-cols-5">
+                <FieldText label="Category" value={cost.label} onChange={(v) => setForm((f) => ({ ...f, otherCosts: f.otherCosts.map((item, i) => i === index ? { ...item, label: v } : item) }))} disabled={isReadOnly} />
+                <FieldText label="Description" value={cost.description} onChange={(v) => setForm((f) => ({ ...f, otherCosts: f.otherCosts.map((item, i) => i === index ? { ...item, description: v } : item) }))} disabled={isReadOnly} />
+                <FieldNumber label="Amount" value={cost.amount} onChange={(v) => setForm((f) => ({ ...f, otherCosts: f.otherCosts.map((item, i) => i === index ? { ...item, amount: v } : item) }))} disabled={isReadOnly} />
+                <label className="flex items-end gap-2 pb-2 text-sm"><input type="checkbox" checked={cost.includeInRecommendedPrice} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, otherCosts: f.otherCosts.map((item, i) => i === index ? { ...item, includeInRecommendedPrice: e.target.checked } : item) }))} />Include in recommended price</label>
+                <div className="flex items-end justify-end"><button type="button" className="btn btn-secondary" disabled={isReadOnly} onClick={() => setForm((f) => ({ ...f, otherCosts: f.otherCosts.filter((_, i) => i !== index) }))}>Remove</button></div>
+              </div>)}
+              {form.otherCosts.length === 0 ? <p className="text-sm text-slate-500">No other project costs.</p> : null}
+            </div>
+          </section>
+
+          <section className="card p-5">
+            <h2 className="mb-4 text-base font-semibold">5. Insurance &amp; Labor Burden</h2>
+            <div className="grid gap-3 md:grid-cols-3">
+              <EstimateStat label="Labor subtotal" value={estimatorSummary.totals.directLaborCost} currency />
+              <div><label className="label">Workers' compensation rate %</label><input className="input" type="text" inputMode="decimal" value={form.workersCompPercentOverride} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, workersCompPercentOverride: sanitizeNumericInput(e.target.value) }))} placeholder={String(estimatorDefaults.defaultWcPercent)} /></div>
+              <EstimateStat label="Workers' compensation amount" value={estimatorSummary.totals.workersCompAmount} currency />
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.includeWorkersCompInRecommendedPrice} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, includeWorkersCompInRecommendedPrice: e.target.checked }))} />Include workers' compensation in customer price</label>
+              <div><label className="label">General-liability calculation basis</label><select className="input" value={form.generalLiabilityMode} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, generalLiabilityMode: e.target.value as typeof form.generalLiabilityMode }))}><option value="PERCENT_OF_LABOR">% of labor</option><option value="PERCENT_OF_REVENUE">% of revenue</option><option value="FLAT_AMOUNT">Flat amount</option><option value="EXCLUDED">Excluded</option></select></div>
+              <div><label className="label">{form.generalLiabilityMode === "FLAT_AMOUNT" ? "General-liability flat amount" : "General-liability rate %"}</label><input className="input" type="text" inputMode="decimal" value={form.generalLiabilityMode === "FLAT_AMOUNT" ? form.generalLiabilityFlatAmount : form.generalLiabilityPercent} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, [f.generalLiabilityMode === "FLAT_AMOUNT" ? "generalLiabilityFlatAmount" : "generalLiabilityPercent"]: sanitizeNumericInput(e.target.value) }))} /></div>
+              <EstimateStat label="General-liability amount" value={estimatorSummary.totals.generalLiabilityAmount} currency />
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.includeGeneralLiabilityInRecommendedPrice} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, includeGeneralLiabilityInRecommendedPrice: e.target.checked }))} />Include general liability in customer price</label>
+            </div>
+          </section>
+
+          <section className="card p-5">
+            <h2 className="mb-4 text-base font-semibold">6. Profit &amp; Quote Price</h2>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <EstimateStat label="Labor cost" value={estimatorSummary.totals.directLaborCost} currency /><EstimateStat label="Material cost" value={estimatorSummary.totals.materialsCost} currency /><EstimateStat label="Other project costs" value={estimatorSummary.totals.otherDirectCosts} currency /><EstimateStat label="Insurance cost" value={estimatorSummary.totals.workersCompAmount + estimatorSummary.totals.generalLiabilityAmount} currency />
+              <EstimateStat label="Unit-price customer lines" value={estimatorSummary.totals.workItems.filter((item) => item.estimateMethod === "UNIT_PRICE").reduce((sum, item) => sum + item.baseCustomerPrice, 0)} currency /><EstimateStat label="Total internal/project cost" value={estimatorSummary.totals.totalInternalCost} currency />
+              <div><label className="label">Desired profit margin %</label><input className="input" type="text" inputMode="decimal" value={form.desiredProfitMarginPercent} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, desiredProfitMarginPercent: sanitizeNumericInput(e.target.value) }))} /></div>
+              <EstimateStat label="Profit dollars" value={estimatorSummary.totals.profitDollars} currency /><EstimateStat label="Recommended customer price" value={estimatorSummary.totals.recommendedCustomerPrice} currency highlight />
+              <div><label className="label">Authorized final-price override</label><input className="input" type="text" inputMode="decimal" value={form.estimatePriceOverride} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, estimatePriceOverride: sanitizeNumericInput(e.target.value) }))} /></div>
+              <EstimateStat label="Actual profit after override" value={estimatorSummary.totals.actualProfit} currency /><EstimateStat label="Actual margin after override" value={estimatorSummary.totals.actualMarginPercent} unit="%" />
+            </div>
+          </section>
+
+          <section className="card p-5">
+            <div className="mb-4"><h2 className="text-base font-semibold">7. Estimated Taxes &amp; Owner Take-Home</h2><p className="text-sm font-medium text-amber-700">Internal planning only. Never shown to the customer.</p></div>
+            <div className="grid gap-3 md:grid-cols-3">
+              <EstimateStat label="Projected profit before taxes" value={estimatorSummary.totals.projectedProfitBeforeTaxes} currency />
+              <div><label className="label">Massachusetts reserve %</label><input className="input" type="text" inputMode="decimal" value={form.massTaxRate} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, massTaxRate: sanitizeNumericInput(e.target.value) }))} placeholder={String(estimatorDefaults.defaultMassTaxRate)} /></div>
+              <div><label className="label">Federal reserve %</label><input className="input" type="text" inputMode="decimal" value={form.federalTaxRate} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, federalTaxRate: sanitizeNumericInput(e.target.value) }))} placeholder={String(estimatorDefaults.defaultFederalTaxRate)} /></div>
+              <EstimateStat label="Total estimated tax reserve" value={estimatorSummary.totals.totalEstimatedTaxReserve} currency /><EstimateStat label="Estimated owner take-home" value={estimatorSummary.totals.estimatedOwnerTakeHome} currency />
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.showTaxPlanning} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, showTaxPlanning: e.target.checked }))} />Show tax planning</label>
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.includeTaxReserveInRecommendedPrice} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, includeTaxReserveInRecommendedPrice: e.target.checked }))} />Include reserve in recommended price</label>
+            </div>
+          </section>
+
+          <ProposalPricingCalculator
+            section="advanced"
+            value={form.estimateWorkItems}
+            onChange={(estimateWorkItems) => setForm((current) => ({ ...current, estimateWorkItems }))}
+            areas={Array.from(new Set(form.sections.map((section) => section.areaName.trim()).filter(Boolean)))}
+            disabled={isReadOnly}
+            defaultWorkDayHours={estimatorDefaults.defaultWorkDayHours}
+            defaultLaborCostRate={estimatorDefaults.defaultLaborCostRate ?? 0}
+            makeMaterialKey={nextMaterialDraftKey}
+          />
+
+          <section className="card p-5">
+            <h2 className="text-base font-semibold">Estimator Summary</h2>
+            {!hasEnteredEstimate ? <p className="mt-2 text-sm text-slate-600">Start with Labor: enter your crew, time, and hourly cost.</p> : null}
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <EstimateStat label="Labor" value={estimatorSummary.totals.directLaborCost} currency /><EstimateStat label="Materials" value={estimatorSummary.totals.materialsCost} currency /><EstimateStat label="Unit-price work" value={estimatorSummary.totals.workItems.filter((item) => item.estimateMethod === "UNIT_PRICE").reduce((sum, item) => sum + item.baseCustomerPrice, 0)} currency /><EstimateStat label="Other costs" value={estimatorSummary.totals.otherDirectCosts} currency />
+              <EstimateStat label="Workers' compensation" value={estimatorSummary.totals.workersCompAmount} currency /><EstimateStat label="General liability" value={estimatorSummary.totals.generalLiabilityAmount} currency /><EstimateStat label="Total internal cost" value={estimatorSummary.totals.totalInternalCost} currency /><EstimateStat label="Desired profit" value={estimatorSummary.totals.profitDollars} currency />
+              <EstimateStat label="Recommended customer price" value={estimatorSummary.totals.recommendedCustomerPrice} currency highlight /><EstimateStat label="Final customer price" value={displayFinalProposalPrice} currency highlight /><EstimateStat label="Estimated taxes" value={estimatorSummary.totals.totalEstimatedTaxReserve} currency /><EstimateStat label="Estimated owner take-home" value={estimatorSummary.totals.estimatedOwnerTakeHome} currency />
+            </div>
+          </section>
+
+          <div className="hidden">
             <div className="card p-5">
               <div className="flex items-center justify-between gap-3 mb-3">
                 <div>

@@ -162,11 +162,16 @@ function parseNonNegative(value: DraftValue, fallback = 0) {
 
 export function computeDraftProposalEstimateSummary(input: {
   sections: DraftSectionLike[];
+  estimateWorkItems?: DraftSectionLike[];
   defaults: ProposalEstimatorDefaults;
   pricing: ProposalEstimatorPricingInput;
 }) {
+  const workItemsByKey = new Map(
+    [...(input.estimateWorkItems ?? []), ...input.sections]
+      .map((item) => [item.key, item] as const)
+  );
   const summary = computeProposalEstimate({
-    workItems: input.sections
+    workItems: Array.from(workItemsByKey.values())
       .filter((section) => (section.estimateMethod ?? null) != null)
       .map((section) => ({
         key: section.key,
