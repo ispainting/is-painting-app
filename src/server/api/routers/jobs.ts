@@ -2,6 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, adminProcedure } from "../trpc";
 import { computeEstimate, nextNumber } from "@/lib/utils";
+import { calculateJobTracking } from "@/lib/job-tracking";
 
 const JobStatusZ = z.enum([
   "estimate", "sent", "approved", "active", "completed", "on_hold", "cancelled",
@@ -120,7 +121,7 @@ export const jobsRouter = router({
           },
           orderBy: { expenseDate: "desc" },
         },
-        timeEntries: { include: { user: true }, orderBy: { clockIn: "desc" }, take: 50 },
+        timeEntries: { include: { user: true }, orderBy: { clockIn: "desc" } },
       },
     });
     if (!job) throw new TRPCError({ code: "NOT_FOUND" });
@@ -130,7 +131,11 @@ export const jobsRouter = router({
     ) {
       throw new TRPCError({ code: "FORBIDDEN" });
     }
-    return job;
+    const trackingSummary = calculateJobTracking(job.timeEntries, job.id);
+    return {
+      ...job,
+      trackingSummary,
+    };
   }),
 
   create: adminProcedure.input(jobInput).mutation(async ({ ctx, input }) => {

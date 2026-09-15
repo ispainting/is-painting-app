@@ -8,6 +8,7 @@ import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { toast } from "sonner";
 import { JobExpenseEntry } from "@/components/expenses/JobExpenseEntry";
+import { calculateJobTracking, calculateEntryMinutes, formatMinutesToHours } from "@/lib/job-tracking";
 
 const STATUSES = ["estimate", "sent", "approved", "active", "completed", "on_hold", "cancelled"] as const;
 const WORKSPACE_TABS = [
@@ -218,37 +219,9 @@ export default function JobDetailPage() {
   const actualSubcontractorCost = subcontractorExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
   const actualExpensesTotal = nonSubcontractorExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
 
-  const actualLaborResult = jobData.timeEntries.reduce(
-    (acc, t) => {
-      const hours = t.paidHours != null
-        ? Number(t.paidHours)
-        : t.hoursWorked != null
-          ? Number(t.hoursWorked)
-          : t.grossHours != null
-            ? Number(t.grossHours)
-            : t.clockOut
-              ? (new Date(t.clockOut).getTime() - new Date(t.clockIn).getTime()) / 3_600_000
-              : null;
-
-      if (hours == null || !Number.isFinite(hours) || hours <= 0) {
-        return acc;
-      }
-
-      acc.hasHours = true;
-      const hourlyRate = Number(t.user.hourlyRate || 0);
-      if (hourlyRate <= 0) {
-        acc.pending = true;
-        return acc;
-      }
-
-      acc.cost += hours * hourlyRate;
-      return acc;
-    },
-    { cost: 0, pending: false, hasHours: false }
-  );
-
-  const actualLaborCost = actualLaborResult.cost;
-  const actualLaborPending = jobData.timeEntries.length === 0 || (actualLaborResult.hasHours && actualLaborResult.pending);
+  const trackingSummary = (job as any)?.trackingSummary ?? calculateJobTracking(jobData.timeEntries, job.id);
+  const actualLaborCost = trackingSummary.totalLaborCost;
+  const actualLaborPending = trackingSummary.isLaborCostPending;
   const actualExpensesPending = nonSubcontractorExpenses.length === 0;
   const actualSubcontractorPending = subcontractorExpenses.length === 0;
 
@@ -674,36 +647,140 @@ export default function JobDetailPage() {
 
       {activeTab === "tracking" && (
         <div className="space-y-4">
-          <div className="grid gap-4 min-w-0">
-            <div className="card min-w-0 overflow-hidden p-5">
-              <h2 className="text-base font-semibold mb-3">Time Entries</h2>
-              {jobData.timeEntries.length === 0 ? (
-                <p className="text-sm text-slate-500">No time logged.</p>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="card p-5">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Total Hours</p>
+              <p className="mt-1 text-2xl font-bold text-slate-900">{trackingSummary.formattedHours}</p>
+              <p className="text-xs text-slate-500 mt-1">{trackingSummary.totalHours.toFixed(2)} total decimal hours</p>
+            </div>
+            <div className="card p-5">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Actual Labor Cost</p>
+              <p className="mt-1 text-2xl font-bold text-slate-900">
+                {actualLaborPending ? `${formatCurrency(actualLaborCost)} (Pending)` : formatCurrency(actualLaborCost)}
+              </p>
+              <p className="text-xs text-slate-500 mt-1">{actualLaborPending ? "Some hourly rates missing" : "Fully calculated"}</p>
+            </div>
+            <div className="card p-5">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Tracked Entries</p>
+              <p className="mt-1 text-2xl font-bold text-slate-900">{trackingSummary.entriesCount}</p>
+              <p className="text-xs text-slate-500 mt-1">Across all employees</p>
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="card p-5">
+              <h2 className="text-base font-semibold mb-3">Hours by Employee</h2>
+              {trackingSummary.byEmployee.length === 0 ? (
+                <p className="text-sm text-slate-500">No time logged for any employee.</p>
               ) : (
-                <ul className="text-sm divide-y">
-                  {jobData.timeEntries.slice(0, 12).map((t) => (
-                    <li key={t.id} className="py-2 flex justify-between">
-                      <span>{t.user.name}</span>
-                      <span className="text-slate-500">
-                        {t.paidHours != null
-                          ? `${Number(t.paidHours).toFixed(2)}h`
-                          : t.hoursWorked != null
-                            ? `${Number(t.hoursWorked).toFixed(2)}h`
-                            : "in progress"}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-left text-xs font-medium uppercase tracking-wider text-slate-500">
+                        <th className="pb-2">Employee</th>
+                        <th className="pb-2 text-right">Hours</th>
+                        <th className="pb-2 text-right">Rate</th>
+                        <th className="pb-2 text-right">Labor Cost</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {trackingSummary.byEmployee.map((emp: any) => (
+                        <tr key={emp.userId} className="py-2">
+                          <td className="py-2 font-medium text-slate-900">{emp.userName}</td>
+                          <td className="py-2 text-right text-slate-700">
+                            {emp.formattedHours} <span className="text-xs text-slate-400">({emp.totalHours.toFixed(2)}h)</span>
+                          </td>
+                          <td className="py-2 text-right text-slate-600">
+                            {emp.hourlyRate != null && emp.hourlyRate > 0 ? formatCurrency(emp.hourlyRate) + "/h" : "Pending"}
+                          </td>
+                          <td className="py-2 text-right font-medium text-slate-900">
+                            {formatCurrency(emp.laborCost)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
 
             <div className="card p-5">
-              <h2 className="text-base font-semibold mb-3">Labor Cost</h2>
-              <div className="grid grid-cols-2 gap-4">
-                <Stat label="Actual labor cost" value={actualLaborPending ? `${formatCurrency(actualLaborCost)} (Pending)` : formatCurrency(actualLaborCost)} />
-                <Stat label="Tracked entries" value={String(jobData.timeEntries.length)} />
-              </div>
+              <h2 className="text-base font-semibold mb-3">Hours by Workday</h2>
+              {trackingSummary.byDate.length === 0 ? (
+                <p className="text-sm text-slate-500">No workdays recorded.</p>
+              ) : (
+                <div className="overflow-x-auto max-h-72">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-left text-xs font-medium uppercase tracking-wider text-slate-500">
+                        <th className="pb-2">Date</th>
+                        <th className="pb-2 text-right">Entries</th>
+                        <th className="pb-2 text-right">Total Hours</th>
+                        <th className="pb-2 text-right">Labor Cost</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {trackingSummary.byDate.map((day: any) => (
+                        <tr key={day.date} className="py-2">
+                          <td className="py-2 text-slate-800">{day.date}</td>
+                          <td className="py-2 text-right text-slate-500">{day.entriesCount}</td>
+                          <td className="py-2 text-right font-medium text-slate-900">{day.formattedHours}</td>
+                          <td className="py-2 text-right text-slate-700">{formatCurrency(day.laborCost)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
+          </div>
+
+          <div className="card p-5">
+            <h2 className="text-base font-semibold mb-3">Complete Time Entries ({jobData.timeEntries.length})</h2>
+            {jobData.timeEntries.length === 0 ? (
+              <p className="text-sm text-slate-500">No time logged for this job yet.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-left text-xs font-medium uppercase tracking-wider text-slate-500">
+                      <th className="pb-2">Employee</th>
+                      <th className="pb-2">Date</th>
+                      <th className="pb-2">Time / Mode</th>
+                      <th className="pb-2 text-right">Duration</th>
+                      <th className="pb-2 text-right">Rate</th>
+                      <th className="pb-2 text-right">Cost</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {jobData.timeEntries.map((t) => {
+                      const mins = calculateEntryMinutes(t);
+                      const { formatted, decimalHours } = formatMinutesToHours(mins);
+                      const rate = Number(t.user.hourlyRate || 0);
+                      const cost = rate > 0 ? (mins / 60) * rate : 0;
+                      return (
+                        <tr key={t.id} className="py-2">
+                          <td className="py-2 font-medium text-slate-900">{t.user.name}</td>
+                          <td className="py-2 text-slate-600">{formatDateTime(t.clockIn).slice(0, 10)}</td>
+                          <td className="py-2 text-slate-500 text-xs">
+                            {t.clockOut ? `${new Date(t.clockIn).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} – ${new Date(t.clockOut).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : t.isManual ? "Manual entry" : "In progress"}
+                          </td>
+                          <td className="py-2 text-right font-medium text-slate-900">
+                            {formatted} <span className="text-xs font-normal text-slate-400">({decimalHours.toFixed(2)}h)</span>
+                          </td>
+                          <td className="py-2 text-right text-slate-600">
+                            {rate > 0 ? `${formatCurrency(rate)}/h` : "—"}
+                          </td>
+                          <td className="py-2 text-right font-medium text-slate-900">
+                            {rate > 0 ? formatCurrency(cost) : "Pending"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           <div className="grid md:grid-cols-2 gap-4">
@@ -725,9 +802,7 @@ export default function JobDetailPage() {
                 </ul>
               )}
             </div>
-          </div>
 
-          <div className="grid md:grid-cols-3 gap-4">
             <div className="card p-5">
               <h2 className="text-base font-semibold mb-3">Subcontractors</h2>
               {subcontractorExpenses.length === 0 ? (
@@ -743,8 +818,6 @@ export default function JobDetailPage() {
                 </ul>
               )}
             </div>
-            <ComingSoonCard title="Progress Photos" description="Progress photo timeline is coming soon." />
-            <ComingSoonCard title="Daily Logs" description="Daily work logs are coming soon." />
           </div>
         </div>
       )}
