@@ -12,7 +12,7 @@ const defaults = {
   defaultWcPercent: 3,
   defaultDesiredProfitMarginPercent: 35,
   defaultGeneralLiabilityMode: "PERCENT_OF_REVENUE" as const,
-  defaultGlPercent: 7.5,
+  defaultGlPercent: 1,
   defaultMassTaxRate: 5,
   defaultFederalTaxRate: 12,
   defaultWorkDayHours: 8,
@@ -360,5 +360,59 @@ describe("proposal estimator server authority", () => {
     expect(seed.laborBudget).toBe(640);
     expect(seed.materials[0]?.totalCost).toBe(156);
     expect(seed.labor[0]?.hours).toBe(8);
+  });
+
+  it("ensures internal planning metrics are never exposed in customer-facing snapshot/output", () => {
+    const authoritative = buildAuthoritativeProposalEstimate([], baseInput({
+      sections: [],
+      estimateWorkItems: [
+        {
+          ...sectionInput,
+          key: "pricing-labor-materials",
+          title: "Labor and materials",
+          areaName: "Living Room",
+          laborLines: [{ ...sectionInput.laborLines[0], workers: 3, hoursPerWorker: 40, hourlyCost: 23 }],
+          materials: [{ ...sectionInput.materials[0], quantity: 4, unitCost: 40 }],
+        },
+      ],
+      desiredProfitMarginPercent: 35,
+      workersCompPercentOverride: 3.5,
+      generalLiabilityPercent: 1,
+      massTaxRate: 5,
+      federalTaxRate: 12,
+      showTaxPlanning: true,
+      includeTaxReserveInRecommendedPrice: true,
+    }), defaults);
+
+    const persisted = buildProposalEstimatePersistence(authoritative, baseInput(), defaults);
+    const savedProposal = {
+      totalAmount: persisted.estimateFinalProposalPrice,
+      estimateFinalProposalPrice: persisted.estimateFinalProposalPrice,
+      estimateSummaryJson: persisted.estimateSummaryJson,
+      sections: [],
+    };
+
+    const customerSnapshot = buildProposalEstimateSnapshotFromSavedProposal(savedProposal);
+
+    // Snapshot contains only customer-facing selling price and scopes
+    expect(customerSnapshot.totalAmount).toBe(authoritative?.estimate.finalCustomerPrice);
+    expect(customerSnapshot.scopes[0]?.title).toBe("Labor and materials");
+    expect(customerSnapshot.scopes[0]?.laborSellingPrice).toBe(authoritative?.estimate.workItems[0]?.allocatedCustomerPrice);
+
+    // Verify internal financial fields are completely absent from customer-facing scope snapshot
+    const scopeKeys = Object.keys(customerSnapshot.scopes[0] || {});
+    expect(scopeKeys).not.toContain("workersCompPercent");
+    expect(scopeKeys).not.toContain("workersCompAmount");
+    expect(scopeKeys).not.toContain("generalLiabilityPercent");
+    expect(scopeKeys).not.toContain("generalLiabilityAmount");
+    expect(scopeKeys).not.toContain("massTaxRate");
+    expect(scopeKeys).not.toContain("massTaxAmount");
+    expect(scopeKeys).not.toContain("federalTaxRate");
+    expect(scopeKeys).not.toContain("federalTaxAmount");
+    expect(scopeKeys).not.toContain("totalEstimatedTaxReserve");
+    expect(scopeKeys).not.toContain("projectedProfitBeforeTaxes");
+    expect(scopeKeys).not.toContain("estimatedOwnerTakeHome");
+    expect(scopeKeys).not.toContain("directLaborCost");
+    expect(scopeKeys).not.toContain("totalInternalCost");
   });
 });

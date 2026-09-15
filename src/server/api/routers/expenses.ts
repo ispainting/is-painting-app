@@ -97,6 +97,15 @@ export const expensesRouter = router({
         job: { select: { id: true, name: true } },
         employee: { select: { id: true, name: true } },
         submittedBy: { select: { id: true, name: true } },
+        lineItems: {
+          select: {
+            id: true,
+            description: true,
+            quantity: true,
+            unitPrice: true,
+            total: true,
+          },
+        },
         attachments: {
           orderBy: { uploadedAt: "desc" },
           select: {
@@ -113,12 +122,44 @@ export const expensesRouter = router({
     });
   }),
 
-  stats: protectedProcedure.query(async ({ ctx }) => {
-    const where = ctx.session.role === "employee" ? { submittedById: ctx.session.userId } : {};
+  stats: protectedProcedure.input(listInput).query(async ({ ctx, input }) => {
+    const search = input?.search?.trim();
+    const where = {
+      ...(ctx.session.role === "employee" && { submittedById: ctx.session.userId }),
+      ...(input?.status && { status: input.status }),
+      ...(input?.category && { category: input.category }),
+      ...(input?.jobId && { jobId: input.jobId }),
+      ...(input?.employeeId && { employeeId: input.employeeId }),
+      ...(search && {
+        OR: [
+          { vendor: { contains: search, mode: "insensitive" as const } },
+          { description: { contains: search, mode: "insensitive" as const } },
+          { notes: { contains: search, mode: "insensitive" as const } },
+          { job: { name: { contains: search, mode: "insensitive" as const } } },
+        ],
+      }),
+    };
 
-    const [expenseAgg, pendingUploads] = await Promise.all([
+    const [expenseAgg, reviewedAgg, unreviewedAgg, pendingUploads] = await Promise.all([
       ctx.prisma.expense.aggregate({
         where,
+        _sum: { amount: true },
+        _count: { _all: true },
+      }),
+      ctx.prisma.expense.aggregate({
+        where: {
+          ...where,
+          OR: [{ status: "approved" }, { reviewStatus: "reviewed" }],
+        },
+        _sum: { amount: true },
+        _count: { _all: true },
+      }),
+      ctx.prisma.expense.aggregate({
+        where: {
+          ...where,
+          status: { not: "approved" },
+          reviewStatus: { not: "reviewed" },
+        },
         _sum: { amount: true },
         _count: { _all: true },
       }),
@@ -133,6 +174,10 @@ export const expensesRouter = router({
     return {
       totalExpenses: Number(expenseAgg._sum.amount ?? 0),
       expenseCount: expenseAgg._count._all,
+      reviewedCount: reviewedAgg._count._all,
+      reviewedTotal: Number(reviewedAgg._sum.amount ?? 0),
+      unreviewedCount: unreviewedAgg._count._all,
+      unreviewedTotal: Number(unreviewedAgg._sum.amount ?? 0),
       pendingUploads,
     };
   }),

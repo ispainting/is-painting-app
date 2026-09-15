@@ -633,10 +633,10 @@ export default function ProposalDetailPage() {
   const config = api.config.get.useQuery();
   const estimatorDefaults = useMemo(
     () => ({
-      defaultLaborCostRate: config.data?.defaultLaborCostRate != null ? Number(config.data.defaultLaborCostRate) : null,
+      defaultLaborCostRate: config.data?.defaultLaborCostRate != null && Number(config.data.defaultLaborCostRate) > 0 ? Number(config.data.defaultLaborCostRate) : 23,
       defaultWcPercent: config.data ? Number(config.data.defaultWcPercent) : 3.5,
       defaultDesiredProfitMarginPercent: config.data ? Number(config.data.defaultDesiredProfitMarginPercent ?? 35) : 35,
-      defaultGlPercent: config.data ? Number(config.data.defaultGlPercent ?? 0) : 0,
+      defaultGlPercent: config.data?.defaultGlPercent != null && Number(config.data.defaultGlPercent) > 0 ? Number(config.data.defaultGlPercent) : 1,
       defaultGeneralLiabilityMode: config.data?.defaultGeneralLiabilityMode ?? "PERCENT_OF_REVENUE",
       defaultMassTaxRate: config.data ? Number(config.data.defaultMassTaxRate ?? 5) : 5,
       defaultFederalTaxRate: config.data ? Number(config.data.defaultFederalTaxRate ?? 12) : 12,
@@ -762,7 +762,9 @@ export default function ProposalDetailPage() {
       includeWorkersCompInRecommendedPrice: estimateSummary?.summary?.includeWorkersCompInRecommendedPrice ?? true,
       generalLiabilityMode: estimateSummary?.summary?.generalLiabilityMode ?? "PERCENT_OF_REVENUE",
       generalLiabilityPercent:
-        estimateSummary?.summary?.generalLiabilityPercent == null ? "" : String(estimateSummary.summary.generalLiabilityPercent),
+        estimateSummary?.summary?.generalLiabilityPercent != null
+          ? String(estimateSummary.summary.generalLiabilityPercent)
+          : String(estimatorDefaults.defaultGlPercent),
       generalLiabilityFlatAmount:
         estimateSummary?.summary?.generalLiabilityFlatAmount == null ? "" : String(estimateSummary.summary.generalLiabilityFlatAmount),
       includeGeneralLiabilityInRecommendedPrice: estimateSummary?.summary?.includeGeneralLiabilityInRecommendedPrice ?? true,
@@ -1555,12 +1557,16 @@ export default function ProposalDetailPage() {
       {tab === "pricing" && (
         <div className="sticky top-0 z-10 mb-4 overflow-x-auto border-b border-slate-200 bg-white/95 backdrop-blur-sm pb-3 pt-1">
           <div className="flex min-w-max items-center gap-3">
-            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Internal cost</div>
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Project cost</div>
             <div className="text-sm font-semibold text-slate-900">{formatCurrency(estimatorSummary.totals.totalInternalCost)}</div>
             <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Recommended</div>
-            <div className="text-sm font-semibold text-slate-900">{formatCurrency(estimatorSummary.totals.recommendedCustomerPrice)}</div>
-            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Final</div>
-            <div className="text-sm font-semibold text-slate-900">{formatCurrency(displayFinalProposalPrice)}</div>
+            <div className="text-sm font-semibold text-sky-950 bg-sky-50 border border-sky-200 px-2.5 py-0.5 rounded">{formatCurrency(estimatorSummary.totals.recommendedCustomerPrice)}</div>
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Final quote</div>
+            <div className="text-sm font-bold text-blue-950 bg-blue-100 border border-blue-300 px-3 py-0.5 rounded ring-1 ring-blue-300">{formatCurrency(displayFinalProposalPrice)}</div>
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Profit</div>
+            <div className={`text-sm font-semibold px-2.5 py-0.5 rounded border ${estimatorSummary.totals.actualProfit < 0 ? "bg-rose-50 border-rose-300 text-rose-950" : "bg-emerald-50 border-emerald-300 text-emerald-950"}`}>
+              {formatCurrency(estimatorSummary.totals.actualProfit)} ({estimatorSummary.totals.actualMarginPercent}%)
+            </div>
             <button className="btn btn-primary ml-auto" disabled={update.isPending || isReadOnly} onClick={onSave}>
               {update.isPending ? "Saving..." : "Save Proposal"}
             </button>
@@ -1773,40 +1779,211 @@ export default function ProposalDetailPage() {
           </section>
 
           <section className="card p-5">
-            <h2 className="mb-4 text-base font-semibold">5. Insurance &amp; Labor Burden</h2>
+            <div className="mb-4">
+              <h2 className="text-base font-semibold">5. Insurance &amp; Labor Burden</h2>
+              <p className="text-sm text-slate-500">Configure workers' compensation and general liability allocations.</p>
+            </div>
             <div className="grid gap-3 md:grid-cols-3">
               <EstimateStat label="Labor subtotal" value={estimatorSummary.totals.directLaborCost} currency />
-              <div><label className="label">Workers' compensation rate %</label><input className="input" type="text" inputMode="decimal" value={form.workersCompPercentOverride} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, workersCompPercentOverride: sanitizeNumericInput(e.target.value) }))} placeholder={String(estimatorDefaults.defaultWcPercent)} /></div>
-              <EstimateStat label="Workers' compensation amount" value={estimatorSummary.totals.workersCompAmount} currency />
-              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.includeWorkersCompInRecommendedPrice} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, includeWorkersCompInRecommendedPrice: e.target.checked }))} />Include workers' compensation in customer price</label>
-              <div><label className="label">General-liability calculation basis</label><select className="input" value={form.generalLiabilityMode} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, generalLiabilityMode: e.target.value as typeof form.generalLiabilityMode }))}><option value="PERCENT_OF_LABOR">% of labor</option><option value="PERCENT_OF_REVENUE">% of revenue</option><option value="FLAT_AMOUNT">Flat amount</option><option value="EXCLUDED">Excluded</option></select></div>
-              <div><label className="label">{form.generalLiabilityMode === "FLAT_AMOUNT" ? "General-liability flat amount" : "General-liability rate %"}</label><input className="input" type="text" inputMode="decimal" value={form.generalLiabilityMode === "FLAT_AMOUNT" ? form.generalLiabilityFlatAmount : form.generalLiabilityPercent} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, [f.generalLiabilityMode === "FLAT_AMOUNT" ? "generalLiabilityFlatAmount" : "generalLiabilityPercent"]: sanitizeNumericInput(e.target.value) }))} /></div>
-              <EstimateStat label="General-liability amount" value={estimatorSummary.totals.generalLiabilityAmount} currency />
-              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.includeGeneralLiabilityInRecommendedPrice} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, includeGeneralLiabilityInRecommendedPrice: e.target.checked }))} />Include general liability in customer price</label>
+              <div>
+                <label className="label">Workers' compensation rate %</label>
+                <input
+                  className="input"
+                  type="text"
+                  inputMode="decimal"
+                  value={form.workersCompPercentOverride}
+                  disabled={isReadOnly}
+                  onChange={(e) => setForm((f) => ({ ...f, workersCompPercentOverride: sanitizeNumericInput(e.target.value) }))}
+                  placeholder={String(estimatorDefaults.defaultWcPercent)}
+                />
+              </div>
+              <EstimateStat label="Workers' compensation amount" value={estimatorSummary.totals.workersCompAmount} currency variant="tax" />
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={form.includeWorkersCompInRecommendedPrice}
+                  disabled={isReadOnly}
+                  onChange={(e) => setForm((f) => ({ ...f, includeWorkersCompInRecommendedPrice: e.target.checked }))}
+                />
+                Include workers' compensation in customer price
+              </label>
+
+              <div>
+                <label className="label">General-liability calculation basis</label>
+                <select
+                  className="input"
+                  value={form.generalLiabilityMode}
+                  disabled={isReadOnly}
+                  onChange={(e) => setForm((f) => ({ ...f, generalLiabilityMode: e.target.value as typeof form.generalLiabilityMode }))}
+                >
+                  <option value="PERCENT_OF_REVENUE">% of revenue</option>
+                  <option value="PERCENT_OF_LABOR">% of labor</option>
+                  <option value="FLAT_AMOUNT">Flat amount</option>
+                  <option value="EXCLUDED">Excluded</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="label">Estimated general-liability allocation</label>
+                <input
+                  className="input"
+                  type="text"
+                  inputMode="decimal"
+                  value={form.generalLiabilityMode === "FLAT_AMOUNT" ? form.generalLiabilityFlatAmount : form.generalLiabilityPercent}
+                  disabled={isReadOnly}
+                  onChange={(e) => setForm((f) => ({ ...f, [f.generalLiabilityMode === "FLAT_AMOUNT" ? "generalLiabilityFlatAmount" : "generalLiabilityPercent"]: sanitizeNumericInput(e.target.value) }))}
+                  placeholder={String(estimatorDefaults.defaultGlPercent)}
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  Temporary planning estimate. Update this using your actual annual policy premium divided by expected annual revenue.
+                </p>
+              </div>
+
+              <EstimateStat label="General-liability amount" value={estimatorSummary.totals.generalLiabilityAmount} currency variant="tax" />
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={form.includeGeneralLiabilityInRecommendedPrice}
+                  disabled={isReadOnly}
+                  onChange={(e) => setForm((f) => ({ ...f, includeGeneralLiabilityInRecommendedPrice: e.target.checked }))}
+                />
+                Include general liability in customer price
+              </label>
             </div>
           </section>
 
           <section className="card p-5">
             <h2 className="mb-4 text-base font-semibold">6. Profit &amp; Quote Price</h2>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <EstimateStat label="Labor cost" value={estimatorSummary.totals.directLaborCost} currency /><EstimateStat label="Material cost" value={estimatorSummary.totals.materialsCost} currency /><EstimateStat label="Other project costs" value={estimatorSummary.totals.otherDirectCosts} currency /><EstimateStat label="Insurance cost" value={estimatorSummary.totals.workersCompAmount + estimatorSummary.totals.generalLiabilityAmount} currency />
-              <EstimateStat label="Unit-price customer lines" value={estimatorSummary.totals.workItems.filter((item) => item.estimateMethod === "UNIT_PRICE").reduce((sum, item) => sum + item.baseCustomerPrice, 0)} currency /><EstimateStat label="Total internal/project cost" value={estimatorSummary.totals.totalInternalCost} currency />
-              <div><label className="label">Desired profit margin %</label><input className="input" type="text" inputMode="decimal" value={form.desiredProfitMarginPercent} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, desiredProfitMarginPercent: sanitizeNumericInput(e.target.value) }))} /></div>
-              <EstimateStat label="Profit dollars" value={estimatorSummary.totals.profitDollars} currency /><EstimateStat label="Recommended customer price" value={estimatorSummary.totals.recommendedCustomerPrice} currency highlight />
-              <div><label className="label">Authorized final-price override</label><input className="input" type="text" inputMode="decimal" value={form.estimatePriceOverride} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, estimatePriceOverride: sanitizeNumericInput(e.target.value) }))} /></div>
-              <EstimateStat label="Actual profit after override" value={estimatorSummary.totals.actualProfit} currency /><EstimateStat label="Actual margin after override" value={estimatorSummary.totals.actualMarginPercent} unit="%" />
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <EstimateStat label="Total Estimated Project Cost" value={estimatorSummary.totals.totalInternalCost} currency large />
+              <div>
+                <label className="label font-medium">Desired profit margin %</label>
+                <input
+                  className="input font-semibold"
+                  type="text"
+                  inputMode="decimal"
+                  value={form.desiredProfitMarginPercent}
+                  disabled={isReadOnly}
+                  onChange={(e) => setForm((f) => ({ ...f, desiredProfitMarginPercent: sanitizeNumericInput(e.target.value) }))}
+                />
+              </div>
+              <EstimateStat label="Recommended Customer Price" value={estimatorSummary.totals.recommendedCustomerPrice} currency variant="recommended" large />
+
+              <div className="sm:col-span-2 lg:col-span-1">
+                <label className="label font-medium">Final price to customer (optional)</label>
+                <input
+                  className="input font-bold border-blue-400 bg-blue-50/50"
+                  type="text"
+                  inputMode="decimal"
+                  value={form.estimatePriceOverride}
+                  disabled={isReadOnly}
+                  placeholder={`Leave blank to quote ${formatCurrency(estimatorSummary.totals.recommendedCustomerPrice)}`}
+                  onChange={(e) => setForm((f) => ({ ...f, estimatePriceOverride: sanitizeNumericInput(e.target.value) }))}
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  Enter the exact amount you want to quote. Leave blank to use the recommended price.
+                </p>
+              </div>
+
+              <EstimateStat
+                label="Expected Profit"
+                value={estimatorSummary.totals.actualProfit}
+                currency
+                variant={estimatorSummary.totals.actualProfit < 0 ? "loss" : "profit"}
+                large
+              />
+              <EstimateStat
+                label="Actual Margin"
+                value={estimatorSummary.totals.actualMarginPercent}
+                unit="%"
+                variant={(estimatorSummary.totals.actualMarginPercent ?? 0) < 0 ? "loss" : "profit"}
+                large
+              />
             </div>
+
+            {estimatorSummary.totals.actualProfit < 0 && (
+              <div className="mt-3 rounded-md border border-rose-300 bg-rose-50 p-3 text-sm font-medium text-rose-800">
+                Warning: The entered final quote results in a project loss of {formatCurrency(Math.abs(estimatorSummary.totals.actualProfit))}.
+              </div>
+            )}
+
+            <details className="mt-4 pt-3 border-t border-slate-200">
+              <summary className="cursor-pointer text-sm font-medium text-slate-700 hover:text-slate-900 select-none">
+                View cost breakdown
+              </summary>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <EstimateStat label="Labor cost" value={estimatorSummary.totals.directLaborCost} currency />
+                <EstimateStat label="Material cost" value={estimatorSummary.totals.materialsCost} currency />
+                <EstimateStat label="Unit-price customer lines" value={estimatorSummary.totals.workItems.filter((item) => item.estimateMethod === "UNIT_PRICE").reduce((sum, item) => sum + item.baseCustomerPrice, 0)} currency />
+                <EstimateStat label="Other project costs" value={estimatorSummary.totals.otherDirectCosts} currency />
+                <EstimateStat label="Workers' compensation" value={estimatorSummary.totals.workersCompAmount} currency variant="tax" />
+                <EstimateStat label="General liability" value={estimatorSummary.totals.generalLiabilityAmount} currency variant="tax" />
+                <EstimateStat label="Total internal cost" value={estimatorSummary.totals.totalInternalCost} currency />
+                <EstimateStat label="Profit dollars" value={estimatorSummary.totals.profitDollars} currency variant="profit" />
+              </div>
+            </details>
           </section>
 
           <section className="card p-5">
-            <div className="mb-4"><h2 className="text-base font-semibold">7. Estimated Taxes &amp; Owner Take-Home</h2><p className="text-sm font-medium text-amber-700">Internal planning only. Never shown to the customer.</p></div>
+            <div className="mb-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-base font-semibold">7. Estimated Taxes &amp; Owner Take-Home</h2>
+                <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold uppercase tracking-wider text-amber-900">
+                  Internal planning only
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-slate-500">
+                Planning estimate only. Actual taxes depend on company structure, deductions, and professional tax advice. Never shown to customer.
+              </p>
+            </div>
             <div className="grid gap-3 md:grid-cols-3">
-              <EstimateStat label="Projected profit before taxes" value={estimatorSummary.totals.projectedProfitBeforeTaxes} currency />
-              <div><label className="label">Massachusetts reserve %</label><input className="input" type="text" inputMode="decimal" value={form.massTaxRate} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, massTaxRate: sanitizeNumericInput(e.target.value) }))} placeholder={String(estimatorDefaults.defaultMassTaxRate)} /></div>
-              <div><label className="label">Federal reserve %</label><input className="input" type="text" inputMode="decimal" value={form.federalTaxRate} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, federalTaxRate: sanitizeNumericInput(e.target.value) }))} placeholder={String(estimatorDefaults.defaultFederalTaxRate)} /></div>
-              <EstimateStat label="Total estimated tax reserve" value={estimatorSummary.totals.totalEstimatedTaxReserve} currency /><EstimateStat label="Estimated owner take-home" value={estimatorSummary.totals.estimatedOwnerTakeHome} currency />
-              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.showTaxPlanning} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, showTaxPlanning: e.target.checked }))} />Show tax planning</label>
-              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.includeTaxReserveInRecommendedPrice} disabled={isReadOnly} onChange={(e) => setForm((f) => ({ ...f, includeTaxReserveInRecommendedPrice: e.target.checked }))} />Include reserve in recommended price</label>
+              <EstimateStat label="Expected profit before taxes" value={estimatorSummary.totals.projectedProfitBeforeTaxes} currency />
+              <div>
+                <label className="label">Massachusetts reserve %</label>
+                <input
+                  className="input"
+                  type="text"
+                  inputMode="decimal"
+                  value={form.massTaxRate}
+                  disabled={isReadOnly}
+                  onChange={(e) => setForm((f) => ({ ...f, massTaxRate: sanitizeNumericInput(e.target.value) }))}
+                  placeholder={String(estimatorDefaults.defaultMassTaxRate)}
+                />
+              </div>
+              <div>
+                <label className="label">Federal reserve %</label>
+                <input
+                  className="input"
+                  type="text"
+                  inputMode="decimal"
+                  value={form.federalTaxRate}
+                  disabled={isReadOnly}
+                  onChange={(e) => setForm((f) => ({ ...f, federalTaxRate: sanitizeNumericInput(e.target.value) }))}
+                  placeholder={String(estimatorDefaults.defaultFederalTaxRate)}
+                />
+              </div>
+              <EstimateStat label="Total estimated tax reserve" value={estimatorSummary.totals.totalEstimatedTaxReserve} currency variant="tax" />
+              <EstimateStat label="Estimated owner take-home" value={estimatorSummary.totals.estimatedOwnerTakeHome} currency variant="profit" large />
+              <div className="flex flex-col justify-end gap-2">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={form.showTaxPlanning}
+                    disabled={isReadOnly}
+                    onChange={(e) => setForm((f) => ({ ...f, showTaxPlanning: e.target.checked }))}
+                  />
+                  Show tax planning
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={form.includeTaxReserveInRecommendedPrice}
+                    disabled={isReadOnly}
+                    onChange={(e) => setForm((f) => ({ ...f, includeTaxReserveInRecommendedPrice: e.target.checked }))}
+                  />
+                  Include estimated tax reserve in recommended quote
+                </label>
+              </div>
             </div>
           </section>
 
@@ -1823,11 +2000,15 @@ export default function ProposalDetailPage() {
 
           <section className="card p-5">
             <h2 className="text-base font-semibold">Estimator Summary</h2>
-            {!hasEnteredEstimate ? <p className="mt-2 text-sm text-slate-600">Start with Labor: enter your crew, time, and hourly cost.</p> : null}
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <EstimateStat label="Labor" value={estimatorSummary.totals.directLaborCost} currency /><EstimateStat label="Materials" value={estimatorSummary.totals.materialsCost} currency /><EstimateStat label="Unit-price work" value={estimatorSummary.totals.workItems.filter((item) => item.estimateMethod === "UNIT_PRICE").reduce((sum, item) => sum + item.baseCustomerPrice, 0)} currency /><EstimateStat label="Other costs" value={estimatorSummary.totals.otherDirectCosts} currency />
-              <EstimateStat label="Workers' compensation" value={estimatorSummary.totals.workersCompAmount} currency /><EstimateStat label="General liability" value={estimatorSummary.totals.generalLiabilityAmount} currency /><EstimateStat label="Total internal cost" value={estimatorSummary.totals.totalInternalCost} currency /><EstimateStat label="Desired profit" value={estimatorSummary.totals.profitDollars} currency />
-              <EstimateStat label="Recommended customer price" value={estimatorSummary.totals.recommendedCustomerPrice} currency highlight /><EstimateStat label="Final customer price" value={displayFinalProposalPrice} currency highlight /><EstimateStat label="Estimated taxes" value={estimatorSummary.totals.totalEstimatedTaxReserve} currency /><EstimateStat label="Estimated owner take-home" value={estimatorSummary.totals.estimatedOwnerTakeHome} currency />
+            {!hasEnteredEstimate ? (
+              <p className="mt-2 text-sm text-slate-600">Start with Labor: enter your crew, time, and hourly cost.</p>
+            ) : null}
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <EstimateStat label="Total Project Cost" value={estimatorSummary.totals.totalInternalCost} currency />
+              <EstimateStat label="Recommended Price" value={estimatorSummary.totals.recommendedCustomerPrice} currency variant="recommended" />
+              <EstimateStat label="Final Customer Price" value={displayFinalProposalPrice} currency variant="final" large />
+              <EstimateStat label="Expected Profit" value={estimatorSummary.totals.actualProfit} currency variant={estimatorSummary.totals.actualProfit < 0 ? "loss" : "profit"} />
+              <EstimateStat label="Estimated Owner Take-Home" value={estimatorSummary.totals.estimatedOwnerTakeHome} currency variant="profit" large />
             </div>
           </section>
 
@@ -2408,19 +2589,45 @@ function EstimateStat({
   currency,
   unit,
   highlight,
+  variant = "default",
+  large,
 }: {
   label: string;
   value: number | null;
   currency?: boolean;
   unit?: string;
   highlight?: boolean;
+  variant?: "default" | "recommended" | "final" | "profit" | "tax" | "loss";
+  large?: boolean;
 }) {
   const display = value == null ? "Pending" : currency ? formatCurrency(value) : unit ? `${value}${unit}` : String(value);
+  const effectiveVariant = variant !== "default"
+    ? variant
+    : highlight
+      ? "recommended"
+      : value != null && value < 0
+        ? "loss"
+        : "default";
+
+  const colorClass =
+    effectiveVariant === "recommended"
+      ? "border-sky-300 bg-sky-50 text-sky-950 font-medium"
+      : effectiveVariant === "final"
+        ? "border-blue-400 bg-blue-100/80 text-blue-950 font-bold ring-1 ring-blue-300"
+        : effectiveVariant === "profit"
+          ? value != null && value < 0
+            ? "border-rose-300 bg-rose-50 text-rose-950 font-semibold"
+            : "border-emerald-300 bg-emerald-50 text-emerald-950 font-semibold"
+          : effectiveVariant === "tax"
+            ? "border-amber-300 bg-amber-50 text-amber-950"
+            : effectiveVariant === "loss"
+              ? "border-rose-300 bg-rose-50 text-rose-950 font-semibold"
+              : "border-slate-200 bg-white text-slate-900";
 
   return (
-    <div className={`rounded-md border px-3 py-2 ${highlight ? "border-brand-300 bg-brand-50" : "border-slate-200 bg-white"}`}>
-      <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="mt-1 font-medium text-slate-900">{display}</div>
+    <div className={`rounded-md border px-3.5 py-2.5 ${colorClass}`}>
+      <div className="text-xs uppercase tracking-wide opacity-75">{label}</div>
+      <div className={`mt-1 font-semibold ${large ? "text-xl font-bold" : "text-base"}`}>{display}</div>
     </div>
   );
 }

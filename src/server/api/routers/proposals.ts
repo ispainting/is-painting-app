@@ -855,11 +855,11 @@ function createSection(
 async function getProposalPricingDefaults(ctx: { prisma: any }) {
   const config = await ctx.prisma.config.findUnique({ where: { id: 1 } });
   return {
-    defaultLaborCostRate: config?.defaultLaborCostRate != null ? Number(config.defaultLaborCostRate) : null,
+    defaultLaborCostRate: config?.defaultLaborCostRate != null && Number(config.defaultLaborCostRate) > 0 ? Number(config.defaultLaborCostRate) : 23,
     defaultWcPercent: config ? Number(config.defaultWcPercent) : 3.5,
     defaultDesiredProfitMarginPercent: config ? Number(config.defaultDesiredProfitMarginPercent ?? 35) : 35,
     defaultGeneralLiabilityMode: (config?.defaultGeneralLiabilityMode ?? "PERCENT_OF_REVENUE") as ProposalGeneralLiabilityMode,
-    defaultGlPercent: config ? Number(config.defaultGlPercent ?? 0) : 0,
+    defaultGlPercent: config?.defaultGlPercent != null && Number(config.defaultGlPercent) > 0 ? Number(config.defaultGlPercent) : 1,
     defaultMassTaxRate: config ? Number(config.defaultMassTaxRate ?? 5) : 5,
     defaultFederalTaxRate: config ? Number(config.defaultFederalTaxRate ?? 12) : 12,
     defaultWorkDayHours: config ? Number(config.defaultWorkDayHours ?? 8) : 8,

@@ -50,6 +50,7 @@ export function createDefaultPricingWorkItems(defaultWorkDayHours = 8, defaultLa
 }
 
 function createLaborLine(key: string, defaultWorkDayHours: number, defaultLaborCostRate: number): LaborLineDraft {
+  const effectiveRate = defaultLaborCostRate > 0 ? defaultLaborCostRate : 23;
   return {
     key,
     label: "Crew labor",
@@ -58,7 +59,7 @@ function createLaborLine(key: string, defaultWorkDayHours: number, defaultLaborC
     hoursPerWorker: "",
     days: "",
     hoursPerDay: String(defaultWorkDayHours),
-    hourlyCost: defaultLaborCostRate > 0 ? String(defaultLaborCostRate) : "",
+    hourlyCost: String(effectiveRate),
     manualTotalOverride: "",
     internalNote: "",
   };
@@ -145,10 +146,19 @@ export function ProposalPricingCalculator({
     [laborMaterials.laborLines, defaultWorkDayHours]
   );
 
+  const getMaterialAmount = (material: any) => {
+    if (material.type === "MANUAL_TOTAL" || (material.manualTotal?.trim() && !material.quantity?.trim())) {
+      return numberValue(material.manualTotal);
+    }
+    const q = numberValue(material.quantity);
+    const u = numberValue(material.unitCost);
+    if (q > 0 && u > 0) return q * u;
+    if (material.manualTotal?.trim()) return numberValue(material.manualTotal);
+    return u;
+  };
+
   const materialSubtotal = laborMaterials.materials.reduce((total, material) => {
-    return total + (material.type === "MANUAL_TOTAL"
-      ? numberValue(material.manualTotal)
-      : numberValue(material.quantity) * numberValue(material.unitCost));
+    return total + getMaterialAmount(material);
   }, 0);
 
   return (
@@ -197,8 +207,8 @@ export function ProposalPricingCalculator({
                         <TextField label="Number of days" value={line.days} disabled={disabled} onChange={(next) => updateLabor(line.key, { days: next })} />
                       )}
                       {line.mode === "DAYS" ? <TextField label="Hours per day" value={line.hoursPerDay} disabled={disabled} onChange={(next) => updateLabor(line.key, { hoursPerDay: next })} /> : null}
-                      <TextField label="Cost per hour" value={line.hourlyCost} disabled={disabled} onChange={(next) => updateLabor(line.key, { hourlyCost: next })} />
-                      <TextField label="Override labor total (optional)" value={line.manualTotalOverride} disabled={disabled} onChange={(next) => updateLabor(line.key, { manualTotalOverride: next })} />
+                      <TextField label="Hourly pay rate" value={line.hourlyCost} disabled={disabled} onChange={(next) => updateLabor(line.key, { hourlyCost: next })} />
+                      <TextField label="Manual labor total (optional)" value={line.manualTotalOverride} disabled={disabled} onChange={(next) => updateLabor(line.key, { manualTotalOverride: next })} />
                     </>
                   )}
                   <AreaField value={laborMaterials.areaName} areas={areas} disabled={disabled} onChange={(areaName) => replaceItem({ ...laborMaterials, areaName })} />
@@ -230,19 +240,269 @@ export function ProposalPricingCalculator({
       </section>
 
       <section className="card p-5">
-        <div className="mb-3 flex items-center justify-between"><h2 className="text-base font-semibold">2. Materials</h2><strong>{formatCurrency(materialSubtotal)}</strong></div>
-        <MaterialsEditor
-          disabled={disabled}
-          inventory={inventory.data ?? []}
-          materials={laborMaterials.materials}
-          makeMaterialKey={makeMaterialKey}
-          measurementValue=""
-          addMaterial={(type = "CUSTOM") => replaceItem({ ...laborMaterials, materials: [...laborMaterials.materials, {
-            key: makeMaterialKey(), inventoryItemId: null, type, name: "", unit: "unit", quantity: "", unitCost: "", manualTotal: "", coveragePerUnit: "", wastePercent: "0", adjustedQuantity: "", note: "", priceSourceType: null, priceSourceLabel: "", priceSourceExpenseId: null, priceSourceExpenseLineItemId: null,
-          }] })}
-          updateMaterial={(key, patch) => replaceItem({ ...laborMaterials, materials: laborMaterials.materials.map((item) => item.key === key ? { ...item, ...patch } : item) })}
-          removeMaterial={(key) => replaceItem({ ...laborMaterials, materials: laborMaterials.materials.filter((item) => item.key !== key) })}
-        />
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-3">
+              <h2 className="text-base font-semibold">2. Materials</h2>
+              <span className="text-lg font-bold text-slate-900">{formatCurrency(materialSubtotal)}</span>
+            </div>
+            <p className="text-sm text-slate-500">Add materials by simple description and amount, or use inventory catalog pricing.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              className="btn btn-secondary"
+              type="button"
+              disabled={disabled}
+              onClick={() => replaceItem({
+                ...laborMaterials,
+                materials: [
+                  ...laborMaterials.materials,
+                  {
+                    key: makeMaterialKey(),
+                    inventoryItemId: null,
+                    type: "CUSTOM",
+                    name: "",
+                    unit: "unit",
+                    quantity: "1",
+                    unitCost: "",
+                    manualTotal: "",
+                    coveragePerUnit: "",
+                    wastePercent: "0",
+                    adjustedQuantity: "",
+                    note: "",
+                    priceSourceType: null,
+                    priceSourceLabel: "",
+                    priceSourceExpenseId: null,
+                    priceSourceExpenseLineItemId: null,
+                  },
+                ],
+              })}
+            >
+              Add material cost
+            </button>
+            <button
+              className="btn btn-secondary"
+              type="button"
+              disabled={disabled}
+              onClick={() => replaceItem({
+                ...laborMaterials,
+                materials: [
+                  ...laborMaterials.materials,
+                  {
+                    key: makeMaterialKey(),
+                    inventoryItemId: null,
+                    type: "MANUAL_TOTAL",
+                    name: "Materials total",
+                    unit: "unit",
+                    quantity: "",
+                    unitCost: "",
+                    manualTotal: "",
+                    coveragePerUnit: "",
+                    wastePercent: "0",
+                    adjustedQuantity: "",
+                    note: "",
+                    priceSourceType: "MANUAL",
+                    priceSourceLabel: "Manual material total",
+                    priceSourceExpenseId: null,
+                    priceSourceExpenseLineItemId: null,
+                  },
+                ],
+              })}
+            >
+              Enter one material total
+            </button>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          {laborMaterials.materials.map((material, matIndex) => {
+            const currentAmount = material.type === "MANUAL_TOTAL"
+              ? material.manualTotal
+              : material.manualTotal?.trim()
+                ? material.manualTotal
+                : material.unitCost;
+
+            return (
+              <div key={material.key} className="rounded-md border border-slate-200 p-3 bg-white">
+                <div className="grid gap-3 md:grid-cols-[1fr,180px,auto] items-end">
+                  <TextField
+                    label="Material or description"
+                    value={material.name}
+                    disabled={disabled}
+                    onChange={(nextName) => replaceItem({
+                      ...laborMaterials,
+                      materials: laborMaterials.materials.map((m) => m.key === material.key ? { ...m, name: nextName } : m),
+                    })}
+                  />
+                  <div>
+                    <label className="label">Amount</label>
+                    <input
+                      className="input"
+                      type="text"
+                      inputMode="decimal"
+                      value={currentAmount}
+                      disabled={disabled}
+                      placeholder="$0.00"
+                      onChange={(e) => {
+                        const amt = e.target.value;
+                        replaceItem({
+                          ...laborMaterials,
+                          materials: laborMaterials.materials.map((m) =>
+                            m.key === material.key
+                              ? {
+                                  ...m,
+                                  manualTotal: amt,
+                                  unitCost: amt,
+                                  quantity: m.quantity?.trim() ? m.quantity : "1",
+                                }
+                              : m
+                          ),
+                        });
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <button
+                      className="btn btn-secondary text-sm"
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => replaceItem({
+                        ...laborMaterials,
+                        materials: laborMaterials.materials.filter((m) => m.key !== material.key),
+                      })}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+
+                <details className="mt-2 pt-2 border-t border-slate-100">
+                  <summary className="cursor-pointer text-xs font-medium text-slate-600 hover:text-slate-900 select-none">
+                    Use inventory or receipt pricing
+                  </summary>
+                  <div className="mt-3 grid gap-3 md:grid-cols-4 bg-slate-50 p-3 rounded-md">
+                    <div>
+                      <label className="label text-xs">Catalog item</label>
+                      <select
+                        className="input text-xs"
+                        disabled={disabled}
+                        value={material.inventoryItemId ?? ""}
+                        onChange={(e) => {
+                          const item = inventory.data?.find((entry) => entry.id === Number(e.target.value));
+                          if (!item) return;
+                          const costStr = String(Number(item.costPerUnit));
+                          replaceItem({
+                            ...laborMaterials,
+                            materials: laborMaterials.materials.map((m) =>
+                              m.key === material.key
+                                ? {
+                                    ...m,
+                                    inventoryItemId: item.id,
+                                    type: "CATALOG",
+                                    name: m.name.trim() || item.name,
+                                    unit: item.unit,
+                                    unitCost: costStr,
+                                    manualTotal: costStr,
+                                    quantity: m.quantity?.trim() ? m.quantity : "1",
+                                    coveragePerUnit: item.coveragePerUnit == null ? "" : String(Number(item.coveragePerUnit)),
+                                    wastePercent: String(Number(item.defaultWastePercent ?? 0)),
+                                    priceSourceType: "INVENTORY_DEFAULT",
+                                    priceSourceLabel: "Latest catalog price",
+                                    priceSourceExpenseId: null,
+                                    priceSourceExpenseLineItemId: null,
+                                  }
+                                : m
+                            ),
+                          });
+                        }}
+                      >
+                        <option value="">None / Custom</option>
+                        {inventory.data?.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name} · {formatCurrency(Number(item.costPerUnit))}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <TextField
+                      label="Unit"
+                      value={material.unit}
+                      disabled={disabled}
+                      onChange={(next) => replaceItem({
+                        ...laborMaterials,
+                        materials: laborMaterials.materials.map((m) => m.key === material.key ? { ...m, unit: next } : m),
+                      })}
+                    />
+
+                    <TextField
+                      label="Quantity"
+                      value={material.quantity}
+                      disabled={disabled}
+                      onChange={(next) => replaceItem({
+                        ...laborMaterials,
+                        materials: laborMaterials.materials.map((m) => {
+                          if (m.key !== material.key) return m;
+                          const total = (numberValue(next) * numberValue(m.unitCost)).toFixed(2);
+                          return { ...m, quantity: next, manualTotal: numberValue(next) > 0 ? total : m.manualTotal };
+                        }),
+                      })}
+                    />
+
+                    <TextField
+                      label="Unit cost"
+                      value={material.unitCost}
+                      disabled={disabled}
+                      onChange={(next) => replaceItem({
+                        ...laborMaterials,
+                        materials: laborMaterials.materials.map((m) => {
+                          if (m.key !== material.key) return m;
+                          const total = (numberValue(m.quantity || "1") * numberValue(next)).toFixed(2);
+                          return { ...m, unitCost: next, manualTotal: total };
+                        }),
+                      })}
+                    />
+
+                    <TextField
+                      label="Coverage / unit"
+                      value={material.coveragePerUnit}
+                      disabled={disabled}
+                      onChange={(next) => replaceItem({
+                        ...laborMaterials,
+                        materials: laborMaterials.materials.map((m) => m.key === material.key ? { ...m, coveragePerUnit: next } : m),
+                      })}
+                    />
+
+                    <TextField
+                      label="Waste %"
+                      value={material.wastePercent}
+                      disabled={disabled}
+                      onChange={(next) => replaceItem({
+                        ...laborMaterials,
+                        materials: laborMaterials.materials.map((m) => m.key === material.key ? { ...m, wastePercent: next } : m),
+                      })}
+                    />
+
+                    <div className="md:col-span-2">
+                      <TextField
+                        label="Notes"
+                        value={material.note}
+                        disabled={disabled}
+                        onChange={(next) => replaceItem({
+                          ...laborMaterials,
+                          materials: laborMaterials.materials.map((m) => m.key === material.key ? { ...m, note: next } : m),
+                        })}
+                      />
+                    </div>
+                  </div>
+                </details>
+              </div>
+            );
+          })}
+          {laborMaterials.materials.length === 0 ? (
+            <p className="text-sm text-slate-500">No material costs entered yet. Click "Add material cost" above.</p>
+          ) : null}
+        </div>
       </section>
 
       <section className="card p-5">

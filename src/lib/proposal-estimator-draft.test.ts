@@ -5,7 +5,7 @@ const defaults = {
   defaultLaborCostRate: 50,
   defaultWcPercent: 3,
   defaultDesiredProfitMarginPercent: 35,
-  defaultGlPercent: 7.5,
+  defaultGlPercent: 1,
   defaultGeneralLiabilityMode: "PERCENT_OF_REVENUE" as const,
   defaultMassTaxRate: 5,
   defaultFederalTaxRate: 12,
@@ -13,6 +13,81 @@ const defaults = {
 };
 
 describe("computeDraftProposalEstimateSummary", () => {
+  it("defaults new labor group to $23/hr when no company default exists", () => {
+    const summary = computeDraftProposalEstimateSummary({
+      defaults: { ...defaults, defaultLaborCostRate: null },
+      pricing: { desiredProfitMarginPercent: "35", otherCosts: [] },
+      sections: [],
+      estimateWorkItems: [
+        {
+          key: "pricing-labor",
+          templateKey: "pricing",
+          title: "Labor and materials",
+          areaName: "",
+          priceVisibilityMode: "HIDDEN",
+          estimateMethod: "LABOR_AND_MATERIALS",
+          materials: [],
+          laborLines: [
+            // hourlyCost left blank -> should fallback to $23
+            { key: "hours", label: "Hourly crew", mode: "HOURS", workers: "3", hoursPerWorker: "40", hourlyCost: "" },
+          ],
+        },
+      ],
+    });
+
+    expect(summary.totals.workItems[0]?.laborLines[0]?.usedLaborCost).toBe(2760); // 3 * 40 * 23 = 2760
+    expect(summary.totals.directLaborCost).toBe(2760);
+  });
+
+  it("prioritizes configured company labor cost default over $23", () => {
+    const summary = computeDraftProposalEstimateSummary({
+      defaults: { ...defaults, defaultLaborCostRate: 30 },
+      pricing: { desiredProfitMarginPercent: "35", otherCosts: [] },
+      sections: [],
+      estimateWorkItems: [
+        {
+          key: "pricing-labor",
+          templateKey: "pricing",
+          title: "Labor and materials",
+          areaName: "",
+          priceVisibilityMode: "HIDDEN",
+          estimateMethod: "LABOR_AND_MATERIALS",
+          materials: [],
+          laborLines: [
+            { key: "hours", label: "Hourly crew", mode: "HOURS", workers: "2", hoursPerWorker: "10", hourlyCost: "" },
+          ],
+        },
+      ],
+    });
+
+    expect(summary.totals.directLaborCost).toBe(600); // 2 * 10 * 30 = 600
+  });
+
+  it("preserves saved custom labor rate and updates totals when changed", () => {
+    const summary = computeDraftProposalEstimateSummary({
+      defaults: { ...defaults, defaultLaborCostRate: 50 },
+      pricing: { desiredProfitMarginPercent: "35", otherCosts: [] },
+      sections: [],
+      estimateWorkItems: [
+        {
+          key: "pricing-labor",
+          templateKey: "pricing",
+          title: "Labor and materials",
+          areaName: "",
+          priceVisibilityMode: "HIDDEN",
+          estimateMethod: "LABOR_AND_MATERIALS",
+          materials: [],
+          laborLines: [
+            // custom rate $28 should be preserved despite default $50
+            { key: "hours", label: "Custom crew", mode: "HOURS", workers: "2", hoursPerWorker: "10", hourlyCost: "28" },
+          ],
+        },
+      ],
+    });
+
+    expect(summary.totals.directLaborCost).toBe(560); // 2 * 10 * 28 = 560
+  });
+
   it("calculates proposal-level hourly and daily labor without scope items", () => {
     const summary = computeDraftProposalEstimateSummary({
       defaults,
@@ -40,6 +115,142 @@ describe("computeDraftProposalEstimateSummary", () => {
     expect(summary.totals.workItems).toHaveLength(1);
     expect(summary.totals.workItems[0]?.laborLines.map((line) => line.calculatedLaborCost)).toEqual([2760, 2760, 0]);
     expect(summary.totals.directLaborCost).toBe(6420);
+  });
+
+  it("calculates multiple simple material amounts correctly and supports manual total", () => {
+    const summary = computeDraftProposalEstimateSummary({
+      defaults,
+      pricing: { desiredProfitMarginPercent: "35", otherCosts: [] },
+      sections: [],
+      estimateWorkItems: [
+        {
+          key: "pricing-materials",
+          templateKey: "pricing",
+          title: "Labor and materials",
+          areaName: "",
+          priceVisibilityMode: "HIDDEN",
+          estimateMethod: "LABOR_AND_MATERIALS",
+          laborLines: [],
+          materials: [
+            { key: "m1", type: "CUSTOM", name: "Paint", unit: "unit", quantity: "1", unitCost: "900", manualTotal: "900" },
+            { key: "m2", type: "CUSTOM", name: "Primer", unit: "unit", quantity: "1", unitCost: "800", manualTotal: "800" },
+            { key: "m3", type: "CUSTOM", name: "Sandpaper", unit: "unit", quantity: "1", unitCost: "600", manualTotal: "600" },
+            { key: "m4", type: "CUSTOM", name: "Plastic and protection", unit: "unit", quantity: "1", unitCost: "200", manualTotal: "200" },
+          ],
+        },
+      ],
+    });
+
+    expect(summary.totals.materialsCost).toBe(2500); // 900 + 800 + 600 + 200 = 2500
+  });
+
+  it("uses 1% general-liability allocation fallback for new proposal when no company GL exists", () => {
+    const summary = computeDraftProposalEstimateSummary({
+      defaults: { ...defaults, defaultGlPercent: 0 },
+      pricing: {
+        desiredProfitMarginPercent: "35",
+        generalLiabilityMode: "PERCENT_OF_REVENUE",
+        generalLiabilityPercent: "", // left blank -> fallback 1%
+        otherCosts: [],
+      },
+      sections: [],
+      estimateWorkItems: [
+        {
+          key: "pricing-labor",
+          templateKey: "pricing",
+          title: "Labor and materials",
+          areaName: "",
+          priceVisibilityMode: "HIDDEN",
+          estimateMethod: "LABOR_AND_MATERIALS",
+          materials: [{ key: "m1", type: "CUSTOM", name: "Paint", unit: "unit", quantity: "1", unitCost: "1000", manualTotal: "1000" }],
+          laborLines: [],
+        },
+      ],
+    });
+
+    expect(summary.totals.generalLiabilityPercent).toBe(1);
+    expect(summary.totals.generalLiabilityAmount).toBeGreaterThan(0);
+  });
+
+  it("prioritizes configured company general liability rate over 1%", () => {
+    const summary = computeDraftProposalEstimateSummary({
+      defaults: { ...defaults, defaultGlPercent: 2.5 },
+      pricing: {
+        desiredProfitMarginPercent: "35",
+        generalLiabilityMode: "PERCENT_OF_REVENUE",
+        generalLiabilityPercent: "", // left blank -> should use configured 2.5%
+        otherCosts: [],
+      },
+      sections: [],
+      estimateWorkItems: [
+        {
+          key: "pricing-labor",
+          templateKey: "pricing",
+          title: "Labor and materials",
+          areaName: "",
+          priceVisibilityMode: "HIDDEN",
+          estimateMethod: "LABOR_AND_MATERIALS",
+          materials: [{ key: "m1", type: "CUSTOM", name: "Paint", unit: "unit", quantity: "1", unitCost: "1000", manualTotal: "1000" }],
+          laborLines: [],
+        },
+      ],
+    });
+
+    expect(summary.totals.generalLiabilityPercent).toBe(2.5);
+  });
+
+  it("keeps blank final customer price equal to recommended price and applies entered override", () => {
+    // Blank override
+    const blankSummary = computeDraftProposalEstimateSummary({
+      defaults,
+      pricing: {
+        desiredProfitMarginPercent: "35",
+        estimatePriceOverride: "",
+        otherCosts: [],
+      },
+      sections: [],
+      estimateWorkItems: [
+        {
+          key: "pricing-labor",
+          templateKey: "pricing",
+          title: "Labor and materials",
+          areaName: "",
+          priceVisibilityMode: "HIDDEN",
+          estimateMethod: "LABOR_AND_MATERIALS",
+          materials: [{ key: "m1", type: "CUSTOM", name: "Paint", unit: "unit", quantity: "1", unitCost: "1000", manualTotal: "1000" }],
+          laborLines: [],
+        },
+      ],
+    });
+
+    expect(blankSummary.totals.finalCustomerPrice).toBe(blankSummary.totals.recommendedCustomerPrice);
+
+    // Entered override
+    const overrideSummary = computeDraftProposalEstimateSummary({
+      defaults,
+      pricing: {
+        desiredProfitMarginPercent: "35",
+        estimatePriceOverride: "2500",
+        otherCosts: [],
+      },
+      sections: [],
+      estimateWorkItems: [
+        {
+          key: "pricing-labor",
+          templateKey: "pricing",
+          title: "Labor and materials",
+          areaName: "",
+          priceVisibilityMode: "HIDDEN",
+          estimateMethod: "LABOR_AND_MATERIALS",
+          materials: [{ key: "m1", type: "CUSTOM", name: "Paint", unit: "unit", quantity: "1", unitCost: "1000", manualTotal: "1000" }],
+          laborLines: [],
+        },
+      ],
+    });
+
+    expect(overrideSummary.totals.finalCustomerPrice).toBe(2500);
+    expect(overrideSummary.totals.recommendedCustomerPrice).not.toBe(2500);
+    expect(overrideSummary.totals.actualProfit).toBeGreaterThan(0);
   });
 
   it("calculates hourly labor, material totals, taxes, and owner take-home", () => {
@@ -154,7 +365,7 @@ describe("computeDraftProposalEstimateSummary", () => {
 
     expect(summary.totals.recommendedCustomerPrice).toBe(5400);
     expect(summary.totals.finalCustomerPrice).toBe(5500);
-    expect(summary.totals.actualProfit).toBe(2587.5);
-    expect(summary.totals.actualMarginPercent).toBe(47.05);
+    expect(summary.totals.actualProfit).toBe(2945);
+    expect(summary.totals.actualMarginPercent).toBe(53.55);
   });
 });
