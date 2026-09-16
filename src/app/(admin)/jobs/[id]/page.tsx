@@ -647,7 +647,7 @@ export default function JobDetailPage() {
 
       {activeTab === "tracking" && (
         <div className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <div className="card p-5">
               <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Total Hours</p>
               <p className="mt-1 text-2xl font-bold text-slate-900">{trackingSummary.formattedHours}</p>
@@ -664,6 +664,11 @@ export default function JobDetailPage() {
               <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Tracked Entries</p>
               <p className="mt-1 text-2xl font-bold text-slate-900">{trackingSummary.entriesCount}</p>
               <p className="text-xs text-slate-500 mt-1">Across all employees</p>
+            </div>
+            <div className="card p-5">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Materials &amp; Expenses</p>
+              <p className="mt-1 text-2xl font-bold text-slate-900">{formatCurrency(actualExpensesTotal)}</p>
+              <p className="text-xs text-slate-500 mt-1">{nonSubcontractorExpenses.length} expenses for this job</p>
             </div>
           </div>
 
@@ -786,14 +791,18 @@ export default function JobDetailPage() {
           <div className="grid md:grid-cols-2 gap-4">
             <div className="card p-5">
               <div className="flex flex-col items-stretch gap-3 mb-3 sm:flex-row sm:items-center sm:justify-between">
-                <h2 className="text-base font-semibold">Expenses</h2>
+                <div>
+                  <h2 className="text-base font-semibold">Materials &amp; Expenses</h2>
+                  <p className="mt-1 text-xl font-bold text-slate-900">{formatCurrency(actualExpensesTotal)}</p>
+                  <p className="text-xs text-slate-500">Total from {nonSubcontractorExpenses.length} expenses</p>
+                </div>
                 <JobExpenseEntry jobId={id} jobName={job.name} onSaved={() => utils.jobs.byId.invalidate({ id })} />
               </div>
-              {nonRejectedExpenses.length === 0 ? (
+              {nonSubcontractorExpenses.length === 0 ? (
                 <p className="text-sm text-slate-500">No expenses tracked yet.</p>
               ) : (
                 <ul className="text-sm divide-y">
-                  {nonRejectedExpenses.slice(0, 12).map((e) => (
+                  {nonSubcontractorExpenses.map((e) => (
                     <li key={e.id} className="py-3 flex items-start justify-between gap-3">
                       <div className="min-w-0"><p className="truncate text-slate-700">{e.vendor || "Expense"}</p><p className="text-xs text-slate-500">{formatDateTime(e.expenseDate)} · {e.category}{e.description ? ` · ${e.description}` : ""}</p>{e.attachments.length > 0 ? <a className="text-xs text-brand-700 hover:underline" href={`/api/expenses/attachments/${e.attachments[0].id}/preview`} target="_blank" rel="noreferrer">View Receipt</a> : <span className="text-xs text-slate-400">No receipt</span>}</div>
                       <span className="shrink-0 font-medium">{formatCurrency(Number(e.amount))}</span>
