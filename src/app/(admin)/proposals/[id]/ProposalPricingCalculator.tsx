@@ -246,7 +246,7 @@ export function ProposalPricingCalculator({
               <h2 className="text-base font-semibold">2. Materials</h2>
               <span className="text-lg font-bold text-slate-900">{formatCurrency(materialSubtotal)}</span>
             </div>
-            <p className="text-sm text-slate-500">Add materials by simple description and amount, or use inventory catalog pricing.</p>
+            <p className="text-sm text-slate-500">Add a description and amount. Reviewed receipt prices can eventually provide catalog pricing; receipt review does not currently create or update inventory items.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button
@@ -506,7 +506,7 @@ export function ProposalPricingCalculator({
       </section>
 
       <section className="card p-5">
-        <div className="mb-4 flex items-center justify-between gap-3"><div><h2 className="text-base font-semibold">3. Unit-Price Work</h2><p className="text-sm text-slate-500">Customer selling prices for repeatable services.</p></div><button className="btn btn-secondary" type="button" disabled={disabled} onClick={() => onChange([...value, createUnitItem(value.length)])}>Add unit-price line</button></div>
+        <div className="mb-4 flex items-center justify-between gap-3"><div><h2 className="text-base font-semibold">3. Cabinet &amp; Unit Pricing</h2><p className="text-sm text-slate-500">Price repeatable work by quantity. Current templates are for cabinet refinishing; more services can be added later.</p></div><button className="btn btn-secondary" type="button" disabled={disabled} onClick={() => onChange([...value, createUnitItem(value.length)])}>Add unit-price line</button></div>
         <div className="space-y-3">
           {unitItems.map((item) => {
             const unit = item.unitPrice!;
@@ -526,26 +526,37 @@ export function ProposalPricingCalculator({
                 <TextField label="Customer price per unit" value={unit.pricePerUnit} disabled={disabled} onChange={(next) => replaceItem({ ...item, unitPrice: { ...unit, pricePerUnit: next, rateSource: "MANUAL" } })} />
                 <TextField label="Final line-total override" value={unit.lineTotalOverride} disabled={disabled} onChange={(next) => replaceItem({ ...item, unitPrice: { ...unit, lineTotalOverride: next } })} />
                 <AreaField value={item.areaName} areas={areas} disabled={disabled} onChange={(areaName) => replaceItem({ ...item, areaName })} />
-                <TextField label="Internal labor allowance" value={unit.laborAllowance} disabled={disabled} onChange={(next) => replaceItem({ ...item, unitPrice: { ...unit, laborAllowance: next } })} />
-                <TextField label="Internal material allowance" value={unit.materialAllowance} disabled={disabled} onChange={(next) => replaceItem({ ...item, unitPrice: { ...unit, materialAllowance: next } })} />
               </div>
+              <details className="mt-3 rounded-md border border-slate-200 p-3">
+                <summary className="cursor-pointer text-sm font-medium">Optional internal cost estimate</summary>
+                <p className="mt-2 text-xs text-slate-500">These costs help estimate profit and are never shown to the customer.</p>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <TextField label="Estimated labor cost for this line (internal, optional)" value={unit.laborAllowance} disabled={disabled} onChange={(next) => replaceItem({ ...item, unitPrice: { ...unit, laborAllowance: next } })} />
+                  <TextField label="Estimated material cost for this line (internal, optional)" value={unit.materialAllowance} disabled={disabled} onChange={(next) => replaceItem({ ...item, unitPrice: { ...unit, materialAllowance: next } })} />
+                </div>
+              </details>
               <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-md bg-slate-50 p-3 text-sm"><span>{numberValue(unit.quantity)} × {formatCurrency(numberValue(unit.pricePerUnit))} = <strong>{formatCurrency(calculated)}</strong>{unit.lineTotalOverride.trim() ? ` · Using ${formatCurrency(total)}` : ""}</span><button className="btn btn-secondary" type="button" disabled={disabled} onClick={() => onChange(value.filter((current) => current.key !== item.key))}>Remove</button></div>
             </div>;
           })}
-          {unitItems.length === 0 ? <p className="text-sm text-slate-500">Add a line or choose a cabinet pricing template.</p> : null}
+          {unitItems.length === 0 ? <p className="text-sm text-slate-500">Add cabinet doors using Milesi, Advance, or Gallery pricing.</p> : null}
         </div>
       </section>
       </> : null}
 
-      {section === "advanced" ? <details className="card p-5">
+      {section === "advanced" && !productionRates.isLoading && (productionRates.data?.length ?? 0) === 0 ? (
+        <p className="text-sm text-slate-500">Production-rate calculator becomes available after rates are added in Settings.</p>
+      ) : null}
+
+      {section === "advanced" && (productionRates.data?.length ?? 0) > 0 ? <details className="card p-5">
         <summary className="cursor-pointer text-base font-semibold">8. Advanced Production Calculator</summary>
+        <p className="mt-2 text-sm text-slate-500">Uses measured quantity and a saved production rate to estimate labor hours.</p>
         <div className="mt-4 grid gap-3 md:grid-cols-4">
           <div><label className="label">Saved production rate</label><select className="input" value={productionItem?.production?.productionRateId ?? ""} disabled={disabled} onChange={(event) => {
             const rate = productionRates.data?.find((entry) => entry.id === Number(event.target.value));
             if (!rate) return;
             const item = productionItem ?? createProductionItem(value.length, defaultWorkDayHours, defaultLaborCostRate);
             replaceItem({ ...item, production: { ...item.production!, productionRateId: rate.id, workCategory: rate.category, surfaceType: rate.surfaceType, measurementUnit: rate.basis === "LINEAR_FT_PER_HOUR" ? "Linear feet" : rate.basis === "HOURS_PER_ITEM" ? "Items" : "Square feet", productionRateBasis: rate.basis, productionRateValue: String(Number(rate.rateValue)) } });
-          }}><option value="">Select rate</option>{productionRates.data?.map((rate) => <option key={rate.id} value={rate.id}>{rate.category} · {rate.surfaceType} · {rate.basis}</option>)}</select></div>
+          }}><option value="">Select a production rate</option>{productionRates.data?.map((rate) => <option key={rate.id} value={rate.id}>{rate.category} · {rate.surfaceType} · {rate.basis}</option>)}</select></div>
           {productionItem ? <>
             <TextField label="Measurement" value={productionItem.production!.measurementValue} disabled={disabled} onChange={(next) => replaceItem({ ...productionItem, production: { ...productionItem.production!, measurementValue: next } })} />
             <TextField label="Production rate" value={productionItem.production!.productionRateValue} disabled={disabled} onChange={(next) => replaceItem({ ...productionItem, production: { ...productionItem.production!, productionRateValue: next } })} />
@@ -580,7 +591,7 @@ function ProductionResult({ item }: { item: PricingWorkItemDraft }) {
 }
 
 function AreaField({ value, areas, onChange, disabled }: { value: string; areas: string[]; onChange: (value: string) => void; disabled?: boolean }) {
-  return <div><label className="label">Area (optional)</label><select className="input" value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}><option value="">Unassigned</option>{areas.map((area) => <option key={area} value={area}>{area}</option>)}</select></div>;
+  return <div><label className="label">Room or project area (optional)</label><select className="input" value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}><option value="">Unassigned</option>{areas.map((area) => <option key={area} value={area}>{area}</option>)}</select><p className="mt-1 text-xs text-slate-500">Use this to group pricing by room or part of the project. Leave Unassigned for whole-project costs.</p></div>;
 }
 
 function TextField({ label, value, onChange, disabled }: { label: string; value: string; onChange: (value: string) => void; disabled?: boolean }) {

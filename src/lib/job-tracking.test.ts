@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   calculateEntryMinutes,
+  calculateEntryHours,
   calculateJobTracking,
   formatMinutesToHours,
   type TimeEntryLike,
@@ -153,6 +154,53 @@ describe("Job Tracking Calculations", () => {
     expect(result.entriesCount).toBe(60);
     expect(result.totalHours).toBe(60);
     expect(result.totalLaborCost).toBe(1200);
+  });
+
+  it("aggregates 29 decimal-hour entries before rounding to minutes", () => {
+    const entries: TimeEntryLike[] = Array.from({ length: 29 }, (_, index) => ({
+      id: index + 1,
+      jobId: 253,
+      userId: 1,
+      clockIn: "2026-09-01T08:00:00Z",
+      paidHours: index === 28 ? 3.43 : 7.43,
+      user: { name: "Worker", hourlyRate: 25 },
+    }));
+
+    const result = calculateJobTracking(entries, 253);
+
+    expect(result.totalHours).toBe(211.47);
+    expect(result.totalMinutes).toBe(12688);
+    expect(result.formattedHours).toBe("211h 28m");
+  });
+
+  it("keeps precise hours consistent across mixed sources and subtotals", () => {
+    const entries: TimeEntryLike[] = [
+      { jobId: 1, userId: 1, clockIn: "2026-09-01T08:00:00Z", paidHours: 1.01, user: { name: "Alice", hourlyRate: 20 } },
+      { jobId: 1, userId: 1, clockIn: "2026-09-01T10:00:00Z", clockOut: "2026-09-01T11:00:00Z", user: { name: "Alice", hourlyRate: 20 } },
+      { jobId: 1, userId: 2, clockIn: "2026-09-02T08:00:00Z", clockOut: "2026-09-02T09:00:00Z", breakMinutes: 15, user: { name: "Bob", hourlyRate: 30 } },
+    ];
+
+    const result = calculateJobTracking(entries, 1);
+
+    expect(result.totalHours).toBe(2.76);
+    expect(result.totalMinutes).toBe(166);
+    expect(result.formattedHours).toBe("2h 46m");
+    expect(result.byEmployee.reduce((sum, row) => sum + row.totalMinutes, 0)).toBe(result.totalMinutes);
+    expect(result.byDate.reduce((sum, row) => sum + row.totalMinutes, 0)).toBe(result.totalMinutes);
+    expect(result.totalLaborCost).toBe(62.7);
+  });
+
+  it("uses the authoritative hours field without per-entry minute inflation", () => {
+    const entries: TimeEntryLike[] = Array.from({ length: 29 }, (_, index) => ({
+      jobId: 253,
+      userId: 1,
+      clockIn: "2026-09-01T08:00:00Z",
+      paidHours: index === 28 ? 3.43 : 7.43,
+      user: { hourlyRate: 25 },
+    }));
+
+    expect(entries.reduce((sum, entry) => sum + calculateEntryHours(entry), 0)).toBeCloseTo(211.47);
+    expect(calculateJobTracking(entries, 253).totalLaborCost).toBe(5286.75);
   });
 
   it("flags labor cost as pending if any employee hourly rate is missing", () => {

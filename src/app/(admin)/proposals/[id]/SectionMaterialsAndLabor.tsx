@@ -291,8 +291,9 @@ export function SectionMaterialsAndLabor({
           </select>
         </div>
         <div>
-          <label className="label">Area / room</label>
+          <label className="label">Room or project area (optional)</label>
           <input className="input" value={value.areaName} disabled={disabled} onChange={(e) => onChange({ ...value, areaName: e.target.value })} placeholder="Kitchen cabinets" />
+          <p className="mt-1 text-xs text-slate-500">Use this to group pricing by room or part of the project. Leave unassigned for whole-project costs.</p>
         </div>
         <div>
           <label className="label">Phase / category</label>
@@ -394,8 +395,8 @@ export function SectionMaterialsAndLabor({
       {value.estimateMethod === "UNIT_PRICE" ? (
         <div className="rounded-md border border-slate-200 bg-white p-4 space-y-3">
           <div>
-            <h4 className="font-medium">Unit-Price Work</h4>
-            <p className="text-xs text-slate-500">Use editable company templates for repeatable work like cabinet doors.</p>
+            <h4 className="font-medium">Cabinet &amp; Unit Pricing</h4>
+            <p className="text-xs text-slate-500">Price repeatable work by quantity. Current templates are for cabinet refinishing; more services can be added later.</p>
           </div>
           <div className="grid gap-3 md:grid-cols-3">
             <div>
@@ -439,9 +440,15 @@ export function SectionMaterialsAndLabor({
             <Field label="Quantity" value={value.unitPrice?.quantity ?? ""} disabled={disabled} onChange={(next) => onChange({ ...value, unitPrice: { ...(value.unitPrice ?? emptyUnitPrice()), quantity: next } })} />
             <Field label="Price per unit" value={value.unitPrice?.pricePerUnit ?? ""} disabled={disabled} onChange={(next) => onChange({ ...value, unitPrice: { ...(value.unitPrice ?? emptyUnitPrice()), pricePerUnit: next, rateSource: "MANUAL" } })} />
             <Field label="Final line total override" value={value.unitPrice?.lineTotalOverride ?? ""} disabled={disabled} onChange={(next) => onChange({ ...value, unitPrice: { ...(value.unitPrice ?? emptyUnitPrice()), lineTotalOverride: next } })} />
-            <Field label="Internal labor allowance" value={value.unitPrice?.laborAllowance ?? ""} disabled={disabled} onChange={(next) => onChange({ ...value, unitPrice: { ...(value.unitPrice ?? emptyUnitPrice()), laborAllowance: next } })} />
-            <Field label="Internal material allowance" value={value.unitPrice?.materialAllowance ?? ""} disabled={disabled} onChange={(next) => onChange({ ...value, unitPrice: { ...(value.unitPrice ?? emptyUnitPrice()), materialAllowance: next } })} />
           </div>
+          <details className="rounded-md border border-slate-200 p-3">
+            <summary className="cursor-pointer text-sm font-medium">Optional internal cost estimate</summary>
+            <p className="mt-2 text-xs text-slate-500">These costs help estimate profit and are never shown to the customer.</p>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <Field label="Estimated labor cost for this line (internal, optional)" value={value.unitPrice?.laborAllowance ?? ""} disabled={disabled} onChange={(next) => onChange({ ...value, unitPrice: { ...(value.unitPrice ?? emptyUnitPrice()), laborAllowance: next } })} />
+              <Field label="Estimated material cost for this line (internal, optional)" value={value.unitPrice?.materialAllowance ?? ""} disabled={disabled} onChange={(next) => onChange({ ...value, unitPrice: { ...(value.unitPrice ?? emptyUnitPrice()), materialAllowance: next } })} />
+            </div>
+          </details>
           <div className="grid gap-2 md:grid-cols-3 text-sm text-slate-600">
             <div>Customer price per unit: {formatCurrency(toNumber(value.unitPrice?.pricePerUnit ?? ""))}</div>
             <div>Calculated total: {formatCurrency(toNumber(value.unitPrice?.quantity ?? "") * toNumber(value.unitPrice?.pricePerUnit ?? ""))}</div>
@@ -458,9 +465,14 @@ export function SectionMaterialsAndLabor({
         </div>
       ) : null}
 
-      <details className="rounded-md border border-slate-200 bg-white p-4" open={value.estimateMethod === "PRODUCTION_RATE"}>
+      {!productionRates.isLoading && (productionRates.data?.length ?? 0) === 0 ? (
+        <div className="text-sm text-slate-500">Production-rate calculator becomes available after rates are added in Settings.</div>
+      ) : null}
+
+      {(productionRates.data?.length ?? 0) > 0 ? <details className="rounded-md border border-slate-200 bg-white p-4">
         <summary className="cursor-pointer font-medium">Advanced Production Calculator</summary>
         <div className="mt-4 space-y-3">
+          <p className="text-sm text-slate-500">Uses measured quantity and a saved production rate to estimate labor hours.</p>
           <div className="grid gap-3 md:grid-cols-4">
             <div>
               <label className="label">Saved rate</label>
@@ -492,7 +504,7 @@ export function SectionMaterialsAndLabor({
                   });
                 }}
               >
-                <option value="">Select rate</option>
+                <option value="">Select a production rate</option>
                 {productionRates.data?.map((rate) => (
                   <option key={rate.id} value={rate.id}>
                     {rate.category} · {rate.surfaceType} · {rate.basis} · {Number(rate.rateValue)}
@@ -529,7 +541,7 @@ export function SectionMaterialsAndLabor({
             removeMaterial={(key) => onChange({ ...value, materials: value.materials.filter((material) => material.key !== key) })}
           />
         </div>
-      </details>
+      </details> : null}
     </div>
   );
 }
@@ -558,7 +570,7 @@ export function MaterialsEditor({
       <div className="mb-3 flex items-center justify-between">
         <div>
           <h4 className="font-medium">Materials</h4>
-          <p className="text-xs text-slate-500">Pull a catalog item, override the price, or save a manual total.</p>
+          <p className="text-xs text-slate-500">Start with a description and amount. Reviewed receipt prices can eventually provide catalog pricing; receipt review does not currently create or update inventory items.</p>
         </div>
         <div className="flex gap-2">
           <button type="button" className="btn btn-secondary" disabled={disabled} onClick={() => addMaterial("CUSTOM")}>Add Material</button>

@@ -58,26 +58,26 @@ function parseNumeric(val: unknown): number | null {
 }
 
 /**
- * Calculates exact elapsed minutes for a single time entry without loss of precision.
+ * Calculates precise decimal hours for a single time entry.
  *
  * Order of authority:
- * 1. Explicit paidHours / grossHours / hoursWorked if set (converted to exact minutes)
+ * 1. Explicit paidHours / grossHours / hoursWorked if set
  * 2. Clock-out minus Clock-in timestamps (with break deduction in minutes)
  */
-export function calculateEntryMinutes(entry: TimeEntryLike): number {
+export function calculateEntryHours(entry: TimeEntryLike): number {
   const paidHours = parseNumeric(entry.paidHours);
-  if (paidHours != null && paidHours > 0) {
-    return Math.round(paidHours * 60);
+  if (paidHours != null) {
+    return paidHours;
   }
 
   const hoursWorked = parseNumeric(entry.hoursWorked);
-  if (hoursWorked != null && hoursWorked > 0) {
-    return Math.round(hoursWorked * 60);
+  if (hoursWorked != null) {
+    return hoursWorked;
   }
 
   const grossHours = parseNumeric(entry.grossHours);
-  if (grossHours != null && grossHours > 0) {
-    return Math.round(grossHours * 60);
+  if (grossHours != null) {
+    return grossHours;
   }
 
   if (entry.clockIn && entry.clockOut) {
@@ -87,13 +87,16 @@ export function calculateEntryMinutes(entry: TimeEntryLike): number {
       return 0;
     }
 
-    const diffMinutes = Math.round((end - start) / 60_000);
     const breakDeduction = entry.breakDeductionMinutes ?? entry.breakMinutes ?? 0;
-    const effectiveMinutes = Math.max(0, diffMinutes - breakDeduction);
-    return effectiveMinutes;
+    return Math.max(0, (end - start) / 3_600_000 - breakDeduction / 60);
   }
 
   return 0;
+}
+
+/** Calculates one entry's minutes for callers that need a standalone duration. */
+export function calculateEntryMinutes(entry: TimeEntryLike): number {
+  return Math.round(calculateEntryHours(entry) * 60);
 }
 
 /**
@@ -130,25 +133,28 @@ export function calculateJobTracking(
     ? entries.filter((e) => e.jobId === targetJobId)
     : entries;
 
-  let totalMinutes = 0;
+  let totalHours = 0;
   let totalLaborCost = 0;
   let isLaborCostPending = false;
 
   const employeeMap = new Map<number, EmployeeHoursSummary>();
+  const employeePreciseHours = new Map<number, number>();
+  const employeePreciseCosts = new Map<number, number>();
   const dateMap = new Map<string, WorkdayHoursSummary>();
+  const datePreciseHours = new Map<string, number>();
+  const datePreciseCosts = new Map<string, number>();
 
   for (const entry of qualifyingEntries) {
-    const entryMinutes = calculateEntryMinutes(entry);
-    totalMinutes += entryMinutes;
+    const entryHours = calculateEntryHours(entry);
+    totalHours += entryHours;
 
     const rate = parseNumeric(entry.user?.hourlyRate);
-    const entryHours = entryMinutes / 60;
-    const entryCost = rate != null && rate > 0 ? round2(entryHours * rate) : 0;
+    const entryCost = rate != null && rate > 0 ? entryHours * rate : 0;
 
-    if (entryMinutes > 0 && (rate == null || rate <= 0)) {
+    if (entryHours > 0 && (rate == null || rate <= 0)) {
       isLaborCostPending = true;
     }
-    totalLaborCost = round2(totalLaborCost + entryCost);
+    totalLaborCost += entryCost;
 
     // Group by Employee
     const userId = entry.userId;
@@ -163,10 +169,14 @@ export function calculateJobTracking(
       hourlyRate: rate,
       entriesCount: 0,
     };
-    existingEmp.totalMinutes += entryMinutes;
-    existingEmp.totalHours = round2(existingEmp.totalMinutes / 60);
+    const preciseEmployeeHours = (employeePreciseHours.get(userId) ?? 0) + entryHours;
+    const preciseEmployeeCost = (employeePreciseCosts.get(userId) ?? 0) + entryCost;
+    employeePreciseHours.set(userId, preciseEmployeeHours);
+    employeePreciseCosts.set(userId, preciseEmployeeCost);
+    existingEmp.totalMinutes = Math.round(preciseEmployeeHours * 60);
+    existingEmp.totalHours = round2(preciseEmployeeHours);
     existingEmp.formattedHours = formatMinutesToHours(existingEmp.totalMinutes).formatted;
-    existingEmp.laborCost = round2(existingEmp.laborCost + entryCost);
+    existingEmp.laborCost = round2(preciseEmployeeCost);
     existingEmp.entriesCount += 1;
     employeeMap.set(userId, existingEmp);
 
@@ -184,24 +194,29 @@ export function calculateJobTracking(
       laborCost: 0,
       entriesCount: 0,
     };
-    existingDate.totalMinutes += entryMinutes;
-    existingDate.totalHours = round2(existingDate.totalMinutes / 60);
+    const preciseDateHours = (datePreciseHours.get(dateKey) ?? 0) + entryHours;
+    const preciseDateCost = (datePreciseCosts.get(dateKey) ?? 0) + entryCost;
+    datePreciseHours.set(dateKey, preciseDateHours);
+    datePreciseCosts.set(dateKey, preciseDateCost);
+    existingDate.totalMinutes = Math.round(preciseDateHours * 60);
+    existingDate.totalHours = round2(preciseDateHours);
     existingDate.formattedHours = formatMinutesToHours(existingDate.totalMinutes).formatted;
-    existingDate.laborCost = round2(existingDate.laborCost + entryCost);
+    existingDate.laborCost = round2(preciseDateCost);
     existingDate.entriesCount += 1;
     dateMap.set(dateKey, existingDate);
   }
 
-  const { formatted, decimalHours } = formatMinutesToHours(totalMinutes);
+  const totalMinutes = Math.round(totalHours * 60);
+  const { formatted } = formatMinutesToHours(totalMinutes);
 
   const byEmployee = Array.from(employeeMap.values()).sort((a, b) => b.totalMinutes - a.totalMinutes);
   const byDate = Array.from(dateMap.values()).sort((a, b) => b.date.localeCompare(a.date));
 
   return {
     totalMinutes,
-    totalHours: decimalHours,
+    totalHours: round2(totalHours),
     formattedHours: formatted,
-    totalLaborCost,
+    totalLaborCost: round2(totalLaborCost),
     isLaborCostPending: qualifyingEntries.length === 0 || isLaborCostPending,
     entriesCount: qualifyingEntries.length,
     byEmployee,
