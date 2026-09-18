@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { prisma } from "@/lib/db";
 import { getSessionFromRequest } from "@/lib/auth";
-import { buildInvoicePdf, canAccessInvoicePdf } from "@/lib/invoice-pdf";
+import { buildInvoicePdf, canAccessInvoicePdf, INVOICE_LOGO_ASSET } from "@/lib/invoice-pdf";
 
 export const runtime = "nodejs";
 
@@ -32,6 +34,7 @@ export async function GET(req: Request, { params }: Params) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  const logoBytes = await readFile(join(process.cwd(), INVOICE_LOGO_ASSET));
   const pdf = await buildInvoicePdf({
     invoiceNumber: invoice.invoiceNumber,
     title: invoice.title,
@@ -60,7 +63,7 @@ export async function GET(req: Request, { params }: Params) {
       amount: Number(payment.amount),
       memo: payment.memo,
     })),
-  });
+  }, logoBytes);
   const disposition = new URL(req.url).searchParams.get("download") === "1" ? "attachment" : "inline";
 
   return new Response(Buffer.from(pdf), {

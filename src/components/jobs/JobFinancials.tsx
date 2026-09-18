@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Download, Plus, Printer, Send, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/trpc/react";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import {
   calculateInvoiceTotals,
@@ -53,6 +54,7 @@ export function JobFinancials({ jobId, jobName, contractAmount, totalEstimate, a
   const payments = api.payments.list.useQuery({ jobId });
   const [invoiceOpen, setInvoiceOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [invoiceToDelete, setInvoiceToDelete] = useState<NonNullable<typeof invoices.data>[number] | null>(null);
   const [schedule, setSchedule] = useState<InvoiceSchedulePreset>("50_30_20");
   const projectTotal = contractAmount > 0 ? contractAmount : totalEstimate;
   const [invoiceForm, setInvoiceForm] = useState<InvoiceForm>({ title: jobName, dueDate: "", taxPercent: 0, notes: "", lineItems: [blankLine()] });
@@ -76,6 +78,14 @@ export function JobFinancials({ jobId, jobName, contractAmount, totalEstimate, a
   });
   const setInvoiceStatus = api.invoices.setStatus.useMutation({
     onSuccess: async () => { await refreshFinancials(); toast.success("Invoice marked sent"); },
+    onError: (error) => toast.error(error.message),
+  });
+  const deleteInvoice = api.invoices.remove.useMutation({
+    onSuccess: async ({ deletedPayments }) => {
+      await refreshFinancials();
+      setInvoiceToDelete(null);
+      toast.success(deletedPayments > 0 ? `Invoice and ${deletedPayments} linked payment${deletedPayments === 1 ? "" : "s"} deleted` : "Invoice deleted");
+    },
     onError: (error) => toast.error(error.message),
   });
   const recordPayment = api.payments.create.useMutation({
@@ -200,6 +210,7 @@ export function JobFinancials({ jobId, jobName, contractAmount, totalEstimate, a
                   <a className="btn btn-secondary" href={`/api/invoices/${invoice.id}/pdf`} target="_blank" rel="noreferrer"><Printer className="mr-1 h-4 w-4" /> Print PDF</a>
                   <a className="btn btn-secondary" href={`/api/invoices/${invoice.id}/pdf?download=1`}><Download className="mr-1 h-4 w-4" /> Download PDF</a>
                   <button type="button" className="btn btn-secondary" onClick={() => openEditInvoice(invoice)}>Edit</button>
+                  <button type="button" className="btn btn-danger" onClick={() => setInvoiceToDelete(invoice)}><Trash2 className="mr-1 h-4 w-4" /> Delete</button>
                 </div>
               </div>
             ))}
@@ -246,6 +257,21 @@ export function JobFinancials({ jobId, jobName, contractAmount, totalEstimate, a
           <div><label className="label">Method</label><select className="input" value={paymentForm.method} onChange={(event) => setPaymentForm((form) => ({ ...form, method: event.target.value as PaymentMethodValue }))}>{PAYMENT_METHODS.map((method) => <option key={method} value={method}>{method.replaceAll("_", " ")}</option>)}</select></div><div><label className="label">Check number</label><input className="input" value={paymentForm.checkNumber} onChange={(event) => setPaymentForm((form) => ({ ...form, checkNumber: event.target.value }))} /></div><div><label className="label">Bank</label><input className="input" value={paymentForm.bank} onChange={(event) => setPaymentForm((form) => ({ ...form, bank: event.target.value }))} /></div><div><label className="label">Memo</label><input className="input" value={paymentForm.memo} onChange={(event) => setPaymentForm((form) => ({ ...form, memo: event.target.value }))} /></div><div className="sm:col-span-2"><label className="label">Notes</label><textarea className="input min-h-20" value={paymentForm.notes} onChange={(event) => setPaymentForm((form) => ({ ...form, notes: event.target.value }))} /></div>
         </div><div className="flex justify-end gap-2 border-t px-6 py-4"><button type="button" className="btn btn-secondary" onClick={() => setPaymentOpen(false)}>Cancel</button><button type="button" className="btn btn-primary" disabled={paymentForm.amount <= 0 || recordPayment.isPending} onClick={() => recordPayment.mutate({ jobId, invoiceId: paymentForm.invoiceId ?? undefined, amount: paymentForm.amount, dateReceived: new Date(`${paymentForm.dateReceived}T12:00:00`), method: paymentForm.method, checkNumber: paymentForm.checkNumber || undefined, bank: paymentForm.bank || undefined, memo: paymentForm.memo || undefined, notes: paymentForm.notes || undefined })}>Record Payment</button></div></div></div>
       )}
+
+      <ConfirmDialog
+        open={Boolean(invoiceToDelete)}
+        title="Delete Invoice"
+        message={invoiceToDelete ? (
+          invoiceToDelete.payments.length > 0
+            ? <>Delete invoice <strong>{invoiceToDelete.invoiceNumber}</strong>? This will also permanently delete its <strong>{invoiceToDelete.payments.length} linked payment record{invoiceToDelete.payments.length === 1 ? "" : "s"}</strong>. Unrelated job payments, expenses, receipts, attachments, and job data will not be changed.</>
+            : <>Delete invoice <strong>{invoiceToDelete.invoiceNumber}</strong>? It has no linked payments. Unrelated job payments, expenses, receipts, attachments, and job data will not be changed.</>
+        ) : null}
+        confirmLabel="Delete Invoice"
+        destructive
+        isPending={deleteInvoice.isPending}
+        onCancel={() => setInvoiceToDelete(null)}
+        onConfirm={() => invoiceToDelete && deleteInvoice.mutate({ id: invoiceToDelete.id, jobId })}
+      />
     </div>
   );
 }

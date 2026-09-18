@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildInvoicePdf, canAccessInvoicePdf, invoicePdfSections, type InvoicePdfData } from "./invoice-pdf";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { PDFDocument, PDFName } from "pdf-lib";
+import { buildInvoicePdf, canAccessInvoicePdf, INVOICE_LOGO_ASSET, INVOICE_PRIMARY_COLOR, invoicePdfSections, type InvoicePdfData } from "./invoice-pdf";
 
 const invoice: InvoicePdfData = {
   invoiceNumber: "INV-TEST-001",
@@ -22,6 +25,8 @@ const invoice: InvoicePdfData = {
 };
 
 describe("invoice PDF", () => {
+  const logo = () => readFile(join(process.cwd(), INVOICE_LOGO_ASSET));
+
   it("allows admins and assigned employees only", () => {
     expect(canAccessInvoicePdf("admin", 99, [])).toBe(true);
     expect(canAccessInvoicePdf("employee", 7, [7])).toBe(true);
@@ -30,7 +35,10 @@ describe("invoice PDF", () => {
 
   it("contains all essential content sections", () => {
     const sections = invoicePdfSections(invoice).join("\n");
-    expect(sections).toContain("I.S PAINTING / Business Manager");
+    expect(INVOICE_LOGO_ASSET).toBe("public/is-painting-logo2.png");
+    expect(INVOICE_PRIMARY_COLOR).toBe("#1d4ed8");
+    expect(sections).toContain("I.S PAINTING");
+    expect(sections).not.toContain("Business Manager");
     expect(sections).toContain("Painting Invoice");
     expect(sections).toContain("INV-TEST-001");
     expect(sections).toContain("Test Customer");
@@ -40,9 +48,12 @@ describe("invoice PDF", () => {
   });
 
   it("renders a valid PDF document", async () => {
-    const pdf = await buildInvoicePdf(invoice);
+    const pdf = await buildInvoicePdf(invoice, await logo());
     expect(new TextDecoder().decode(pdf.slice(0, 5))).toBe("%PDF-");
     expect(pdf.byteLength).toBeGreaterThan(1000);
+    const document = await PDFDocument.load(pdf);
+    const resources = document.getPage(0).node.Resources();
+    expect(resources?.has(PDFName.of("XObject"))).toBe(true);
   });
 
   it("safely renders long and non-ASCII text", async () => {
@@ -50,7 +61,7 @@ describe("invoice PDF", () => {
       ...invoice,
       notes: `Customer’s note: ${"unbroken-description".repeat(80)}`,
       lineItems: [{ ...invoice.lineItems[0], description: "Exterior – trim ".repeat(100) }],
-    });
+    }, await logo());
     expect(new TextDecoder().decode(pdf.slice(0, 5))).toBe("%PDF-");
     expect(pdf.byteLength).toBeGreaterThan(1000);
   });

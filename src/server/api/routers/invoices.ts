@@ -154,7 +154,27 @@ export const invoicesRouter = router({
       return ctx.prisma.invoice.update({ where: { id: input.id }, data });
     }),
 
-  remove: adminProcedure.input(z.object({ id: z.number() })).mutation(({ ctx, input }) =>
-    ctx.prisma.invoice.delete({ where: { id: input.id } })
-  ),
+  remove: adminProcedure
+    .input(z.object({ id: z.number(), jobId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      return ctx.prisma.$transaction(async (tx) => {
+        const invoice = await tx.invoice.findUnique({
+          where: { id: input.id },
+          select: { id: true, jobId: true },
+        });
+        if (!invoice) throw new TRPCError({ code: "NOT_FOUND", message: "Invoice not found." });
+        if (invoice.jobId !== input.jobId) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Invoice does not belong to this job." });
+        }
+
+        const deletedPayments = await tx.payment.deleteMany({ where: { invoiceId: input.id } });
+        await tx.invoice.delete({ where: { id: input.id } });
+        const remainingPayments = await tx.payment.count({ where: { invoiceId: input.id } });
+        if (remainingPayments !== 0) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Linked invoice payments were not fully removed." });
+        }
+
+        return { id: invoice.id, deletedPayments: deletedPayments.count };
+      }, { isolationLevel: "Serializable" });
+    }),
 });
