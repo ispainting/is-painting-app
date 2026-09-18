@@ -1,13 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { toast } from "sonner";
 import { JobExpenseEntry } from "@/components/expenses/JobExpenseEntry";
+import { JobFinancials } from "@/components/jobs/JobFinancials";
 import { calculateJobTracking, calculateEntryMinutes, formatMinutesToHours } from "@/lib/job-tracking";
 
 const STATUSES = ["estimate", "sent", "approved", "active", "completed", "on_hold", "cancelled"] as const;
@@ -24,6 +25,7 @@ type WorkspaceTab = (typeof WORKSPACE_TABS)[number]["id"];
 
 export default function JobDetailPage() {
   const params = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
   const id = Number(params.id);
   const utils = api.useUtils();
   const { data: job, isLoading } = api.jobs.byId.useQuery({ id });
@@ -35,7 +37,9 @@ export default function JobDetailPage() {
     { enabled: isEditOpen }
   );
 
-  const [activeTab, setActiveTab] = useState<WorkspaceTab>("overview");
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>(() =>
+    searchParams.get("tab") === "financials" ? "financials" : "overview"
+  );
   const [editForm, setEditForm] = useState({
     customerId: 0,
     name: "",
@@ -228,10 +232,6 @@ export default function JobDetailPage() {
   const actualTotalCost = actualLaborCost + actualExpensesTotal + actualSubcontractorCost;
   const actualProfit = contractOrTotalAmount - actualTotalCost;
   const actualMarginPct = contractOrTotalAmount > 0 ? (actualProfit / contractOrTotalAmount) * 100 : 0;
-
-  const invoiceTotal = jobData.invoices.reduce((sum, i) => sum + Number(i.total), 0);
-  const paymentsTotal = jobData.payments.reduce((sum, p) => sum + Number(p.amount), 0);
-  const balanceDue = contractOrTotalAmount - paymentsTotal;
 
   const knownAttachments = [
     ...jobData.expenses
@@ -832,58 +832,15 @@ export default function JobDetailPage() {
       )}
 
       {activeTab === "financials" && (
-        <div className="space-y-4">
-          <div className="card p-5">
-            <h2 className="text-base font-semibold mb-3">Financial Summary</h2>
-            <div className="grid md:grid-cols-3 gap-4">
-              <Stat label="Contract amount" value={formatCurrency(contractOrTotalAmount)} />
-              <Stat label="Change orders" value="Coming Soon" />
-              <Stat label="Invoices total" value={formatCurrency(invoiceTotal)} />
-              <Stat label="Payments received" value={formatCurrency(paymentsTotal)} />
-              <Stat label="Balance due" value={formatCurrency(balanceDue)} />
-              <Stat label="Actual costs" value={formatCurrency(actualTotalCost)} />
-              <Stat label="Gross profit" value={formatCurrency(actualProfit)} />
-              <Stat label="Net profit" value={formatCurrency(actualProfit)} />
-              <Stat label="Margin" value={`${actualMarginPct.toFixed(1)}%`} />
-              <Stat label="ROI" value={`${actualMarginPct.toFixed(1)}%`} />
-              <RoiFlag profit={actualProfit} />
-            </div>
-          </div>
-
-          <div className="grid md:grid-cols-2 gap-4">
-            <div className="card p-5">
-              <h2 className="text-base font-semibold mb-3">Invoices</h2>
-              {jobData.invoices.length === 0 ? (
-                <p className="text-sm text-slate-500">No invoices yet.</p>
-              ) : (
-                <ul className="text-sm divide-y">
-                  {jobData.invoices.map((i) => (
-                    <li key={i.id} className="py-2 flex justify-between">
-                      <span>{i.invoiceNumber} · {i.title}</span>
-                      <span>{formatCurrency(Number(i.total))}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            <div className="card p-5">
-              <h2 className="text-base font-semibold mb-3">Payments</h2>
-              {jobData.payments.length === 0 ? (
-                <p className="text-sm text-slate-500">No payments recorded yet.</p>
-              ) : (
-                <ul className="text-sm divide-y">
-                  {jobData.payments.map((p) => (
-                    <li key={p.id} className="py-2 flex justify-between">
-                      <span>{p.method} · {formatDateTime(p.dateReceived)}</span>
-                      <span>{formatCurrency(Number(p.amount))}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-        </div>
+        <JobFinancials
+          jobId={id}
+          jobName={job.name}
+          contractAmount={Number(job.contractAmount)}
+          totalEstimate={Number(job.totalEstimate)}
+          actualCosts={actualTotalCost}
+          grossProfit={actualProfit}
+          marginPercent={actualMarginPct}
+        />
       )}
 
       {activeTab === "documents" && (

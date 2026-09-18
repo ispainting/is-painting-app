@@ -128,8 +128,14 @@ export const jobsRouter = router({
         labor: true,
         paintColors: { orderBy: { createdAt: "asc" } },
         assignments: { include: { user: true } },
-        invoices: true,
-        payments: true,
+        invoices: {
+          include: {
+            lineItems: { orderBy: { sortOrder: "asc" } },
+            payments: { orderBy: { dateReceived: "desc" } },
+          },
+          orderBy: { createdAt: "desc" },
+        },
+        payments: { include: { invoice: { select: { invoiceNumber: true } } }, orderBy: { dateReceived: "desc" } },
         expenses: {
           include: {
             attachments: {
