@@ -134,7 +134,7 @@ export default function JobDetailPage() {
     customer: { name: string };
     assignments: Array<{ id: number; user: { name: string }; userId: number }>;
     expenses: Array<{ id: number; status: string; category: string; amount: string | number; receiptUrl: string | null; vendor: string | null; expenseDate: string; description: string | null; attachments: Array<{ id: number; originalFilename: string; mimeType: string }> }>;
-    timeEntries: Array<{ id: number; paidHours: string | number | null; hoursWorked: string | number | null; grossHours: string | number | null; clockOut: string | null; clockIn: string; user: { name: string; hourlyRate: string | number | null } }>;
+    timeEntries: Array<{ id: number; paidHours: string | number | null; hoursWorked: string | number | null; grossHours: string | number | null; clockOut: string | null; clockIn: string; hourlyRateSnapshot: string | number | null; user: { name: string; hourlyRate: string | number | null } }>;
     invoices: Array<{ id: number; total: string | number; invoiceNumber: string | null; title: string | null }>;
     payments: Array<{ id: number; amount: string | number; dateReceived: string; attachmentUrl: string | null; method: string | null }>;
     paintColors: Array<{ id: number; area: string; colorName: string; brand: string | null; finish: string | null; notes: string | null }>;
@@ -696,7 +696,7 @@ export default function JobDetailPage() {
                             {emp.formattedHours} <span className="text-xs text-slate-400">({emp.totalHours.toFixed(2)}h)</span>
                           </td>
                           <td className="py-2 text-right text-slate-600">
-                            {emp.hourlyRate != null && emp.hourlyRate > 0 ? formatCurrency(emp.hourlyRate) + "/h" : "Pending"}
+                            {emp.hasMixedRates ? "Mixed rates" : emp.hourlyRate != null && emp.hourlyRate > 0 ? formatCurrency(emp.hourlyRate) + "/h" : "Pending"}
                           </td>
                           <td className="py-2 text-right font-medium text-slate-900">
                             {formatCurrency(emp.laborCost)}
@@ -761,7 +761,7 @@ export default function JobDetailPage() {
                     {jobData.timeEntries.map((t) => {
                       const mins = calculateEntryMinutes(t);
                       const { formatted, decimalHours } = formatMinutesToHours(mins);
-                      const rate = Number(t.user.hourlyRate || 0);
+                      const rate = Number(t.hourlyRateSnapshot ?? t.user.hourlyRate ?? 0);
                       const cost = rate > 0 ? (mins / 60) * rate : 0;
                       return (
                         <tr key={t.id} className="py-2">

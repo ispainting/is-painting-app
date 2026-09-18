@@ -6,6 +6,7 @@ import {
   formatMinutesToHours,
   type TimeEntryLike,
 } from "./job-tracking";
+import { shouldRecomputeHourlyRateSnapshot } from "./employee-rate-resolver";
 
 describe("Job Tracking Calculations", () => {
   it("preserves exact minutes and formats as 42h 30m / 42.50 hours", () => {
@@ -225,5 +226,85 @@ describe("Job Tracking Calculations", () => {
     expect(result.totalHours).toBe(8);
     expect(result.isLaborCostPending).toBe(true);
     expect(result.totalLaborCost).toBe(100); // 4 * 25
+  });
+});
+
+describe("Effective-dated hourly rate snapshots", () => {
+  it("keeps entries before an effective date at the historical $21 rate", () => {
+    const entries: TimeEntryLike[] = [
+      { jobId: 1, userId: 1, clockIn: "2026-08-01T08:00:00Z", hoursWorked: 8, hourlyRateSnapshot: 21, user: { hourlyRate: 22 } },
+      { jobId: 1, userId: 1, clockIn: "2026-08-10T08:00:00Z", hoursWorked: 8, hourlyRateSnapshot: 21, user: { hourlyRate: 22 } },
+    ];
+
+    const result = calculateJobTracking(entries, 1);
+    expect(result.totalLaborCost).toBe(16 * 21);
+  });
+
+  it("uses the $22 rate for entries on or after the effective date", () => {
+    const entries: TimeEntryLike[] = [
+      { jobId: 1, userId: 1, clockIn: "2026-08-16T00:00:00Z", hoursWorked: 8, hourlyRateSnapshot: 22, user: { hourlyRate: 22 } },
+      { jobId: 1, userId: 1, clockIn: "2026-08-20T08:00:00Z", hoursWorked: 8, hourlyRateSnapshot: 22, user: { hourlyRate: 22 } },
+    ];
+
+    const result = calculateJobTracking(entries, 1);
+    expect(result.totalLaborCost).toBe(16 * 22);
+  });
+
+  it("does not let a later raise alter already-snapshotted historical costs", () => {
+    const before: TimeEntryLike = { jobId: 1, userId: 1, clockIn: "2026-08-01T08:00:00Z", hoursWorked: 10, hourlyRateSnapshot: 21, user: { hourlyRate: 22 } };
+    const after: TimeEntryLike = { jobId: 1, userId: 1, clockIn: "2026-09-01T08:00:00Z", hoursWorked: 10, hourlyRateSnapshot: 22, user: { hourlyRate: 22 } };
+
+    const result = calculateJobTracking([before, after], 1);
+    expect(result.totalLaborCost).toBe(10 * 21 + 10 * 22);
+    expect(result.totalLaborCost).not.toBe(20 * 22);
+  });
+
+  it("computes correct mixed-rate job totals and flags the employee as mixed", () => {
+    const entries: TimeEntryLike[] = [
+      { jobId: 1, userId: 1, clockIn: "2026-08-01T08:00:00Z", hoursWorked: 5, hourlyRateSnapshot: 21, user: { name: "Alonso", hourlyRate: 22 } },
+      { jobId: 1, userId: 1, clockIn: "2026-08-20T08:00:00Z", hoursWorked: 5, hourlyRateSnapshot: 22, user: { name: "Alonso", hourlyRate: 22 } },
+    ];
+
+    const result = calculateJobTracking(entries, 1);
+    expect(result.totalLaborCost).toBe(5 * 21 + 5 * 22);
+    expect(result.byEmployee).toHaveLength(1);
+    expect(result.byEmployee[0]?.hasMixedRates).toBe(true);
+    expect(result.byEmployee[0]?.hourlyRate).toBeNull();
+  });
+
+  it("reports a single consistent rate when an employee's entries all share one snapshot", () => {
+    const entries: TimeEntryLike[] = [
+      { jobId: 1, userId: 1, clockIn: "2026-08-20T08:00:00Z", hoursWorked: 5, hourlyRateSnapshot: 22, user: { hourlyRate: 22 } },
+      { jobId: 1, userId: 1, clockIn: "2026-08-21T08:00:00Z", hoursWorked: 5, hourlyRateSnapshot: 22, user: { hourlyRate: 22 } },
+    ];
+
+    const result = calculateJobTracking(entries, 1);
+    expect(result.byEmployee[0]?.hasMixedRates).toBe(false);
+    expect(result.byEmployee[0]?.hourlyRate).toBe(22);
+  });
+
+  it("falls back safely to the current user rate when a snapshot is missing (legacy rows)", () => {
+    const entries: TimeEntryLike[] = [
+      { jobId: 1, userId: 1, clockIn: "2026-01-01T08:00:00Z", hoursWorked: 4, hourlyRateSnapshot: null, user: { hourlyRate: 20 } },
+    ];
+
+    const result = calculateJobTracking(entries, 1);
+    expect(result.totalLaborCost).toBe(80);
+  });
+
+  it("preserves the snapshot when only notes or review status change (same user and clockIn)", () => {
+    const existing = { userId: 1, clockIn: new Date("2026-08-20T08:00:00Z") };
+    const next = { userId: 1, clockIn: new Date("2026-08-20T08:00:00Z") };
+    expect(shouldRecomputeHourlyRateSnapshot(existing, next)).toBe(false);
+  });
+
+  it("recomputes the snapshot when the employee or clock-in date changes", () => {
+    const existing = { userId: 1, clockIn: new Date("2026-08-20T08:00:00Z") };
+    expect(shouldRecomputeHourlyRateSnapshot(existing, { userId: 2, clockIn: existing.clockIn })).toBe(true);
+    expect(shouldRecomputeHourlyRateSnapshot(existing, { userId: 1, clockIn: new Date("2026-08-21T08:00:00Z") })).toBe(true);
+  });
+
+  it("always recomputes for a brand-new entry with no existing snapshot", () => {
+    expect(shouldRecomputeHourlyRateSnapshot(null, { userId: 1, clockIn: new Date("2026-08-20T08:00:00Z") })).toBe(true);
   });
 });

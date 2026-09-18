@@ -396,6 +396,8 @@ model User {
 
   timeEntries                TimeEntry[]
   approvedTimeEntries        TimeEntry[]             @relation("ApprovedTimeEntries")
+  hourlyRateHistory          EmployeeHourlyRateHistory[] @relation("EmployeeHourlyRateHistory")
+  createdHourlyRateHistory   EmployeeHourlyRateHistory[] @relation("EmployeeHourlyRateHistoryCreatedBy")
   expenses                   Expense[]               @relation("SubmittedExpenses")
   employeeExpenses           Expense[]               @relation("EmployeeExpenses")
   approvedExpenses           Expense[]               @relation("ApprovedExpenses")
@@ -1149,6 +1151,10 @@ model TimeEntry {
   calcVersion     Int   @default(1)
   attendanceFlags Json?
 
+  /// Hourly rate in effect at clockIn, captured at write time so later pay-rate
+  /// changes never rewrite historical labor cost. Null on legacy rows only.
+  hourlyRateSnapshot Decimal? @db.Decimal(10, 2)
+
   user       User  @relation(fields: [userId], references: [id])
   job        Job?  @relation(fields: [jobId], references: [id])
   approvedBy User? @relation("ApprovedTimeEntries", fields: [approvedById], references: [id])
@@ -1158,6 +1164,23 @@ model TimeEntry {
   @@index([clockIn])
   @@index([clockOut])
   @@index([userId, clockOut])
+}
+
+/// Effective-dated hourly rate history for a User. The most recent row with
+/// effectiveFrom <= a TimeEntry.clockIn is the authoritative rate for that entry.
+model EmployeeHourlyRateHistory {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  hourlyRate    Decimal  @db.Decimal(10, 2)
+  effectiveFrom DateTime
+  createdAt     DateTime @default(now())
+  createdById   Int?
+
+  user      User  @relation("EmployeeHourlyRateHistory", fields: [userId], references: [id], onDelete: Cascade)
+  createdBy User? @relation("EmployeeHourlyRateHistoryCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([userId, effectiveFrom])
+  @@index([effectiveFrom])
 }
 
 // ─── EXPENSES ────────────────────────────────────────

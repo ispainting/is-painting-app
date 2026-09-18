@@ -77,6 +77,7 @@ function estimatePayrollForPayPeriod(entries: Array<{
   isIslandJob: boolean;
   specialPayEnabled: boolean;
   hourlyRateAdjustment: unknown;
+  hourlyRateSnapshot: unknown;
   user: { hourlyRate: unknown };
   job: {
     isIslandJob: boolean;
@@ -99,7 +100,7 @@ function estimatePayrollForPayPeriod(entries: Array<{
   let total = 0;
   for (const groupEntries of grouped.values()) {
     const anchor = groupEntries[0];
-    const baseRate = money(anchor.user.hourlyRate);
+    const baseRate = money(anchor.hourlyRateSnapshot ?? anchor.user.hourlyRate);
     const specialPayEnabled = anchor.specialPayEnabled || anchor.isIslandJob || anchor.job?.specialPayEnabled || anchor.job?.isIslandJob;
     const rawAdjustment = specialPayEnabled
       ? money(anchor.hourlyRateAdjustment ?? anchor.job?.hourlyRateAdjustment ?? 0)
@@ -359,6 +360,7 @@ export const reportsRouter = router({
               isIslandJob: true,
               specialPayEnabled: true,
               hourlyRateAdjustment: true,
+              hourlyRateSnapshot: true,
               user: { select: { hourlyRate: true } },
               job: {
                 select: {
@@ -539,7 +541,7 @@ export const reportsRouter = router({
         }),
       ]);
       const laborCost = time.reduce(
-        (s, t) => s + Number(t.hoursWorked ?? 0) * Number(t.user.hourlyRate ?? 0),
+        (s, t) => s + Number(t.hoursWorked ?? 0) * Number(t.hourlyRateSnapshot ?? t.user.hourlyRate ?? 0),
         0
       );
       const expenseCost = Number(expenses._sum.amount ?? 0);

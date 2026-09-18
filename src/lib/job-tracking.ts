@@ -11,6 +11,8 @@ export interface TimeEntryLike {
   paidHours?: number | string | { toString(): string } | null;
   breakMinutes?: number | null;
   breakDeductionMinutes?: number | null;
+  /** Hourly rate captured at write time; authoritative over user.hourlyRate when present. */
+  hourlyRateSnapshot?: number | string | { toString(): string } | null;
   user?: {
     id?: number;
     name?: string | null;
@@ -26,6 +28,8 @@ export interface EmployeeHoursSummary {
   formattedHours: string;
   laborCost: number;
   hourlyRate: number | null;
+  /** True when this employee's entries span more than one historical rate. */
+  hasMixedRates: boolean;
   entriesCount: number;
 }
 
@@ -140,6 +144,7 @@ export function calculateJobTracking(
   const employeeMap = new Map<number, EmployeeHoursSummary>();
   const employeePreciseHours = new Map<number, number>();
   const employeePreciseCosts = new Map<number, number>();
+  const employeeRates = new Map<number, Set<number>>();
   const dateMap = new Map<string, WorkdayHoursSummary>();
   const datePreciseHours = new Map<string, number>();
   const datePreciseCosts = new Map<string, number>();
@@ -148,7 +153,7 @@ export function calculateJobTracking(
     const entryHours = calculateEntryHours(entry);
     totalHours += entryHours;
 
-    const rate = parseNumeric(entry.user?.hourlyRate);
+    const rate = parseNumeric(entry.hourlyRateSnapshot) ?? parseNumeric(entry.user?.hourlyRate);
     const entryCost = rate != null && rate > 0 ? entryHours * rate : 0;
 
     if (entryHours > 0 && (rate == null || rate <= 0)) {
@@ -167,8 +172,14 @@ export function calculateJobTracking(
       formattedHours: "0h 0m",
       laborCost: 0,
       hourlyRate: rate,
+      hasMixedRates: false,
       entriesCount: 0,
     };
+    if (rate != null) {
+      const rateSet = employeeRates.get(userId) ?? new Set<number>();
+      rateSet.add(rate);
+      employeeRates.set(userId, rateSet);
+    }
     const preciseEmployeeHours = (employeePreciseHours.get(userId) ?? 0) + entryHours;
     const preciseEmployeeCost = (employeePreciseCosts.get(userId) ?? 0) + entryCost;
     employeePreciseHours.set(userId, preciseEmployeeHours);
@@ -209,7 +220,13 @@ export function calculateJobTracking(
   const totalMinutes = Math.round(totalHours * 60);
   const { formatted } = formatMinutesToHours(totalMinutes);
 
-  const byEmployee = Array.from(employeeMap.values()).sort((a, b) => b.totalMinutes - a.totalMinutes);
+  const byEmployee = Array.from(employeeMap.values())
+    .map((emp) => {
+      const rateSet = employeeRates.get(emp.userId);
+      const hasMixedRates = (rateSet?.size ?? 0) > 1;
+      return { ...emp, hourlyRate: hasMixedRates ? null : (rateSet ? [...rateSet][0] ?? null : null), hasMixedRates };
+    })
+    .sort((a, b) => b.totalMinutes - a.totalMinutes);
   const byDate = Array.from(dateMap.values()).sort((a, b) => b.date.localeCompare(a.date));
 
   return {
