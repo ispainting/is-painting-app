@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { PDFDocument, PDFName } from "pdf-lib";
-import { buildInvoicePdf, canAccessInvoicePdf, INVOICE_LOGO_ASSET, INVOICE_PRIMARY_COLOR, invoicePdfSections, type InvoicePdfData } from "./invoice-pdf";
+import {
+  buildInvoicePdf,
+  canAccessInvoicePdf,
+  INVOICE_LOGO_ASSET,
+  INVOICE_PRIMARY_COLOR,
+  InvoiceLogoLoadError,
+  invoicePdfSections,
+  loadInvoiceLogo,
+  type InvoicePdfData,
+} from "./invoice-pdf";
 
 const invoice: InvoicePdfData = {
   invoiceNumber: "INV-TEST-001",
@@ -25,7 +32,18 @@ const invoice: InvoicePdfData = {
 };
 
 describe("invoice PDF", () => {
-  const logo = () => readFile(join(process.cwd(), INVOICE_LOGO_ASSET));
+  const logo = () => loadInvoiceLogo();
+
+  it("loads the traced production logo from the application root", async () => {
+    const bytes = await loadInvoiceLogo(process.cwd());
+    expect(bytes.byteLength).toBeGreaterThan(1000);
+    expect(Array.from(bytes.slice(1, 4))).toEqual([80, 78, 71]);
+  });
+
+  it("returns a controlled error when the production logo is unavailable", async () => {
+    await expect(loadInvoiceLogo("/var/task/missing-invoice-assets")).rejects.toBeInstanceOf(InvoiceLogoLoadError);
+    await expect(loadInvoiceLogo("/var/task/missing-invoice-assets")).rejects.toThrow("invoice logo could not be loaded");
+  });
 
   it("allows admins and assigned employees only", () => {
     expect(canAccessInvoicePdf("admin", 99, [])).toBe(true);

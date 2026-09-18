@@ -1,7 +1,24 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 export const INVOICE_LOGO_ASSET = "public/is-painting-logo2.png";
 export const INVOICE_PRIMARY_COLOR = "#1d4ed8";
+
+export class InvoiceLogoLoadError extends Error {
+  constructor(cause?: unknown) {
+    super("The invoice logo could not be loaded.", { cause });
+    this.name = "InvoiceLogoLoadError";
+  }
+}
+
+export async function loadInvoiceLogo(rootDirectory = process.cwd()): Promise<Uint8Array> {
+  try {
+    return await readFile(join(rootDirectory, INVOICE_LOGO_ASSET));
+  } catch (error) {
+    throw new InvoiceLogoLoadError(error);
+  }
+}
 
 export type InvoicePdfData = {
   invoiceNumber: string;

@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { prisma } from "@/lib/db";
 import { getSessionFromRequest } from "@/lib/auth";
-import { buildInvoicePdf, canAccessInvoicePdf, INVOICE_LOGO_ASSET } from "@/lib/invoice-pdf";
+import { buildInvoicePdf, canAccessInvoicePdf, loadInvoiceLogo } from "@/lib/invoice-pdf";
 
 export const runtime = "nodejs";
 
@@ -34,7 +32,13 @@ export async function GET(req: Request, { params }: Params) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const logoBytes = await readFile(join(process.cwd(), INVOICE_LOGO_ASSET));
+  let logoBytes: Uint8Array;
+  try {
+    logoBytes = await loadInvoiceLogo();
+  } catch (error) {
+    console.error("Invoice PDF logo load failed", error);
+    return NextResponse.json({ error: "Invoice PDF branding is temporarily unavailable." }, { status: 500 });
+  }
   const pdf = await buildInvoicePdf({
     invoiceNumber: invoice.invoiceNumber,
     title: invoice.title,
