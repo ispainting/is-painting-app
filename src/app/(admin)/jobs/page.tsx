@@ -9,12 +9,26 @@ import { formatCurrency, formatDate } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
+import { buildJobsListInputForPageFilter, type JobsPageFilter } from "@/lib/job-filters";
+
+const JOB_FILTERS: Array<{ key: JobsPageFilter; label: string }> = [
+  { key: "active", label: "Active" },
+  { key: "estimate", label: "Estimates" },
+  { key: "sent", label: "Sent" },
+  { key: "approved", label: "Approved" },
+  { key: "on_hold", label: "On Hold" },
+  { key: "completed", label: "Completed" },
+  { key: "cancelled", label: "Cancelled" },
+  { key: "archived", label: "Archived" },
+  { key: "all", label: "All" },
+];
 
 export default function JobsPage() {
   const router = useRouter();
   const utils = api.useUtils();
-  const [visibility, setVisibility] = useState<"active" | "archived" | "all">("active");
-  const { data, isLoading } = api.jobs.list.useQuery({ visibility });
+  const [filter, setFilter] = useState<JobsPageFilter>("active");
+  const { data, isLoading } = api.jobs.list.useQuery(buildJobsListInputForPageFilter(filter));
+  const counts = api.jobs.statusCounts.useQuery();
   const [open, setOpen] = useState(false);
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustomerResults, setShowCustomerResults] = useState(false);
@@ -28,6 +42,7 @@ export default function JobsPage() {
     onSuccess: () => {
       toast.success("Job archived");
       utils.jobs.list.invalidate();
+      utils.jobs.statusCounts.invalidate();
       setConfirmDeleteOpen(false);
       setSelectedJob(null);
     },
@@ -37,6 +52,7 @@ export default function JobsPage() {
     onSuccess: () => {
       toast.success("Job created");
       utils.jobs.list.invalidate();
+      utils.jobs.statusCounts.invalidate();
       setOpen(false);
     },
     onError: (e) => toast.error(e.message),
@@ -85,6 +101,10 @@ export default function JobsPage() {
     setShowCustomerResults(false);
   };
 
+  const activeFilter = JOB_FILTERS.find((option) => option.key === filter)!;
+  const emptyStateLabel =
+    filter === "all" ? "No jobs yet." : filter === "archived" ? "No archived jobs." : `No ${activeFilter.label.toLowerCase()} jobs.`;
+
   return (
     <>
       <PageHeader
@@ -92,17 +112,34 @@ export default function JobsPage() {
         description="Estimates and active jobs"
         actions={
           <div className="flex items-center gap-2">
-            <select className="input w-auto" value={visibility} onChange={(e) => setVisibility(e.target.value as typeof visibility)}>
-              <option value="active">Active</option>
-              <option value="archived">Archived</option>
-              <option value="all">All</option>
-            </select>
             <button onClick={() => { setOpen(true); setShowCustomerResults(false); }} className="btn btn-primary">
               <Plus className="w-4 h-4 mr-1" /> New job
             </button>
           </div>
         }
       />
+
+      <div className="mb-4 flex gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible" role="tablist" aria-label="Filter jobs by status">
+        {JOB_FILTERS.map(({ key, label }) => {
+          const count = counts.data?.[key];
+          const isSelected = filter === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={isSelected}
+              onClick={() => setFilter(key)}
+              className={`btn shrink-0 whitespace-nowrap ${isSelected ? "btn-primary" : "btn-secondary"}`}
+            >
+              {label}
+              <span className={`ml-1.5 rounded-full px-1.5 text-xs ${isSelected ? "bg-white/20" : "bg-slate-200 text-slate-600"}`}>
+                {count ?? "…"}
+              </span>
+            </button>
+          );
+        })}
+      </div>
 
       <div className="card overflow-hidden">
         <table className="w-full text-sm">
@@ -121,7 +158,7 @@ export default function JobsPage() {
             {isLoading ? (
               <tr><td colSpan={7} className="px-4 py-6 text-slate-500">Loading…</td></tr>
             ) : data?.length === 0 ? (
-              <tr><td colSpan={7} className="px-4 py-6 text-slate-500">No jobs yet.</td></tr>
+              <tr><td colSpan={7} className="px-4 py-6 text-slate-500">{emptyStateLabel}</td></tr>
             ) : (
               data?.map((j) => (
                 <tr

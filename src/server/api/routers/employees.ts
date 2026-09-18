@@ -1,8 +1,10 @@
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 import { router, adminProcedure } from "../trpc";
 import { hashPassword } from "@/lib/auth";
 import { calculateEmployeeGrossPay } from "@/lib/employee-payroll";
+import { startOfBusinessDayInMassachusetts } from "@/lib/employee-rate-resolver";
 
 const RoleZ = z.enum(["admin", "employee"]);
 const StatusFilterZ = z.enum(["active", "inactive", "all"]);
@@ -30,6 +32,7 @@ const profileInput = z.object({
 
 const payrollInput = z.object({
   hourlyRate: z.number().min(0),
+  effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Effective date must be in YYYY-MM-DD format"),
   specialJobAdjustment: z.number().min(0).default(0),
   overtimeMultiplier: z.number().min(1).default(1.5),
   overtimeRate: z.number().min(0).optional().nullable(),
@@ -240,7 +243,7 @@ export const employeesRouter = router({
                   customer: { select: { name: true } },
                   timeEntries: {
                     where: { userId: input.id },
-                    select: { paidHours: true, grossHours: true, hoursWorked: true, clockIn: true },
+                    select: { paidHours: true, grossHours: true, hoursWorked: true, clockIn: true, hourlyRateSnapshot: true },
                   },
                 },
               },
@@ -308,7 +311,11 @@ export const employeesRouter = router({
           (sum, entry) => sum + numberOrZero(entry.paidHours ?? entry.grossHours ?? entry.hoursWorked),
           0
         );
-        const laborCost = hoursWorked * defaultRate;
+        const laborCost = assignment.job.timeEntries.reduce((sum, entry) => {
+          const hours = numberOrZero(entry.paidHours ?? entry.grossHours ?? entry.hoursWorked);
+          const rate = entry.hourlyRateSnapshot == null ? defaultRate : Number(entry.hourlyRateSnapshot);
+          return sum + hours * rate;
+        }, 0);
         const completionPercent =
           assignment.job.status === "completed"
             ? 100
@@ -520,20 +527,79 @@ export const employeesRouter = router({
       const before = await ctx.prisma.user.findUnique({ where: { id: input.id } });
       if (!before) throw new TRPCError({ code: "NOT_FOUND", message: "Employee not found" });
 
-      const updated = await ctx.prisma.user.update({
-        where: { id: input.id },
-        data: {
-          hourlyRate: input.data.hourlyRate,
-          specialJobAdjustment: input.data.specialJobAdjustment,
-          overtimeMultiplier: input.data.overtimeMultiplier,
-          overtimeRate: input.data.overtimeRate,
-          travelPayEnabled: input.data.travelPayEnabled,
-          defaultTravelHours: input.data.defaultTravelHours,
-          travelRateType: input.data.travelRateType,
-          customTravelRate: input.data.customTravelRate,
-          payrollNotes: textOrNull(input.data.payrollNotes),
-        },
-      });
+      const previousRate = before.hourlyRate == null ? null : Number(before.hourlyRate);
+      const rateChanged = previousRate == null || Math.abs(previousRate - input.data.hourlyRate) > 0.0001;
+      const effectiveFrom = startOfBusinessDayInMassachusetts(input.data.effectiveDate);
+
+      let updated;
+      try {
+        updated = await ctx.prisma.$transaction(async (tx) => {
+          if (rateChanged) {
+            await tx.employeeHourlyRateHistory.create({
+              data: {
+                userId: input.id,
+                hourlyRate: input.data.hourlyRate,
+                effectiveFrom,
+                createdById: ctx.session.userId,
+              },
+            });
+          }
+
+          // The "current/default" rate is always the most recent effective rate,
+          // which may not be the rate just entered if this edit backdates a
+          // change between two later rate changes.
+          const latestHistoryRow = rateChanged
+            ? await tx.employeeHourlyRateHistory.findFirst({
+                where: { userId: input.id },
+                orderBy: { effectiveFrom: "desc" },
+                select: { hourlyRate: true },
+              })
+            : null;
+          const currentDefaultRate = latestHistoryRow ? Number(latestHistoryRow.hourlyRate) : input.data.hourlyRate;
+
+          const user = await tx.user.update({
+            where: { id: input.id },
+            data: {
+              hourlyRate: currentDefaultRate,
+              specialJobAdjustment: input.data.specialJobAdjustment,
+              overtimeMultiplier: input.data.overtimeMultiplier,
+              overtimeRate: input.data.overtimeRate,
+              travelPayEnabled: input.data.travelPayEnabled,
+              defaultTravelHours: input.data.defaultTravelHours,
+              travelRateType: input.data.travelRateType,
+              customTravelRate: input.data.customTravelRate,
+              payrollNotes: textOrNull(input.data.payrollNotes),
+            },
+          });
+
+          if (rateChanged) {
+            // Bound the rewrite to entries strictly before the next later rate
+            // change so backdating never clobbers an already-correct period.
+            const nextHistoryRow = await tx.employeeHourlyRateHistory.findFirst({
+              where: { userId: input.id, effectiveFrom: { gt: effectiveFrom } },
+              orderBy: { effectiveFrom: "asc" },
+              select: { effectiveFrom: true },
+            });
+            await tx.timeEntry.updateMany({
+              where: {
+                userId: input.id,
+                clockIn: nextHistoryRow ? { gte: effectiveFrom, lt: nextHistoryRow.effectiveFrom } : { gte: effectiveFrom },
+              },
+              data: { hourlyRateSnapshot: input.data.hourlyRate },
+            });
+          }
+
+          return user;
+        });
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "A pay rate change is already recorded for this effective date. Choose a different effective date.",
+          });
+        }
+        throw error;
+      }
 
       await logEmployeeActivity(ctx, {
         userId: input.id,
@@ -553,6 +619,7 @@ export const employeesRouter = router({
           },
           after: {
             hourlyRate: input.data.hourlyRate,
+            effectiveDate: input.data.effectiveDate,
             specialJobAdjustment: input.data.specialJobAdjustment,
             overtimeMultiplier: input.data.overtimeMultiplier,
             overtimeRate: input.data.overtimeRate,
