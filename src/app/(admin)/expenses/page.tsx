@@ -77,7 +77,6 @@ const CATEGORY_OPTIONS = [
 
 const STATUS_OPTIONS = ["pending", "approved", "rejected"] as const;
 const UPLOAD_REQUEST_TIMEOUT_MS = 60_000;
-const EXTRACTION_UI_TIMEOUT_MS = 75_000;
 
 function numberToInput(value: number | null | undefined) {
   if (value == null || Number.isNaN(value)) return "";
@@ -100,7 +99,6 @@ export default function ExpensesPage() {
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const replaceInputRef = useRef<HTMLInputElement | null>(null);
   const xhrMap = useRef<Map<string, XMLHttpRequest>>(new Map());
-  const extractionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"" | (typeof STATUS_OPTIONS)[number]>("");
@@ -152,8 +150,6 @@ export default function ExpensesPage() {
 
   const extractReceipt = api.expenses.extractReceipt.useMutation({
     onSuccess: (result) => {
-      clearExtractionTimeout();
-
       if (result.status === "failed" || !result.data) {
         setExtractionState({
           status: "failed",
@@ -184,13 +180,13 @@ export default function ExpensesPage() {
       }
     },
     onError: (error) => {
-      clearExtractionTimeout();
+      const safeMessage = "Receipt scanning is temporarily unavailable. The receipt is attached; retry reading or enter the expense manually.";
       setExtractionState((prev) => ({
         ...prev,
         status: "failed",
-        message: error.message || "AI reading failed.",
+        message: safeMessage,
       }));
-      toast.error(error.message || "AI reading failed");
+      toast.error(safeMessage);
     },
   });
 
@@ -269,32 +265,13 @@ export default function ExpensesPage() {
     }) || null;
   }, [form.vendor, form.amount, form.expenseDate, listQuery.data]);
 
-  function clearExtractionTimeout() {
-    if (!extractionTimeoutRef.current) return;
-    clearTimeout(extractionTimeoutRef.current);
-    extractionTimeoutRef.current = null;
-  }
-
   function beginExtraction(attachmentId: number) {
-    clearExtractionTimeout();
     setExtractionState({
       status: "processing",
       attachmentId,
       message: "Reading receipt with AI...",
       data: null,
     });
-
-    extractionTimeoutRef.current = setTimeout(() => {
-      setExtractionState((prev) => {
-        if (prev.status !== "processing") return prev;
-        return {
-          ...prev,
-          status: "failed",
-          message: "AI timeout. Please retry AI reading.",
-        };
-      });
-      toast.error("AI timeout. Please retry AI reading.");
-    }, EXTRACTION_UI_TIMEOUT_MS);
 
     extractReceipt.mutate({ attachmentId });
   }
@@ -642,6 +619,16 @@ export default function ExpensesPage() {
             <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
               <p className="font-medium">Needs review</p>
               <p>{extractionState.message || "Receipt information could not be fully verified."}</p>
+              {extractionState.status === "failed" && extractionState.attachmentId && (
+                <button
+                  type="button"
+                  className="btn btn-secondary mt-3"
+                  disabled={extractReceipt.isPending}
+                  onClick={() => beginExtraction(extractionState.attachmentId!)}
+                >
+                  Retry reading
+                </button>
+              )}
             </div>
           )}
 

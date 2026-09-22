@@ -1,9 +1,11 @@
 import { ExpenseCategory, ExpenseStatus, Prisma } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   getAttachmentDownloadUrl,
 } from "@/lib/expense-attachments";
 import { buildConfidenceByField, extractReceipt } from "@/lib/receipt-extraction";
+import { runReceiptExtractionWorkflow } from "@/lib/receipt-extraction/workflow";
 import { getReceiptStorageProvider } from "@/lib/receipt-storage";
 import { adminProcedure, protectedProcedure, router } from "../trpc";
 
@@ -49,17 +51,6 @@ const createInput = z.object({
     })
   ).default([]),
 });
-
-function getUserFacingExtractionError(error: unknown) {
-  const message = error instanceof Error ? error.message.toLowerCase() : "";
-  if (message.includes("timeout") || message.includes("timed out")) {
-    return "Receipt reading timed out. You can enter the expense manually.";
-  }
-  if (message.includes("429") || message.includes("credit_balance_exhausted") || message.includes("provider unavailable")) {
-    return "Receipt reading is temporarily unavailable. You can enter the expense manually.";
-  }
-  return "Receipt reading failed. You can enter the expense manually.";
-}
 
 export const expensesRouter = router({
   list: protectedProcedure.input(listInput).query(async ({ ctx, input }) => {
@@ -325,6 +316,7 @@ export const expensesRouter = router({
           storagePath: true,
           originalFilename: true,
           mimeType: true,
+          sizeBytes: true,
           extractionStatus: true,
           expense: {
             select: { submittedById: true },
@@ -353,71 +345,68 @@ export const expensesRouter = router({
         },
       });
 
-      try {
-        const object = await provider.download(attachment.storagePath);
-        const jobs = await ctx.prisma.job.findMany({
+      const requestId = `receipt-${randomUUID()}`;
+      const workflow = await runReceiptExtractionWorkflow(attachment, requestId, {
+        download: (storagePath) => provider.download(storagePath),
+        loadJobs: () => ctx.prisma.job.findMany({
           where: { deletedAt: null },
           select: { id: true, name: true },
           orderBy: { name: "asc" },
           take: 500,
-        });
+        }),
+        extract: extractReceipt,
+        saveSuccess: async (extracted) => {
+          const status = extracted.needsReview ? "needs_review" : "completed";
+          await ctx.prisma.expenseAttachment.update({
+            where: { id: attachment.id },
+            data: {
+              extractionStatus: status,
+              extractionRawText: extracted.normalized.rawText,
+              extractionStructured: extracted.normalized,
+              extractionConfidence: extracted.normalized.overallConfidence,
+              extractionConfidenceByField: buildConfidenceByField(extracted.normalized),
+              extractionProvider: extracted.provider,
+              extractionModel: extracted.model,
+              extractionError: null,
+              extractionProcessedAt: new Date(),
+            },
+          });
+        },
+        saveFailure: async (message) => {
+          await ctx.prisma.expenseAttachment.update({
+            where: { id: attachment.id },
+            data: { extractionStatus: "failed", extractionError: message, extractionProcessedAt: new Date() },
+          });
+        },
+        log: (event) => {
+          if (event.event === "receipt_extraction_failed") console.error(event);
+          else console.info(event);
+        },
+      });
 
-        const extracted = await extractReceipt({
-          attachmentId: attachment.id,
-          originalFilename: attachment.originalFilename,
-          mimeType: attachment.mimeType,
-          fileData: object.data,
-          jobOptions: jobs,
-        });
-
-        const status = extracted.needsReview ? "needs_review" : "completed";
-        await ctx.prisma.expenseAttachment.update({
-          where: { id: attachment.id },
-          data: {
-            extractionStatus: status,
-            extractionRawText: extracted.normalized.rawText,
-            extractionStructured: extracted.normalized,
-            extractionConfidence: extracted.normalized.overallConfidence,
-            extractionConfidenceByField: buildConfidenceByField(extracted.normalized),
-            extractionProvider: extracted.provider,
-            extractionModel: extracted.model,
-            extractionError: null,
-            extractionProcessedAt: new Date(),
-          },
-        });
-
-        return {
-          status,
-          attachmentId: attachment.id,
-          message: status === "needs_review" ? "Receipt extracted with low confidence. Needs review." : "Receipt extracted successfully.",
-          data: extracted.normalized,
-          provider: extracted.provider,
-          model: extracted.model,
-        };
-      } catch (error) {
-        const message = getUserFacingExtractionError(error);
-        console.error("Receipt extraction failed", {
-          attachmentId: attachment.id,
-          error,
-        });
-        await ctx.prisma.expenseAttachment.update({
-          where: { id: attachment.id },
-          data: {
-            extractionStatus: "failed",
-            extractionError: message,
-            extractionProcessedAt: new Date(),
-          },
-        });
-
+      if (!workflow.ok) {
         return {
           status: "failed" as const,
           attachmentId: attachment.id,
-          message,
+          message: workflow.error.userMessage,
+          failureCategory: workflow.error.kind,
+          requestId,
           data: null,
           provider: process.env.RECEIPT_EXTRACTION_PROVIDER?.trim().toLowerCase() || "openai",
           model: process.env.RECEIPT_EXTRACTION_OPENAI_MODEL?.trim() || "gpt-4.1-mini",
         };
       }
+
+      const status = workflow.result.needsReview ? "needs_review" as const : "completed" as const;
+      return {
+        status,
+        attachmentId: attachment.id,
+        message: status === "needs_review" ? "Receipt extracted with low confidence. Needs review." : "Receipt extracted successfully.",
+        requestId,
+        data: workflow.result.normalized,
+        provider: workflow.result.provider,
+        model: workflow.result.model,
+      };
     }),
 
   replaceAttachment: protectedProcedure
