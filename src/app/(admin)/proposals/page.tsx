@@ -261,8 +261,8 @@ export default function ProposalsPage() {
               <button className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button>
               <button
                 className="btn btn-primary"
-                disabled={create.isPending || !form.projectName}
-                onClick={() => create.mutate({ ...form, customerId: form.customerId > 0 ? form.customerId : null })}
+                disabled={create.isPending}
+                onClick={() => create.mutate({ ...form, customerId: form.customerId > 0 ? form.customerId : null, projectName: form.projectName.trim() || "Untitled Proposal" })}
               >
                 {create.isPending ? "Creating…" : form.customerId > 0 ? "Create Proposal" : "Start Draft (No Client Yet)"}
               </button>

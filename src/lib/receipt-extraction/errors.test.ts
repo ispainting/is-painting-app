@@ -1,12 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OpenAiReceiptExtractionProvider } from "./providers/openai-provider";
 import { normalizeExtractionResponse, shouldMarkNeedsReview } from "./normalization";
+import { ReceiptExtractionError } from "./errors";
+
+const onePixelPng = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64",
+);
 
 const input = {
   attachmentId: 1,
   originalFilename: "receipt.png",
   mimeType: "image/png",
-  fileData: new ArrayBuffer(0),
+  fileData: onePixelPng.buffer.slice(onePixelPng.byteOffset, onePixelPng.byteOffset + onePixelPng.byteLength) as ArrayBuffer,
   jobOptions: [],
 };
 
@@ -15,6 +21,7 @@ function providerErrorMessage(error: unknown) {
 }
 
 function safeUserFacingMessage(error: unknown) {
+  if (error instanceof ReceiptExtractionError) return error.userMessage;
   const message = providerErrorMessage(error).toLowerCase();
   if (message.includes("timeout") || message.includes("timed out")) {
     return "Receipt reading timed out. You can enter the expense manually.";
@@ -56,12 +63,16 @@ describe("receipt extraction error handling", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(responseWithError(429, body)));
 
     const error = await new OpenAiReceiptExtractionProvider().extract(input).catch((reason) => reason);
-    const technicalMessage = providerErrorMessage(error);
+    expect(error).toBeInstanceOf(ReceiptExtractionError);
+    const technicalMessage = (error as ReceiptExtractionError).logMessage;
     const userMessage = safeUserFacingMessage(error);
 
-    expect(technicalMessage).toContain("AI provider unavailable: 429");
-    expect(technicalMessage).toContain(body.slice(0, 20));
-    expect(userMessage).toBe("Receipt reading is temporarily unavailable. You can enter the expense manually.");
+    expect((error as ReceiptExtractionError).providerStatus).toBe(429);
+    expect(["billing_unavailable", "rate_limited"]).toContain((error as ReceiptExtractionError).kind);
+    expect(technicalMessage).toContain("OpenAI");
+    expect(technicalMessage).toContain("429");
+    expect(userMessage).toContain("temporarily unavailable");
+    expect(userMessage).toContain("receipt is attached");
     expect(userMessage).not.toContain("credit_balance_exhausted");
     expect(userMessage).not.toContain("rate_limit_exceeded");
     expect(userMessage).not.toContain("quota exhausted");
@@ -81,16 +92,26 @@ describe("receipt extraction error handling", () => {
       ),
     );
 
-    const provider = new OpenAiReceiptExtractionProvider();
+    const fetchMock = vi.fn((_url: string, options?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        options?.signal?.addEventListener("abort", () => {
+          const error = new Error("aborted");
+          error.name = "AbortError";
+          reject(error);
+        });
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new OpenAiReceiptExtractionProvider({ timeoutMs: 5, retryDelayMs: 0 });
     const extraction = provider.extract(input);
-    await expect(extraction).rejects.toThrow("AI timeout: receipt reading exceeded the allowed time.");
+    await expect(extraction).rejects.toMatchObject({ kind: "timeout", retryable: true });
     const error = await extraction.catch((reason) => reason);
 
-    expect(providerErrorMessage(error)).toContain("AI timeout");
-    expect(safeUserFacingMessage(error)).toBe(
-      "Receipt reading timed out. You can enter the expense manually.",
-    );
-  }, 50_000);
+    expect((error as ReceiptExtractionError).logMessage).toContain("timed out");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(safeUserFacingMessage(error)).toContain("Receipt scanning timed out");
+    expect(safeUserFacingMessage(error)).toContain("receipt is attached");
+  });
 
   it("returns a safe unavailable/manual-entry message for a network error", async () => {
     const networkError = new Error("fetch failed: ECONNRESET");
@@ -98,9 +119,19 @@ describe("receipt extraction error handling", () => {
 
     const error = await new OpenAiReceiptExtractionProvider().extract(input).catch((reason) => reason);
 
-    expect(providerErrorMessage(error)).toContain("ECONNRESET");
-    expect(safeUserFacingMessage(error)).toBe("Receipt reading failed. You can enter the expense manually.");
+    expect((error as ReceiptExtractionError).logMessage).toContain("ECONNRESET");
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(safeUserFacingMessage(error)).toContain("temporarily unavailable");
+    expect(safeUserFacingMessage(error)).toContain("receipt is attached");
     expect(safeUserFacingMessage(error)).not.toContain("ECONNRESET");
+  });
+
+  it("reports missing provider configuration without exposing environment details", async () => {
+    delete process.env.OPENAI_API_KEY;
+    const error = await new OpenAiReceiptExtractionProvider().extract(input).catch((reason) => reason);
+    expect(error).toMatchObject({ kind: "missing_configuration", retryable: false });
+    expect((error as ReceiptExtractionError).userMessage).toContain("not configured");
+    expect((error as ReceiptExtractionError).userMessage).not.toContain("OPENAI_API_KEY");
   });
 
   it("reads only the simplified receipt fields and maps amount to the expense total", async () => {
@@ -130,12 +161,52 @@ describe("receipt extraction error handling", () => {
     expect(prompt).not.toContain("Known jobs");
   });
 
+  it("sends PDFs as provider input_file without converting or re-uploading", async () => {
+    const pdf = Buffer.from("%PDF-1.4\n%%EOF", "ascii");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      output_text: JSON.stringify({
+        vendor: { value: "PDF Vendor", confidence: 0.9 },
+        category: { value: "materials", confidence: 0.9 },
+        amount: { value: 10, confidence: 0.9 },
+        date: { value: "2026-09-21", confidence: 0.9 },
+        description: { value: "PDF receipt", confidence: 0.9 },
+      }),
+    }), { status: 200 }));
+    const provider = new OpenAiReceiptExtractionProvider({ fetch: fetchMock });
+
+    await provider.extract({
+      ...input,
+      originalFilename: "receipt.pdf",
+      mimeType: "application/pdf",
+      fileData: pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength) as ArrayBuffer,
+    });
+
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    const fileContent = requestBody.input[0].content[1];
+    expect(fileContent.type).toBe("input_file");
+    expect(fileContent.filename).toBe("receipt.pdf");
+    expect(fileContent.file_data).toMatch(/^data:application\/pdf;base64,/);
+  });
+
   it("treats malformed provider output as a recoverable extraction failure", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ output_text: "not json" }), { status: 200 })));
 
-    await expect(new OpenAiReceiptExtractionProvider().extract(input)).rejects.toThrow(
-      "AI response returned invalid JSON.",
-    );
+    await expect(new OpenAiReceiptExtractionProvider().extract(input)).rejects.toMatchObject({
+      kind: "malformed_response",
+      retryable: false,
+    });
+  });
+
+  it("classifies an invalid provider HTTP body as malformed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("not-json", { status: 200 })));
+    await expect(new OpenAiReceiptExtractionProvider().extract(input)).rejects.toMatchObject({ kind: "malformed_response", retryable: false });
+  });
+
+  it("classifies provider payload limits as non-retryable", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(responseWithError(413, "payload too large"));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(new OpenAiReceiptExtractionProvider().extract(input)).rejects.toMatchObject({ kind: "payload_too_large", providerStatus: 413, retryable: false });
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("marks an unusable but valid provider response for review instead of crashing the workflow", () => {

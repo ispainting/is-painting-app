@@ -87,7 +87,7 @@ function totalHours(entry: { paidHours: unknown; grossHours: unknown; hoursWorke
   return money(entry.paidHours ?? entry.grossHours ?? entry.hoursWorked ?? 0);
 }
 
-function payrollForEntries(entries: Array<{ user: { hourlyRate: unknown }; specialPayEnabled: boolean; isIslandJob: boolean; hourlyRateAdjustment: unknown; job: { specialPayEnabled: boolean; isIslandJob: boolean; hourlyRateAdjustment: unknown; travelPayEnabled: boolean; defaultTravelHours: unknown; travelRateType: string | null; customTravelRate: unknown } | null; paidHours: unknown; grossHours: unknown; hoursWorked: unknown; travelHours: unknown; userId: number; jobId: number | null; clockIn: Date }>) {
+function payrollForEntries(entries: Array<{ user: { hourlyRate: unknown }; hourlyRateSnapshot: unknown; specialPayEnabled: boolean; isIslandJob: boolean; hourlyRateAdjustment: unknown; job: { specialPayEnabled: boolean; isIslandJob: boolean; hourlyRateAdjustment: unknown; travelPayEnabled: boolean; defaultTravelHours: unknown; travelRateType: string | null; customTravelRate: unknown } | null; paidHours: unknown; grossHours: unknown; hoursWorked: unknown; travelHours: unknown; userId: number; jobId: number | null; clockIn: Date }>) {
   const grouped = new Map<string, typeof entries>();
   for (const entry of entries) {
     const key = `${entry.userId}:${entry.jobId ?? 0}:${entry.clockIn.toISOString().slice(0, 10)}`;
@@ -99,7 +99,7 @@ function payrollForEntries(entries: Array<{ user: { hourlyRate: unknown }; speci
   let total = 0;
   for (const group of grouped.values()) {
     const anchor = group[0];
-    const baseRate = money(anchor.user.hourlyRate);
+    const baseRate = money(anchor.hourlyRateSnapshot ?? anchor.user.hourlyRate);
     const specialPayEnabled = anchor.specialPayEnabled || anchor.isIslandJob || anchor.job?.specialPayEnabled || anchor.job?.isIslandJob;
     const adjustment = specialPayEnabled ? money(anchor.hourlyRateAdjustment ?? anchor.job?.hourlyRateAdjustment ?? 0) || ((anchor.isIslandJob || anchor.job?.isIslandJob) ? 2 : 0) : 0;
     const effectiveRate = baseRate + adjustment;
@@ -338,6 +338,7 @@ async function loadBusinessHistory(prisma: any, start: Date, end: Date) {
         specialPayEnabled: true,
         isIslandJob: true,
         hourlyRateAdjustment: true,
+        hourlyRateSnapshot: true,
         user: { select: { id: true, name: true, hourlyRate: true } },
         job: { select: { id: true, name: true, customer: { select: { id: true, name: true, source: true } }, contractAmount: true, totalEstimate: true } },
       },
@@ -553,7 +554,7 @@ function buildCustomerAnalytics(range: { start: Date; end: Date }, history: Awai
     const jobTotalHours = hoursByJob.get(entry.jobId) ?? 0;
     const jobRevenue = revenueByJob.get(entry.jobId) ?? 0;
     const allocatedRevenue = jobTotalHours > 0 ? jobRevenue * (hours / jobTotalHours) : 0;
-    payrollByJob.set(entry.jobId, (payrollByJob.get(entry.jobId) ?? 0) + (money(entry.user.hourlyRate) * hours));
+    payrollByJob.set(entry.jobId, (payrollByJob.get(entry.jobId) ?? 0) + (money(entry.hourlyRateSnapshot ?? entry.user.hourlyRate) * hours));
     const customerId = entry.job?.customer?.id;
     if (!customerId) continue;
     const existing = revenueByCustomer.get(customerId) ?? { name: entry.job.customer.name, revenue: 0, jobs: 0, source: entry.job.customer.source ?? null };
@@ -613,7 +614,7 @@ function buildEmployeeAnalytics(range: { start: Date; end: Date }, history: Awai
     const jobHours = hoursByJob.get(entry.jobId) ?? 0;
     const jobRevenue = revenueByJob.get(entry.jobId) ?? 0;
     const revenueShare = jobHours > 0 ? jobRevenue * (hours / jobHours) : 0;
-    const payrollShare = money(entry.user.hourlyRate) * hours;
+    const payrollShare = money(entry.hourlyRateSnapshot ?? entry.user.hourlyRate) * hours;
     const existing = employeeMap.get(entry.userId) ?? { name: entry.user.name, hours: 0, payroll: 0, revenue: 0 };
     existing.hours += hours;
     existing.payroll += payrollShare;

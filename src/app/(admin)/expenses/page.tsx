@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { computeReceiptTotal } from "@/lib/receipt-totals";
 import { toast } from "sonner";
 
 type UploadState = "queued" | "uploading" | "success" | "failed" | "canceled";
@@ -76,7 +77,6 @@ const CATEGORY_OPTIONS = [
 
 const STATUS_OPTIONS = ["pending", "approved", "rejected"] as const;
 const UPLOAD_REQUEST_TIMEOUT_MS = 60_000;
-const EXTRACTION_UI_TIMEOUT_MS = 75_000;
 
 function numberToInput(value: number | null | undefined) {
   if (value == null || Number.isNaN(value)) return "";
@@ -99,7 +99,6 @@ export default function ExpensesPage() {
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const replaceInputRef = useRef<HTMLInputElement | null>(null);
   const xhrMap = useRef<Map<string, XMLHttpRequest>>(new Map());
-  const extractionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"" | (typeof STATUS_OPTIONS)[number]>("");
@@ -134,7 +133,13 @@ export default function ExpensesPage() {
     sortBy,
     sortDir,
   });
-  const statsQuery = api.expenses.stats.useQuery();
+  const statsQuery = api.expenses.stats.useQuery({
+    search: search || undefined,
+    status: status || undefined,
+    category: category || undefined,
+    sortBy,
+    sortDir,
+  });
   const metaQuery = api.expenses.meta.useQuery();
 
   useEffect(() => {
@@ -145,8 +150,6 @@ export default function ExpensesPage() {
 
   const extractReceipt = api.expenses.extractReceipt.useMutation({
     onSuccess: (result) => {
-      clearExtractionTimeout();
-
       if (result.status === "failed" || !result.data) {
         setExtractionState({
           status: "failed",
@@ -177,13 +180,13 @@ export default function ExpensesPage() {
       }
     },
     onError: (error) => {
-      clearExtractionTimeout();
+      const safeMessage = "Receipt scanning is temporarily unavailable. The receipt is attached; retry reading or enter the expense manually.";
       setExtractionState((prev) => ({
         ...prev,
         status: "failed",
-        message: error.message || "AI reading failed.",
+        message: safeMessage,
       }));
-      toast.error(error.message || "AI reading failed");
+      toast.error(safeMessage);
     },
   });
 
@@ -262,32 +265,13 @@ export default function ExpensesPage() {
     }) || null;
   }, [form.vendor, form.amount, form.expenseDate, listQuery.data]);
 
-  function clearExtractionTimeout() {
-    if (!extractionTimeoutRef.current) return;
-    clearTimeout(extractionTimeoutRef.current);
-    extractionTimeoutRef.current = null;
-  }
-
   function beginExtraction(attachmentId: number) {
-    clearExtractionTimeout();
     setExtractionState({
       status: "processing",
       attachmentId,
       message: "Reading receipt with AI...",
       data: null,
     });
-
-    extractionTimeoutRef.current = setTimeout(() => {
-      setExtractionState((prev) => {
-        if (prev.status !== "processing") return prev;
-        return {
-          ...prev,
-          status: "failed",
-          message: "AI timeout. Please retry AI reading.",
-        };
-      });
-      toast.error("AI timeout. Please retry AI reading.");
-    }, EXTRACTION_UI_TIMEOUT_MS);
 
     extractReceipt.mutate({ attachmentId });
   }
@@ -502,9 +486,11 @@ export default function ExpensesPage() {
   );
 
   const summaryCards = [
-    { label: "Total Expenses", value: formatCurrency(statsQuery.data?.totalExpenses ?? 0) },
+    { label: "Total Filtered Receipts & Expenses", value: formatCurrency(statsQuery.data?.totalExpenses ?? 0) },
+    { label: "Receipt Count", value: String(statsQuery.data?.expenseCount ?? 0) },
+    { label: "Reviewed Total", value: `${formatCurrency(statsQuery.data?.reviewedTotal ?? 0)} (${statsQuery.data?.reviewedCount ?? 0} reviewed)` },
+    { label: "Pending Review", value: `${formatCurrency(statsQuery.data?.unreviewedTotal ?? 0)} (${statsQuery.data?.unreviewedCount ?? 0} pending)` },
     { label: "Pending Uploads", value: String(statsQuery.data?.pendingUploads ?? 0) },
-    { label: "Expense Count", value: String(statsQuery.data?.expenseCount ?? 0) },
   ];
 
   return (
@@ -520,7 +506,7 @@ export default function ExpensesPage() {
         }
       />
 
-      <div className="grid gap-4 md:grid-cols-3 mb-6">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5 mb-6">
         {summaryCards.map((card) => (
           <div key={card.label} className="card p-4">
             <p className="text-xs uppercase tracking-wide text-slate-500">{card.label}</p>
@@ -633,6 +619,16 @@ export default function ExpensesPage() {
             <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
               <p className="font-medium">Needs review</p>
               <p>{extractionState.message || "Receipt information could not be fully verified."}</p>
+              {extractionState.status === "failed" && extractionState.attachmentId && (
+                <button
+                  type="button"
+                  className="btn btn-secondary mt-3"
+                  disabled={extractReceipt.isPending}
+                  onClick={() => beginExtraction(extractionState.attachmentId!)}
+                >
+                  Retry reading
+                </button>
+              )}
             </div>
           )}
 
@@ -748,12 +744,12 @@ export default function ExpensesPage() {
         <table className="w-full min-w-[720px] text-sm">
           <thead className="bg-slate-50 text-left">
             <tr>
-              <th className="px-4 py-2 font-medium">Vendor</th>
+              <th className="px-4 py-2 font-medium">Vendor & Expense</th>
               <th className="px-4 py-2 font-medium">Date</th>
-              <th className="px-4 py-2 font-medium text-right">Amount</th>
+              <th className="px-4 py-2 font-medium text-right">Receipt Total</th>
               <th className="px-4 py-2 font-medium">Category</th>
               <th className="px-4 py-2 font-medium">Job</th>
-              <th className="px-4 py-2 font-medium">Receipt</th>
+              <th className="px-4 py-2 font-medium">Receipt Document</th>
               <th className="px-4 py-2 font-medium">Status</th>
               <th></th>
             </tr>
@@ -772,71 +768,95 @@ export default function ExpensesPage() {
                 </td>
               </tr>
             ) : (
-              expenses.map((e) => (
-                <tr key={e.id} className="border-t border-slate-100">
-                  <td className="px-4 py-2">{e.vendor || "—"}</td>
-                  <td className="px-4 py-2">{formatDate(e.expenseDate)}</td>
-                  <td className="px-4 py-2 text-right">{formatCurrency(Number(e.amount))}</td>
-                  <td className="px-4 py-2 capitalize">{e.category.replaceAll("_", " ")}</td>
-                  <td className="px-4 py-2">{e.job?.name || "—"}</td>
-                  <td className="px-4 py-2">
-                    {e.attachments.length === 0 ? (
-                      <span className="text-slate-500">No</span>
-                    ) : (
-                      <div className="space-y-2">
-                        {e.attachments.slice(0, 2).map((attachment) => (
-                          <div key={attachment.id} className="rounded-md border border-slate-200 p-2">
-                            {attachment.mimeType.startsWith("image/") ? (
-                              <img
-                                src={`/api/expenses/attachments/${attachment.id}/preview`}
-                                alt={attachment.originalFilename}
-                                className="h-12 w-12 rounded object-cover border border-slate-200"
-                              />
-                            ) : (
-                              <div className="h-12 w-12 rounded border border-slate-200 text-xs flex items-center justify-center bg-slate-50">PDF</div>
-                            )}
-                            <div className="mt-1 text-xs text-slate-600 truncate max-w-[180px]">{attachment.originalFilename}</div>
-                            <div className="mt-1 flex flex-wrap gap-1">
-                              <a className="btn btn-secondary text-xs" href={`/api/expenses/attachments/${attachment.id}/preview`} target="_blank" rel="noreferrer">Preview</a>
-                              <a className="btn btn-secondary text-xs" href={`/api/expenses/attachments/${attachment.id}/download`} target="_blank" rel="noreferrer">Download</a>
-                              <button
-                                className="btn btn-secondary text-xs"
-                                onClick={() => {
-                                  setReplacementTarget({ expenseId: e.id, oldAttachmentId: attachment.id });
-                                  replaceInputRef.current?.click();
-                                }}
-                              >
-                                Replace
-                              </button>
-                              <button className="btn btn-danger text-xs" onClick={() => deleteAttachment.mutate({ id: attachment.id })}>Delete</button>
+              expenses.map((e) => {
+                const receiptInfo = computeReceiptTotal(e as any);
+                return (
+                  <tr key={e.id} className="border-t border-slate-100">
+                    <td className="px-4 py-2">
+                      <div className="font-medium text-slate-900">{e.vendor || "—"}</div>
+                      <div className="text-xs text-slate-500">Expense #{e.id}{e.receiptNumber ? ` · Ref: ${e.receiptNumber}` : ""}</div>
+                    </td>
+                    <td className="px-4 py-2">{formatDate(e.expenseDate)}</td>
+                    <td className="px-4 py-2 text-right">
+                      <div className="font-bold text-slate-900">{formatCurrency(receiptInfo.authoritativeTotal)}</div>
+                      {receiptInfo.subtotal != null && (
+                        <div className="text-xs text-slate-500">Subtotal: {formatCurrency(receiptInfo.subtotal)}</div>
+                      )}
+                      {receiptInfo.tax != null && receiptInfo.tax > 0 && (
+                        <div className="text-xs text-slate-500">Tax: {formatCurrency(receiptInfo.tax)}</div>
+                      )}
+                      {receiptInfo.hasMismatch && (
+                        <div className="mt-1 text-xs font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded">
+                          {receiptInfo.mismatchWarning} ({formatCurrency(receiptInfo.lineItemsTotal)})
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-2 capitalize">{e.category.replaceAll("_", " ")}</td>
+                    <td className="px-4 py-2">{e.job?.name || "—"}</td>
+                    <td className="px-4 py-2">
+                      {e.attachments.length === 0 ? (
+                        <span className="text-slate-500">No document</span>
+                      ) : (
+                        <div className="space-y-2">
+                          {e.attachments.slice(0, 2).map((attachment) => (
+                            <div key={attachment.id} className="rounded-md border border-slate-200 p-2">
+                              {attachment.mimeType.startsWith("image/") ? (
+                                <img
+                                  src={`/api/expenses/attachments/${attachment.id}/preview`}
+                                  alt={attachment.originalFilename}
+                                  className="h-12 w-12 rounded object-cover border border-slate-200"
+                                />
+                              ) : (
+                                <div className="h-12 w-12 rounded border border-slate-200 text-xs flex items-center justify-center bg-slate-50">PDF</div>
+                              )}
+                              <div className="mt-1 text-xs text-slate-600 truncate max-w-[180px]">{attachment.originalFilename}</div>
+                              <div className="mt-1 flex flex-wrap gap-1">
+                                <a className="btn btn-secondary text-xs" href={`/api/expenses/attachments/${attachment.id}/preview`} target="_blank" rel="noreferrer">Preview</a>
+                                <a className="btn btn-secondary text-xs" href={`/api/expenses/attachments/${attachment.id}/download`} target="_blank" rel="noreferrer">Download</a>
+                                <button
+                                  className="btn btn-secondary text-xs"
+                                  onClick={() => {
+                                    setReplacementTarget({ expenseId: e.id, oldAttachmentId: attachment.id });
+                                    replaceInputRef.current?.click();
+                                  }}
+                                >
+                                  Replace
+                                </button>
+                                <button className="btn btn-danger text-xs" onClick={() => deleteAttachment.mutate({ id: attachment.id })}>Delete</button>
+                              </div>
                             </div>
-                          </div>
-                        ))}
-                        {e.attachments.length > 2 && <p className="text-xs text-slate-500">+{e.attachments.length - 2} more</p>}
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-4 py-2 capitalize">{e.status}</td>
-                  <td className="px-4 py-2 text-right">
-                    {e.status === "pending" && (
-                      <div className="flex gap-1 justify-end">
-                        <button
-                          className="btn btn-secondary text-xs"
-                          onClick={() => approve.mutate({ id: e.id })}
-                        >
-                          Approve
-                        </button>
-                        <button
-                          className="btn btn-danger text-xs"
-                          onClick={() => reject.mutate({ id: e.id })}
-                        >
-                          Reject
-                        </button>
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              ))
+                          ))}
+                          {e.attachments.length > 2 && <p className="text-xs text-slate-500">+{e.attachments.length - 2} more</p>}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-2">
+                      <span className="capitalize font-medium text-slate-800">{e.status}</span>
+                      {e.reviewStatus && e.reviewStatus !== "pending_review" && (
+                        <div className="text-xs text-slate-500 capitalize">{e.reviewStatus.replaceAll("_", " ")}</div>
+                      )}
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      {e.status === "pending" && (
+                        <div className="flex gap-1 justify-end">
+                          <button
+                            className="btn btn-secondary text-xs"
+                            onClick={() => approve.mutate({ id: e.id })}
+                          >
+                            Approve
+                          </button>
+                          <button
+                            className="btn btn-danger text-xs"
+                            onClick={() => reject.mutate({ id: e.id })}
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>

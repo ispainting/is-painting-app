@@ -21,13 +21,14 @@ export default function InvoicesPage() {
               <th className="px-4 py-2 font-medium">Due</th>
               <th className="px-4 py-2 font-medium text-right">Total</th>
               <th className="px-4 py-2 font-medium text-right">Remaining</th>
+              <th className="px-4 py-2 font-medium text-right">Job</th>
             </tr>
           </thead>
           <tbody>
             {isLoading ? (
-              <tr><td colSpan={7} className="px-4 py-6 text-slate-500">Loading…</td></tr>
+              <tr><td colSpan={8} className="px-4 py-6 text-slate-500">Loading…</td></tr>
             ) : data?.length === 0 ? (
-              <tr><td colSpan={7} className="px-4 py-6 text-slate-500">No invoices yet. Create one from a job.</td></tr>
+              <tr><td colSpan={8} className="px-4 py-6 text-slate-500">No invoices yet. Create one from a job.</td></tr>
             ) : (
               data?.map((i) => (
                 <tr key={i.id} className="border-t border-slate-100">
@@ -40,6 +41,7 @@ export default function InvoicesPage() {
                   <td className="px-4 py-2">{i.dueDate ? formatDate(i.dueDate) : "—"}</td>
                   <td className="px-4 py-2 text-right">{formatCurrency(Number(i.total))}</td>
                   <td className="px-4 py-2 text-right">{formatCurrency(Number(i.amountRemaining))}</td>
+                  <td className="px-4 py-2 text-right"><Link href={`/jobs/${i.jobId}?tab=financials`} className="text-brand-700 hover:underline">View Job</Link></td>
                 </tr>
               ))
             )}

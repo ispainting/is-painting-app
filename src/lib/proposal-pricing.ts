@@ -19,6 +19,300 @@ export function round2(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
+export function normalizeProposalProjectName(projectName: string | null | undefined): string {
+  const normalized = (projectName ?? "").trim();
+  return normalized.length > 0 ? normalized : "Untitled Proposal";
+}
+
+export function calculateProductionHours(input: {
+  measurement: number;
+  productionRate: number;
+  basis: "SQFT_PER_HOUR" | "LINEAR_FT_PER_HOUR" | "HOURS_PER_ITEM" | "FIXED_HOURS";
+  fixedHours?: number;
+  adjustedHours?: number;
+}): number {
+  if (input.adjustedHours != null && Number.isFinite(input.adjustedHours) && input.adjustedHours >= 0) {
+    return round2(input.adjustedHours);
+  }
+
+  if (input.basis === "FIXED_HOURS") {
+    const hours = input.fixedHours ?? 0;
+    if (!Number.isFinite(hours) || hours < 0) {
+      throw new Error("Fixed hours must be a non-negative number.");
+    }
+    return round2(hours);
+  }
+
+  if (!Number.isFinite(input.measurement) || input.measurement < 0) {
+    throw new Error("Measurement must be a non-negative number.");
+  }
+  if (!Number.isFinite(input.productionRate) || input.productionRate <= 0) {
+    throw new Error("Production rate must be a positive number.");
+  }
+
+  if (input.basis === "HOURS_PER_ITEM") {
+    return round2(input.measurement * input.productionRate);
+  }
+
+  return round2(input.measurement / input.productionRate);
+}
+
+export function calculatePaintMaterialQuantity(input: {
+  measurement: number;
+  coats: number;
+  coveragePerUnit: number;
+  wastePercent?: number;
+  adjustedQuantity?: number;
+}): number {
+  if (input.adjustedQuantity != null && Number.isFinite(input.adjustedQuantity) && input.adjustedQuantity >= 0) {
+    return round2(input.adjustedQuantity);
+  }
+
+  if (!Number.isFinite(input.measurement) || input.measurement <= 0) {
+    throw new Error("Measurement must be greater than zero.");
+  }
+  if (!Number.isFinite(input.coats) || input.coats <= 0) {
+    throw new Error("Coats must be greater than zero.");
+  }
+  if (!Number.isFinite(input.coveragePerUnit) || input.coveragePerUnit <= 0) {
+    throw new Error("Coverage per unit must be greater than zero.");
+  }
+
+  const baseQty = (input.measurement * input.coats) / input.coveragePerUnit;
+  const wastePct = input.wastePercent ?? 0;
+  if (!Number.isFinite(wastePct) || wastePct < 0) {
+    throw new Error("Waste percent must be a non-negative number.");
+  }
+
+  return round2(baseQty * (1 + wastePct / 100));
+}
+
+export function calculateMarkupPrice(input: { cost: number; markupPercent: number }): number {
+  if (!Number.isFinite(input.cost) || input.cost < 0) {
+    throw new Error("Cost must be a non-negative number.");
+  }
+  if (!Number.isFinite(input.markupPercent) || input.markupPercent < 0) {
+    throw new Error("Markup percent must be a non-negative number.");
+  }
+  return round2(input.cost * (1 + input.markupPercent));
+}
+
+export function calculateGrossMarginPrice(input: { cost: number; desiredMarginPercent: number }): number {
+  if (!Number.isFinite(input.cost) || input.cost < 0) {
+    throw new Error("Cost must be a non-negative number.");
+  }
+  if (!Number.isFinite(input.desiredMarginPercent) || input.desiredMarginPercent < 0 || input.desiredMarginPercent >= 100) {
+    throw new Error("Desired gross margin must be between 0 and 100 exclusive.");
+  }
+
+  return round2(input.cost / (1 - input.desiredMarginPercent / 100));
+}
+
+export function calculateEffectiveSalesRate(input: { finalProposalPrice: number; estimatedPainterHours: number }): number {
+  if (!Number.isFinite(input.finalProposalPrice) || input.finalProposalPrice < 0) {
+    throw new Error("Final proposal price must be a non-negative number.");
+  }
+  if (!Number.isFinite(input.estimatedPainterHours) || input.estimatedPainterHours <= 0) {
+    return 0;
+  }
+  return round2(input.finalProposalPrice / input.estimatedPainterHours);
+}
+
+export type ProductionRateBasis =
+  | "SQFT_PER_HOUR"
+  | "LINEAR_FT_PER_HOUR"
+  | "HOURS_PER_ITEM"
+  | "FIXED_HOURS";
+
+export interface ProductionRateProfile {
+  category: string;
+  surfaceType: string;
+  basis: ProductionRateBasis;
+  coats?: number | null;
+  prepLevel?: string | null;
+  isActive: boolean;
+  isDefault: boolean;
+}
+
+function normalizedProfileValue(value: number | string | null | undefined): string {
+  return value == null || String(value).trim() === "" ? "__NULL__" : String(value).trim().toLowerCase();
+}
+
+export function productionRateProfileKey(rate: Pick<ProductionRateProfile, "category" | "surfaceType" | "basis" | "coats" | "prepLevel">): string {
+  return [rate.category, rate.surfaceType, rate.basis, normalizedProfileValue(rate.coats), normalizedProfileValue(rate.prepLevel)].join("|").toLowerCase();
+}
+
+export function findProductionRateProfileConflicts(rates: readonly ProductionRateProfile[]) {
+  const activeProfiles = new Set<string>();
+  const activeDefaults = new Set<string>();
+  const duplicateActiveProfiles: string[] = [];
+  const duplicateActiveDefaults: string[] = [];
+  const inactiveDefaults: string[] = [];
+
+  for (const rate of rates) {
+    const key = productionRateProfileKey(rate);
+    if (!rate.isActive && rate.isDefault) inactiveDefaults.push(key);
+    if (!rate.isActive) continue;
+    if (activeProfiles.has(key)) duplicateActiveProfiles.push(key);
+    activeProfiles.add(key);
+    if (rate.isDefault) {
+      if (activeDefaults.has(key)) duplicateActiveDefaults.push(key);
+      activeDefaults.add(key);
+    }
+  }
+
+  return { duplicateActiveProfiles, duplicateActiveDefaults, inactiveDefaults };
+}
+
+export function calculateDimensionMeasurements(input: {
+  length: number;
+  width: number;
+  height: number;
+  openingDeduction?: number;
+}) {
+  const values = [input.length, input.width, input.height, input.openingDeduction ?? 0];
+  if (values.some((value) => !Number.isFinite(value) || value < 0)) {
+    throw new Error("Room dimensions and opening deduction must be non-negative numbers.");
+  }
+  return {
+    ceilingArea: round2(input.length * input.width),
+    wallArea: round2(Math.max(0, 2 * (input.length + input.width) * input.height - (input.openingDeduction ?? 0))),
+  };
+}
+
+export function calculateMaterialQuantitySnapshot(input: {
+  measurement: number;
+  coats: number;
+  coveragePerUnit: number | null;
+  wastePercent: number;
+  adjustedQuantity?: number | null;
+}) {
+  if (input.adjustedQuantity != null) {
+    if (!Number.isFinite(input.adjustedQuantity) || input.adjustedQuantity < 0) {
+      throw new Error("Adjusted material quantity must be non-negative.");
+    }
+  }
+  const calculatedQuantity = input.coveragePerUnit == null
+    ? null
+    : calculatePaintMaterialQuantity({
+        measurement: input.measurement,
+        coats: input.coats,
+        coveragePerUnit: input.coveragePerUnit,
+        wastePercent: input.wastePercent,
+      });
+  return {
+    calculatedQuantity,
+    effectiveQuantity: input.adjustedQuantity != null ? round2(input.adjustedQuantity) : calculatedQuantity,
+  };
+}
+
+export interface ProposalEstimateInput {
+  workItems: Array<{
+    calculatedLaborHours: number;
+    adjustedLaborHours?: number | null;
+    directLaborCostRate: number;
+    materialsCost: number;
+  }>;
+  wcPercent: number;
+  overheadPercent: number;
+  subcontractorCost?: number;
+  equipmentCost?: number;
+  logisticsCost?: number;
+  miscDirectCost?: number;
+  pricingMethod: "GROSS_MARGIN" | "MARKUP";
+  targetMarginPercent?: number | null;
+  targetMarkupPercent?: number | null;
+  manualPriceOverride?: number | null;
+}
+
+export interface ProposalEstimateResult {
+  totalPainterHours: number;
+  directLaborCost: number;
+  wcCost: number;
+  laborBurdenCost: number;
+  loadedLaborCost: number;
+  materialCost: number;
+  subcontractorCost: number;
+  equipmentCost: number;
+  logisticsCost: number;
+  miscDirectCost: number;
+  directProjectCost: number;
+  overheadDollars: number;
+  trueJobCost: number;
+  recommendedSellingPrice: number | null;
+  finalProposalPrice: number | null;
+  grossProfitDollars: number | null;
+  grossMarginPercent: number | null;
+  effectiveSalesRate: number;
+}
+
+export function computeProposalEstimate(input: ProposalEstimateInput): ProposalEstimateResult {
+  if (!Number.isFinite(input.wcPercent) || input.wcPercent < 0) throw new Error("WC percent must be non-negative.");
+  if (!Number.isFinite(input.overheadPercent) || input.overheadPercent < 0) throw new Error("Overhead percent must be non-negative.");
+  const costs = [input.subcontractorCost ?? 0, input.equipmentCost ?? 0, input.logisticsCost ?? 0, input.miscDirectCost ?? 0];
+  if (costs.some((value) => !Number.isFinite(value) || value < 0)) throw new Error("Direct project costs must be non-negative.");
+
+  let totalPainterHours = 0;
+  let directLaborCost = 0;
+  let materialCost = 0;
+  for (const item of input.workItems) {
+    const effectiveHours = item.adjustedLaborHours ?? item.calculatedLaborHours;
+    if (!Number.isFinite(effectiveHours) || effectiveHours < 0) throw new Error("Labor hours must be non-negative.");
+    if (!Number.isFinite(item.directLaborCostRate) || item.directLaborCostRate < 0) throw new Error("Labor cost rate must be non-negative.");
+    if (!Number.isFinite(item.materialsCost) || item.materialsCost < 0) throw new Error("Material cost must be non-negative.");
+    totalPainterHours += effectiveHours;
+    directLaborCost += effectiveHours * item.directLaborCostRate;
+    materialCost += item.materialsCost;
+  }
+
+  totalPainterHours = round2(totalPainterHours);
+  directLaborCost = round2(directLaborCost);
+  materialCost = round2(materialCost);
+  const wcCost = round2(directLaborCost * (input.wcPercent / 100));
+  const laborBurdenCost = wcCost;
+  const loadedLaborCost = round2(directLaborCost + laborBurdenCost);
+  const subcontractorCost = round2(input.subcontractorCost ?? 0);
+  const equipmentCost = round2(input.equipmentCost ?? 0);
+  const logisticsCost = round2(input.logisticsCost ?? 0);
+  const miscDirectCost = round2(input.miscDirectCost ?? 0);
+  const directProjectCost = round2(loadedLaborCost + materialCost + subcontractorCost + equipmentCost + logisticsCost + miscDirectCost);
+  const overheadDollars = round2(directProjectCost * (input.overheadPercent / 100));
+  const trueJobCost = round2(directProjectCost + overheadDollars);
+
+  let recommendedSellingPrice: number | null = null;
+  if (input.pricingMethod === "GROSS_MARGIN" && input.targetMarginPercent != null) {
+    recommendedSellingPrice = calculateGrossMarginPrice({ cost: trueJobCost, desiredMarginPercent: input.targetMarginPercent });
+  } else if (input.pricingMethod === "MARKUP" && input.targetMarkupPercent != null) {
+    recommendedSellingPrice = calculateMarkupPrice({ cost: trueJobCost, markupPercent: input.targetMarkupPercent / 100 });
+  }
+  const finalProposalPrice = input.manualPriceOverride ?? recommendedSellingPrice;
+  const grossProfitDollars = finalProposalPrice == null ? null : round2(finalProposalPrice - trueJobCost);
+  const grossMarginPercent = finalProposalPrice && finalProposalPrice > 0 && grossProfitDollars != null
+    ? round2((grossProfitDollars / finalProposalPrice) * 100)
+    : null;
+
+  return {
+    totalPainterHours,
+    directLaborCost,
+    wcCost,
+    laborBurdenCost,
+    loadedLaborCost,
+    materialCost,
+    subcontractorCost,
+    equipmentCost,
+    logisticsCost,
+    miscDirectCost,
+    directProjectCost,
+    overheadDollars,
+    trueJobCost,
+    recommendedSellingPrice,
+    finalProposalPrice,
+    grossProfitDollars,
+    grossMarginPercent,
+    effectiveSalesRate: finalProposalPrice == null ? 0 : calculateEffectiveSalesRate({ finalProposalPrice, estimatedPainterHours: totalPainterHours }),
+  };
+}
+
 export interface MaterialLineInput {
   quantity: number;
   unitCost: number;

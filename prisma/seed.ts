@@ -16,6 +16,11 @@ async function main() {
       companyPhone: "(555) 123-4567",
       companyEmail: "info@ispainting.com",
       googleReviewUrl: "https://g.page/r/your-business/review",
+      defaultDesiredProfitMarginPercent: 35,
+      defaultGeneralLiabilityMode: "PERCENT_OF_REVENUE",
+      defaultMassTaxRate: 5,
+      defaultFederalTaxRate: 12,
+      defaultWorkDayHours: 8,
     },
   });
 
@@ -124,6 +129,48 @@ async function main() {
       { name: "FrogTape 1.88in", category: "tape", unit: "roll", costPerUnit: 7, currentStock: 18, minStockLevel: 6 },
     ],
   });
+
+  const unitTemplates = [
+    {
+      templateKey: "cabinet-refinishing-milesi-door",
+      serviceName: "Cabinet refinishing",
+      variantName: "Milesi",
+      unitLabel: "Door",
+      defaultPricePerUnit: 135,
+      rateSource: "SEEDED" as const,
+    },
+    {
+      templateKey: "cabinet-refinishing-advanced-door",
+      serviceName: "Cabinet refinishing",
+      variantName: "Advanced",
+      unitLabel: "Door",
+      defaultPricePerUnit: 110,
+      rateSource: "SEEDED" as const,
+    },
+    {
+      templateKey: "cabinet-refinishing-gallery-door",
+      serviceName: "Cabinet refinishing",
+      variantName: "Gallery",
+      unitLabel: "Door",
+      defaultPricePerUnit: 125,
+      rateSource: "SEEDED" as const,
+    },
+  ];
+
+  for (const template of unitTemplates) {
+    await prisma.unitPriceTemplate.upsert({
+      where: { templateKey: template.templateKey },
+      update: {
+        serviceName: template.serviceName,
+        variantName: template.variantName,
+        unitLabel: template.unitLabel,
+        defaultPricePerUnit: template.defaultPricePerUnit,
+        rateSource: template.rateSource,
+        isActive: true,
+      },
+      create: template,
+    });
+  }
 
   // Automation templates
   const templates: { name: any; displayName: string; trigger: string }[] = [
