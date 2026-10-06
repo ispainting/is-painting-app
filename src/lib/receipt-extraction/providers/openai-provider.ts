@@ -20,6 +20,17 @@ function getApiKey() {
   return key;
 }
 
+// Boolean-only diagnostics for logs; never returns or logs the key value itself.
+export function describeOpenAiApiKeyConfiguration() {
+  const raw = process.env.OPENAI_API_KEY;
+  const trimmed = (raw ?? "").trim();
+  return {
+    exists: raw !== undefined,
+    nonEmpty: trimmed.length > 0,
+    hasExpectedPrefix: trimmed.startsWith("sk-"),
+  };
+}
+
 function extractJsonFromOutput(payload: any): unknown {
   if (typeof payload?.output_text === "string" && payload.output_text.trim()) {
     return tryParseJson(payload.output_text);

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { OpenAiReceiptExtractionProvider } from "./providers/openai-provider";
+import { OpenAiReceiptExtractionProvider, describeOpenAiApiKeyConfiguration } from "./providers/openai-provider";
 import { normalizeExtractionResponse, shouldMarkNeedsReview } from "./normalization";
 import { ReceiptExtractionError } from "./errors";
 
@@ -232,5 +232,38 @@ describe("receipt extraction error handling", () => {
     expect(technicalError.message).toContain("credit_balance_exhausted");
     expect(safeUserFacingMessage(technicalError)).not.toContain("credit_balance_exhausted");
     expect(safeUserFacingMessage(technicalError)).not.toContain("429");
+  });
+});
+
+describe("describeOpenAiApiKeyConfiguration", () => {
+  const originalKey = process.env.OPENAI_API_KEY;
+
+  afterEach(() => {
+    if (originalKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = originalKey;
+  });
+
+  it("reports absence without exposing any value", () => {
+    delete process.env.OPENAI_API_KEY;
+    const diagnostics = describeOpenAiApiKeyConfiguration();
+    expect(diagnostics).toEqual({ exists: false, nonEmpty: false, hasExpectedPrefix: false });
+    expect(Object.values(diagnostics).every((value) => typeof value === "boolean")).toBe(true);
+  });
+
+  it("reports a present but whitespace-only value as invalid", () => {
+    process.env.OPENAI_API_KEY = "   ";
+    expect(describeOpenAiApiKeyConfiguration()).toEqual({ exists: true, nonEmpty: false, hasExpectedPrefix: false });
+  });
+
+  it("reports a validly formatted key without ever including it in the result", () => {
+    process.env.OPENAI_API_KEY = "sk-test-abc123";
+    const diagnostics = describeOpenAiApiKeyConfiguration();
+    expect(diagnostics).toEqual({ exists: true, nonEmpty: true, hasExpectedPrefix: true });
+    expect(JSON.stringify(diagnostics)).not.toContain("sk-test-abc123");
+  });
+
+  it("reports a placeholder or wrong-prefix value as invalid", () => {
+    process.env.OPENAI_API_KEY = "[SENSITIVE]";
+    expect(describeOpenAiApiKeyConfiguration()).toEqual({ exists: true, nonEmpty: true, hasExpectedPrefix: false });
   });
 });

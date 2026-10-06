@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { runReceiptExtractionWorkflow } from "./workflow";
+import { ReceiptExtractionError } from "./errors";
 import type { ReceiptExtractionResult } from "./types";
 
 const attachment = {
@@ -88,5 +89,21 @@ describe("receipt extraction workflow", () => {
     expect(event).toMatchObject({ requestId: "req-log", attachmentId: 42, category: "malformed_response", mimeType: "image/png", sizeBytes: 1024 });
     expect(JSON.stringify(event)).not.toContain(attachment.storagePath);
     expect(JSON.stringify(event)).not.toContain("Harbor Supply");
+  });
+
+  it("includes the safe technical logMessage so a failure category is never left opaque", async () => {
+    const log = vi.fn();
+    const deps = dependencies({
+      extract: vi.fn().mockRejectedValue(new ReceiptExtractionError({
+        kind: "missing_configuration",
+        userMessage: "Receipt scanning is not configured right now. The receipt is attached, and you can enter the expense manually.",
+        logMessage: 'Unsupported receipt extraction provider configured: "manus". Expected "openai".',
+      })),
+      log,
+    });
+    await runReceiptExtractionWorkflow(attachment, "req-config", deps);
+    const event = log.mock.calls[0][0];
+    expect(event.category).toBe("missing_configuration");
+    expect(event.logMessage).toContain("manus");
   });
 });

@@ -81,6 +81,8 @@ export async function runReceiptExtractionWorkflow(
       mimeType: attachment.mimeType,
       sizeBytes: attachment.sizeBytes,
       elapsedMs: Date.now() - startedAt,
+      // Safe, secret-free technical detail so a failure category is never opaque.
+      logMessage: normalized.logMessage,
     });
     await dependencies.saveFailure(normalized.userMessage);
     return { ok: false, error: normalized };

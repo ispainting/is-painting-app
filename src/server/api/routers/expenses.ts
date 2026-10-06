@@ -5,6 +5,7 @@ import {
   getAttachmentDownloadUrl,
 } from "@/lib/expense-attachments";
 import { buildConfidenceByField, extractReceipt } from "@/lib/receipt-extraction";
+import { describeOpenAiApiKeyConfiguration } from "@/lib/receipt-extraction/providers/openai-provider";
 import { runReceiptExtractionWorkflow } from "@/lib/receipt-extraction/workflow";
 import { getReceiptStorageProvider } from "@/lib/receipt-storage";
 import { adminProcedure, protectedProcedure, router } from "../trpc";
@@ -379,8 +380,11 @@ export const expensesRouter = router({
           });
         },
         log: (event) => {
-          if (event.event === "receipt_extraction_failed") console.error(event);
-          else console.info(event);
+          if (event.event === "receipt_extraction_failed") {
+            console.error({ ...event, openAiKeyConfig: describeOpenAiApiKeyConfiguration() });
+          } else {
+            console.info(event);
+          }
         },
       });
 
