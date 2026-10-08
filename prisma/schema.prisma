@@ -767,6 +767,7 @@ model Opportunity {
   source             String?             @db.VarChar(100)
   assignedToId       Int?
   notes              String?             @db.Text
+  leadReceivedAt     DateTime?           @default(now())
   lastStageChangedAt DateTime?
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
@@ -779,6 +780,7 @@ model Opportunity {
   @@index([customerId])
   @@index([pipeline, stage])
   @@index([stage])
+  @@index([leadReceivedAt])
 }
 
 model Proposal {

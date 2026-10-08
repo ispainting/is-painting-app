@@ -513,6 +513,7 @@ export const customersRouter = router({
             stage: true,
             leadValue: true,
             source: true,
+            leadReceivedAt: true,
             createdAt: true,
             updatedAt: true,
             assignedTo: { select: { id: true, name: true } },

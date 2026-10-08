@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
+import { jobCanonicalTotal } from "@/lib/job-total";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { toast } from "sonner";
 import { JobExpenseEntry } from "@/components/expenses/JobExpenseEntry";
@@ -203,9 +204,7 @@ export default function JobDetailPage() {
     }
   };
 
-  const contractOrTotalAmount = Number(job.contractAmount) > 0
-    ? Number(job.contractAmount)
-    : Number(job.totalEstimate);
+  const contractOrTotalAmount = jobCanonicalTotal(job);
   const estimatedMaterials = Number(job.materialsBudget);
   const estimatedLabor = Number(job.laborBudget);
   const estimatedSubcontractor = Number(job.subcontractorBudget || 0);

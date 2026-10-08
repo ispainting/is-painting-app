@@ -1017,6 +1017,20 @@ function PaymentTable({ payments }: { payments: any[] }) {
 }
 
 function PipelineCards({ opportunities }: { opportunities: any[] }) {
+  const utils = api.useUtils();
+  const updateOpportunity = api.opportunities.update.useMutation({
+    onSuccess: async () => {
+      await Promise.all([
+        utils.customers.profile.invalidate(),
+        utils.opportunities.list.invalidate(),
+        utils.business.analytics.invalidate(),
+        utils.reports.dashboard.invalidate(),
+      ]);
+      toast.success("Lead received date updated");
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   return (
     <SectionCard title="Opportunities">
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -1026,6 +1040,16 @@ function PipelineCards({ opportunities }: { opportunities: any[] }) {
             <div className="mt-1 text-sm text-slate-500">{opportunity.stage.replace(/_/g, " ")} • {opportunity.status}</div>
             <div className="mt-3 text-sm text-slate-600">Lead value: {formatCurrency(opportunity.leadValue)}</div>
             <div className="text-sm text-slate-600">Assigned to: {opportunity.assignedTo?.name || "Unassigned"}</div>
+            <div className="mt-2">
+              <label className="label">Lead received</label>
+              <input
+                type="date"
+                className="input"
+                value={opportunity.leadReceivedAt ? new Date(opportunity.leadReceivedAt).toISOString().slice(0, 10) : ""}
+                onChange={(event) => updateOpportunity.mutate({ id: opportunity.id, data: { leadReceivedAt: event.target.value ? new Date(event.target.value) : null } })}
+                disabled={updateOpportunity.isPending}
+              />
+            </div>
             <div className="mt-2 text-xs text-slate-500">Created {formatDate(opportunity.createdAt)}</div>
           </div>
         )) : <EmptyState text="No opportunities linked to this customer yet." />}

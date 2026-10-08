@@ -6,6 +6,7 @@ import { useState } from "react";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { jobCanonicalTotal } from "@/lib/job-total";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -43,6 +44,8 @@ export default function JobsPage() {
       toast.success("Job archived");
       utils.jobs.list.invalidate();
       utils.jobs.statusCounts.invalidate();
+      utils.business.analytics.invalidate();
+      utils.reports.dashboard.invalidate();
       setConfirmDeleteOpen(false);
       setSelectedJob(null);
     },
@@ -53,6 +56,8 @@ export default function JobsPage() {
       toast.success("Job created");
       utils.jobs.list.invalidate();
       utils.jobs.statusCounts.invalidate();
+      utils.business.analytics.invalidate();
+      utils.reports.dashboard.invalidate();
       setOpen(false);
     },
     onError: (e) => toast.error(e.message),
@@ -189,7 +194,7 @@ export default function JobsPage() {
                   <td className="px-4 py-2">
                     <span className="badge bg-slate-100 text-slate-700 capitalize">{j.status}</span>
                   </td>
-                  <td className="px-4 py-2 text-right">{formatCurrency(Number(j.totalEstimate))}</td>
+                  <td className="px-4 py-2 text-right">{formatCurrency(jobCanonicalTotal(j))}</td>
                   <td className="px-4 py-2 text-slate-500">{formatDate(j.createdAt)}</td>
                   <td className="px-4 py-2 text-right">
                     <div className="inline-flex items-center gap-2">

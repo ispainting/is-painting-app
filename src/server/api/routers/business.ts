@@ -251,13 +251,14 @@ async function loadBusinessHistory(prisma: any, start: Date, end: Date) {
       },
     }),
     prisma.opportunity.findMany({
-      where: { createdAt: { gte: start, lte: end } },
+      where: { leadReceivedAt: { gte: start, lte: end } },
       select: {
         id: true,
         source: true,
         stage: true,
         status: true,
         leadValue: true,
+        leadReceivedAt: true,
         createdAt: true,
         updatedAt: true,
         customer: { select: { id: true, name: true, source: true } },
@@ -406,7 +407,7 @@ function currentPeriodMetrics(range: { start: Date; end: Date }, history: Awaite
   const payments = history.payments.filter((item: any) => isInRange(item.dateReceived, range.start, range.end));
   const expenses = history.expenses.filter((item: any) => isInRange(item.expenseDate, range.start, range.end));
   const proposals = history.proposals.filter((item: any) => isInRange(item.createdAt, range.start, range.end) || isInRange(item.sentAt, range.start, range.end) || isInRange(item.updatedAt, range.start, range.end));
-  const opportunities = history.opportunities.filter((item: any) => isInRange(item.createdAt, range.start, range.end));
+  const opportunities = history.opportunities.filter((item: any) => isInRange(item.leadReceivedAt ?? item.createdAt, range.start, range.end));
   const jobs = history.jobs.filter((item: any) => isInRange(item.createdAt, range.start, range.end) || isInRange(item.startDate, range.start, range.end) || isInRange(item.endDate, range.start, range.end));
   const timeEntries = history.timeEntries.filter((item: any) => isInRange(item.clockIn, range.start, range.end));
 
@@ -480,7 +481,7 @@ function buildLeadSourceRows(range: { start: Date; end: Date }, history: Awaited
   };
 
   for (const opportunity of history.opportunities) {
-    if (!isInRange(opportunity.createdAt, range.start, range.end)) continue;
+    if (!isInRange(opportunity.leadReceivedAt ?? opportunity.createdAt, range.start, range.end)) continue;
     const bucket = ensure(normalizeSource(opportunity.source ?? opportunity.customer?.source));
     bucket.leads += 1;
     if (opportunity.stage === "estimate_sent") bucket.estimates += 1;
@@ -702,7 +703,7 @@ export const businessRouter = router({
       return {
         key: point.key,
         label: point.label,
-        leadsReceived: history.opportunities.filter((opportunity: any) => isInRange(opportunity.createdAt, startOfMonth(monthDate), endOfMonth(monthDate))).length,
+        leadsReceived: history.opportunities.filter((opportunity: any) => isInRange(opportunity.leadReceivedAt ?? opportunity.createdAt, startOfMonth(monthDate), endOfMonth(monthDate))).length,
         estimatesCreated: monthProposals.filter((proposal: any) => isInRange(proposal.createdAt, startOfMonth(monthDate), endOfMonth(monthDate))).length,
         proposalsSent: monthProposals.filter((proposal: any) => isInRange(proposal.sentAt, startOfMonth(monthDate), endOfMonth(monthDate))).length,
         proposalsWon: monthProposals.filter((proposal: any) => ["approved", "converted"].includes(proposal.status) && isInRange(proposal.approvedAt ?? proposal.updatedAt, startOfMonth(monthDate), endOfMonth(monthDate))).length,

@@ -98,6 +98,56 @@ export const paymentsRouter = router({
       }
     }),
 
+  update: adminProcedure
+    .input(z.object({
+      id: z.number(),
+      invoiceId: z.number().nullable().optional(),
+      amount: z.number().positive(),
+      dateReceived: z.coerce.date(),
+      method: MethodZ,
+      checkNumber: z.string().optional(),
+      bank: z.string().optional(),
+      memo: z.string().optional(),
+      notes: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return ctx.prisma.$transaction(async (tx) => {
+        const existing = await tx.payment.findUnique({ where: { id: input.id }, select: { id: true, jobId: true, invoiceId: true, amount: true } });
+        if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Payment not found." });
+
+        const nextInvoiceId = input.invoiceId ?? existing.invoiceId ?? null;
+        const nextInvoice = nextInvoiceId
+          ? await tx.invoice.findUnique({ where: { id: nextInvoiceId }, select: { id: true, jobId: true, total: true, status: true } })
+          : null;
+        if (nextInvoiceId && !nextInvoice) throw new TRPCError({ code: "NOT_FOUND", message: "Invoice not found." });
+        if (nextInvoice && nextInvoice.jobId !== existing.jobId) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Invoice does not belong to this job." });
+        }
+        if (nextInvoice?.status === "cancelled") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Cannot record a payment against a cancelled invoice." });
+        }
+
+        const previousInvoiceId = existing.invoiceId;
+        const payment = await tx.payment.update({
+          where: { id: input.id },
+          data: {
+            invoiceId: nextInvoiceId,
+            amount: input.amount,
+            dateReceived: input.dateReceived,
+            method: input.method,
+            checkNumber: input.checkNumber,
+            bank: input.bank,
+            memo: input.memo,
+            notes: input.notes,
+          },
+        });
+
+        if (previousInvoiceId) await recomputeInvoice(tx, previousInvoiceId);
+        if (nextInvoiceId && nextInvoiceId !== previousInvoiceId) await recomputeInvoice(tx, nextInvoiceId);
+        return payment;
+      }, { isolationLevel: "Serializable" });
+    }),
+
   remove: adminProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
     return ctx.prisma.$transaction(async (tx) => {
       const payment = await tx.payment.findUnique({ where: { id: input.id }, select: { id: true, invoiceId: true } });

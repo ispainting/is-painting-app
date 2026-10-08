@@ -34,6 +34,7 @@ export const opportunitiesRouter = router({
       source: z.string().optional(),
       assignedToId: z.number().optional(),
       notes: z.string().optional(),
+      leadReceivedAt: z.coerce.date().optional(),
     }))
     .mutation(({ ctx, input }) => ctx.prisma.opportunity.create({ data: input })),
 
@@ -60,6 +61,7 @@ export const opportunitiesRouter = router({
         source: z.string().optional(),
         assignedToId: z.number().optional(),
         notes: z.string().optional(),
+        leadReceivedAt: z.coerce.date().nullable().optional(),
       }),
     }))
     .mutation(({ ctx, input }) =>
