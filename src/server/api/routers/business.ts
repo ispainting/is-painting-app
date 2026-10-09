@@ -1,6 +1,8 @@
 import { endOfMonth, endOfQuarter, endOfYear, format, startOfMonth, startOfQuarter, startOfYear, subMonths, subYears } from "date-fns";
 import { z } from "zod";
 import { router, adminProcedure } from "../trpc";
+import { getLifecycleDate } from "@/lib/job-lifecycle";
+import { jobCanonicalTotal } from "@/lib/job-total";
 
 const SURVIVAL_TARGET = 40_000;
 const MONTHLY_GOAL = 65_000;
@@ -114,8 +116,7 @@ function payrollForEntries(entries: Array<{ user: { hourlyRate: unknown }; hourl
 }
 
 function jobValue(job: { contractAmount: unknown; totalEstimate: unknown }) {
-  const contract = money(job.contractAmount);
-  return contract > 0 ? contract : money(job.totalEstimate);
+  return jobCanonicalTotal(job);
 }
 
 function calcRange(periodType: "month" | "quarter" | "year" | "custom", input: z.infer<typeof analyticsInput>, now: Date) {
@@ -408,7 +409,7 @@ function currentPeriodMetrics(range: { start: Date; end: Date }, history: Awaite
   const expenses = history.expenses.filter((item: any) => isInRange(item.expenseDate, range.start, range.end));
   const proposals = history.proposals.filter((item: any) => isInRange(item.createdAt, range.start, range.end) || isInRange(item.sentAt, range.start, range.end) || isInRange(item.updatedAt, range.start, range.end));
   const opportunities = history.opportunities.filter((item: any) => isInRange(item.leadReceivedAt ?? item.createdAt, range.start, range.end));
-  const jobs = history.jobs.filter((item: any) => isInRange(item.createdAt, range.start, range.end) || isInRange(item.startDate, range.start, range.end) || isInRange(item.endDate, range.start, range.end));
+  const jobs = history.jobs.filter((item: any) => isInRange(getLifecycleDate(item, "leadReceivedAt") ?? item.createdAt, range.start, range.end) || isInRange(getLifecycleDate(item, "workStartedAt"), range.start, range.end) || isInRange(item.startDate, range.start, range.end) || isInRange(item.endDate, range.start, range.end));
   const timeEntries = history.timeEntries.filter((item: any) => isInRange(item.clockIn, range.start, range.end));
 
   const revenue = payments.reduce((sum: number, payment: any) => sum + money(payment.amount), 0);
@@ -565,7 +566,7 @@ function buildCustomerAnalytics(range: { start: Date; end: Date }, history: Awai
   }
 
   for (const job of history.jobs) {
-    if (!isInRange(job.createdAt, range.start, range.end) && !isInRange(job.startDate, range.start, range.end) && !isInRange(job.endDate, range.start, range.end)) continue;
+    if (!isInRange(getLifecycleDate(job, "leadReceivedAt") ?? job.createdAt, range.start, range.end) && !isInRange(getLifecycleDate(job, "workStartedAt"), range.start, range.end) && !isInRange(job.startDate, range.start, range.end) && !isInRange(job.endDate, range.start, range.end)) continue;
     const revenue = revenueByJob.get(job.id) ?? 0;
     const expenses = expenseByJob.get(job.id) ?? 0;
     const payroll = payrollByJob.get(job.id) ?? 0;
@@ -586,7 +587,7 @@ function buildCustomerAnalytics(range: { start: Date; end: Date }, history: Awai
 
   const repeatCustomers = topCustomers.filter((customer) => customer.jobs > 1).length;
   const largestJobs = history.jobs
-    .filter((job: any) => isInRange(job.createdAt, range.start, range.end) || isInRange(job.startDate, range.start, range.end) || isInRange(job.endDate, range.start, range.end))
+    .filter((job: any) => isInRange(getLifecycleDate(job, "leadReceivedAt") ?? job.createdAt, range.start, range.end) || isInRange(getLifecycleDate(job, "workStartedAt"), range.start, range.end) || isInRange(job.startDate, range.start, range.end) || isInRange(job.endDate, range.start, range.end))
     .map((job: any) => ({ name: job.name, customer: job.customer.name, value: jobValue(job) }))
     .sort((a: any, b: any) => b.value - a.value)
     .slice(0, 10);

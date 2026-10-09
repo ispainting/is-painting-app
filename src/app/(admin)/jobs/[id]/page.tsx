@@ -6,6 +6,7 @@ import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { jobCanonicalTotal } from "@/lib/job-total";
+import { getLifecycleDate, toDateInputValue } from "@/lib/job-lifecycle";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { toast } from "sonner";
 import { JobExpenseEntry } from "@/components/expenses/JobExpenseEntry";
@@ -90,7 +91,22 @@ export default function JobDetailPage() {
     onSuccess: () => {
       utils.jobs.byId.invalidate({ id });
       utils.jobs.list.invalidate();
+      utils.business.analytics.invalidate();
+      utils.reports.dashboard.invalidate();
       toast.success("Status updated");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const updateLifecycleDates = api.jobs.updateLifecycleDates.useMutation({
+    onSuccess: async () => {
+      await Promise.all([
+        utils.jobs.byId.invalidate({ id }),
+        utils.jobs.list.invalidate(),
+        utils.business.analytics.invalidate(),
+        utils.reports.dashboard.invalidate(),
+      ]);
+      toast.success("Lifecycle dates updated");
     },
     onError: (e) => toast.error(e.message),
   });
@@ -205,6 +221,9 @@ export default function JobDetailPage() {
   };
 
   const contractOrTotalAmount = jobCanonicalTotal(job);
+  const leadReceivedAt = getLifecycleDate(job, "leadReceivedAt");
+  const proposalSentAt = getLifecycleDate(job, "proposalSentAt");
+  const workStartedAt = getLifecycleDate(job, "workStartedAt");
   const estimatedMaterials = Number(job.materialsBudget);
   const estimatedLabor = Number(job.laborBudget);
   const estimatedSubcontractor = Number(job.subcontractorBudget || 0);
@@ -337,6 +356,9 @@ export default function JobDetailPage() {
               <Stat label="Zip Code" value={zipCode} />
               <Stat label="Status" value={job.status} />
               <Stat label="Contract" value={formatCurrency(contractOrTotalAmount)} />
+              <Stat label="Lead received" value={leadReceivedAt ? formatDateTime(leadReceivedAt).slice(0, 10) : "Not recorded"} />
+              <Stat label="Proposal sent" value={proposalSentAt ? formatDateTime(proposalSentAt).slice(0, 10) : "Not recorded"} />
+              <Stat label="Work started" value={workStartedAt ? formatDateTime(workStartedAt).slice(0, 10) : "Not recorded"} />
               <Stat label="Estimated total cost" value={formatCurrency(estimatedTotalCost)} />
               <Stat label="Estimated margin" value={`${estimatedMarginPct.toFixed(1)}%`} />
               <Stat label="Actual total cost" value={formatCurrency(actualTotalCost)} />
@@ -384,6 +406,25 @@ export default function JobDetailPage() {
                 {jobData.assignments.map((a) => (
                   <li key={a.id}>{a.user.name}</li>
                 ))}
+
+          <div className="card p-5 md:col-span-3">
+            <h2 className="text-base font-semibold mb-3">Lifecycle Dates</h2>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div>
+                <label className="label">Lead received</label>
+                <input type="date" className="input" defaultValue={toDateInputValue(leadReceivedAt)} onChange={(event) => updateLifecycleDates.mutate({ id, leadReceivedAt: event.target.value ? new Date(event.target.value) : null })} />
+              </div>
+              <div>
+                <label className="label">Proposal sent</label>
+                <input type="date" className="input" defaultValue={toDateInputValue(proposalSentAt)} onChange={(event) => updateLifecycleDates.mutate({ id, proposalSentAt: event.target.value ? new Date(event.target.value) : null })} />
+              </div>
+              <div>
+                <label className="label">Work started</label>
+                <input type="date" className="input" defaultValue={toDateInputValue(workStartedAt)} onChange={(event) => updateLifecycleDates.mutate({ id, workStartedAt: event.target.value ? new Date(event.target.value) : null })} />
+              </div>
+            </div>
+            <p className="mt-3 text-xs text-slate-500">Dates are displayed in the business timezone and feed monthly reporting.</p>
+          </div>
               </ul>
             )}
           </div>

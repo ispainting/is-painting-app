@@ -1543,6 +1543,7 @@ export const proposalsRouter = router({
           laborBudget: seed.laborBudget,
           totalEstimate: seed.totalEstimate,
           contractAmount: seed.totalEstimate,
+          proposalSentAt: proposal.sentAt ?? null,
         },
       });
 
@@ -1573,6 +1574,14 @@ export const proposalsRouter = router({
 
       return createdJob;
     });
+
+    const linkedOpportunity = await ctx.prisma.opportunity.findFirst({
+      where: { job: { id: job.id } },
+      select: { leadReceivedAt: true },
+    });
+    if (linkedOpportunity?.leadReceivedAt) {
+      await ctx.prisma.job.update({ where: { id: job.id }, data: { leadReceivedAt: linkedOpportunity.leadReceivedAt } });
+    }
 
     return job;
   }),

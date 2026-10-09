@@ -244,8 +244,26 @@ export const jobsRouter = router({
       });
     }),
 
+  updateLifecycleDates: adminProcedure
+    .input(z.object({
+      id: z.number(),
+      leadReceivedAt: z.coerce.date().nullable().optional(),
+      proposalSentAt: z.coerce.date().nullable().optional(),
+      workStartedAt: z.coerce.date().nullable().optional(),
+    }))
+    .mutation(({ ctx, input }) =>
+      ctx.prisma.job.update({
+        where: { id: input.id },
+        data: {
+          leadReceivedAt: input.leadReceivedAt,
+          proposalSentAt: input.proposalSentAt,
+          workStartedAt: input.workStartedAt,
+        },
+      })
+    ),
+
   setStatus: adminProcedure
-    .input(z.object({ id: z.number(), status: JobStatusZ }))
+    .input(z.object({ id: z.number(), status: JobStatusZ, workStartedAt: z.coerce.date().optional() }))
     .mutation(async ({ ctx, input }) => {
       const data: any = { status: input.status };
       if (input.status === "sent") data.sentAt = new Date();
@@ -256,6 +274,10 @@ export const jobsRouter = router({
           data.contractAmount = j.totalEstimate;
           data.budgetLocked = true;
         }
+      }
+      if (input.status === "active") {
+        const j = await ctx.prisma.job.findUnique({ where: { id: input.id }, select: { workStartedAt: true } });
+        if (j && !j.workStartedAt && input.workStartedAt) data.workStartedAt = input.workStartedAt;
       }
       return ctx.prisma.job.update({ where: { id: input.id }, data });
     }),
