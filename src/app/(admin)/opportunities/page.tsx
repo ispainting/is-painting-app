@@ -15,8 +15,12 @@ export default function OpportunitiesPage() {
   const utils = api.useUtils();
   const { data, isLoading } = api.opportunities.list.useQuery();
   const setStage = api.opportunities.setStage.useMutation({
-    onSuccess: () => {
-      utils.opportunities.list.invalidate();
+    onSuccess: async () => {
+      await Promise.all([
+        utils.opportunities.list.invalidate(),
+        utils.business.analytics.invalidate(),
+        utils.reports.dashboard.invalidate(),
+      ]);
       toast.success("Stage updated");
     },
   });

@@ -19,12 +19,12 @@ function toStorageError(error: unknown): Error {
   if (error instanceof Error) {
     if (error.message.toLowerCase().includes("token")) {
       return new Error(
-        "Vercel Blob credentials are not available. Ensure Blob is connected to this project in Vercel, or set BLOB_READ_WRITE_TOKEN for local/non-integrated environments."
+        "Receipt storage credentials are not available. Ensure private Vercel Blob is connected to this project."
       );
     }
-    return error;
+    return new Error(`Receipt storage Blob operation failed: ${error.message}`);
   }
-  return new Error("Vercel Blob operation failed.");
+  return new Error("Receipt storage Blob operation failed.");
 }
 
 async function fetchBlobObject(objectKey: string): Promise<ReceiptObject> {
@@ -40,7 +40,7 @@ async function fetchBlobObject(objectKey: string): Promise<ReceiptObject> {
   }
 
   if (!result || result.statusCode !== 200 || !result.stream) {
-    throw new Error("Blob fetch failed.");
+    throw new Error(`Receipt storage Blob fetch failed with status ${result?.statusCode ?? "unknown"}.`);
   }
 
   const contentType = result.blob.contentType || "application/octet-stream";

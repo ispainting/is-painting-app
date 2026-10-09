@@ -513,6 +513,7 @@ export const customersRouter = router({
             stage: true,
             leadValue: true,
             source: true,
+            leadReceivedAt: true,
             createdAt: true,
             updatedAt: true,
             assignedTo: { select: { id: true, name: true } },
@@ -570,6 +571,7 @@ export const customersRouter = router({
           paidHours: true,
           grossHours: true,
           hoursWorked: true,
+          hourlyRateSnapshot: true,
           user: { select: { hourlyRate: true } },
         },
         take: 1000,
@@ -593,7 +595,7 @@ export const customersRouter = router({
 
     const totalRevenue = payments.reduce((sum, payment) => sum + money(payment.amount), 0);
     const totalExpenses = expenses.reduce((sum, expense) => sum + money(expense.amount), 0);
-    const totalPayroll = timeEntries.reduce((sum, entry) => sum + money(entry.user.hourlyRate) * totalHours(entry), 0);
+    const totalPayroll = timeEntries.reduce((sum, entry) => sum + money(entry.hourlyRateSnapshot ?? entry.user.hourlyRate) * totalHours(entry), 0);
     const totalProfit = totalRevenue - totalExpenses - totalPayroll;
     const totalJobs = customer.jobs.length;
     const jobsCompleted = customer.jobs.filter((job) => job.status === "completed").length;

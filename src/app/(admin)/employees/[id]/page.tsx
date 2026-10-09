@@ -73,6 +73,7 @@ export default function EmployeeDetailPage() {
 
   const [payrollForm, setPayrollForm] = useState({
     hourlyRate: 0,
+    effectiveDate: new Date().toISOString().slice(0, 10),
     specialJobAdjustment: 0,
     overtimeMultiplier: 1.5,
     overtimeRate: "",
@@ -198,6 +199,7 @@ export default function EmployeeDetailPage() {
   const preview = api.employees.payrollPreview.useQuery(
     {
       hourlyRate: payrollForm.hourlyRate,
+      effectiveDate: payrollForm.effectiveDate,
       specialJobAdjustment: payrollForm.specialJobAdjustment,
       overtimeMultiplier: payrollForm.overtimeMultiplier,
       overtimeRate: payrollForm.overtimeRate ? Number(payrollForm.overtimeRate) : null,
@@ -414,6 +416,7 @@ export default function EmployeeDetailPage() {
           <div className="card space-y-3 p-5">
             <h2 className="text-lg font-semibold">Payroll Settings</h2>
             <Field label="Regular Hourly Rate" type="number" value={String(payrollForm.hourlyRate)} onChange={(v) => setPayrollForm((f) => ({ ...f, hourlyRate: Number(v || 0) }))} />
+            <Field label="Effective Date" type="date" value={payrollForm.effectiveDate} onChange={(v) => setPayrollForm((f) => ({ ...f, effectiveDate: v }))} />
             <Field label="Special Job Adjustment (+$/hr)" type="number" value={String(payrollForm.specialJobAdjustment)} onChange={(v) => setPayrollForm((f) => ({ ...f, specialJobAdjustment: Number(v || 0) }))} />
             <Field label="Overtime Multiplier" type="number" value={String(payrollForm.overtimeMultiplier)} onChange={(v) => setPayrollForm((f) => ({ ...f, overtimeMultiplier: Number(v || 1.5) }))} />
             <Field label="Custom Overtime Rate" type="number" value={payrollForm.overtimeRate} onChange={(v) => setPayrollForm((f) => ({ ...f, overtimeRate: v }))} />
@@ -445,6 +448,7 @@ export default function EmployeeDetailPage() {
                   id,
                   data: {
                     hourlyRate: payrollForm.hourlyRate,
+                    effectiveDate: payrollForm.effectiveDate,
                     specialJobAdjustment: payrollForm.specialJobAdjustment,
                     overtimeMultiplier: payrollForm.overtimeMultiplier,
                     overtimeRate: payrollForm.overtimeRate ? Number(payrollForm.overtimeRate) : null,

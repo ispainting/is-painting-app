@@ -2,6 +2,9 @@
   "name": "is-painting",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -33,10 +36,12 @@
     "jsonwebtoken": "^9.0.2",
     "lucide-react": "^0.453.0",
     "next": "14.2.15",
+    "pdf-lib": "^1.17.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-hook-form": "^7.53.0",
     "recharts": "^2.13.0",
+    "sharp": "^0.35.4",
     "sonner": "^1.5.0",
     "superjson": "^2.2.1",
     "tailwind-merge": "^2.5.4",

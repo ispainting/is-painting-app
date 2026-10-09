@@ -2,6 +2,8 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, adminProcedure } from "../trpc";
 import { computeEstimate, nextNumber } from "@/lib/utils";
+import { calculateJobTracking } from "@/lib/job-tracking";
+import { buildJobsListWhere, employeeAssignmentFilter, JOB_STATUS_VALUES, type JobStatusValue } from "@/lib/job-filters";
 
 const JobStatusZ = z.enum([
   "estimate", "sent", "approved", "active", "completed", "on_hold", "cancelled",
@@ -54,15 +56,10 @@ export const jobsRouter = router({
   list: protectedProcedure
     .input(z.object({ status: JobStatusZ.optional(), visibility: JobVisibilityZ.optional() }).optional())
     .query(async ({ ctx, input }) => {
-      // Employees only see assigned jobs
-      const where: any = {};
-      if (input?.status) where.status = input.status;
-      const visibility = input?.visibility ?? "active";
-      if (visibility === "active") where.deletedAt = null;
-      if (visibility === "archived") where.deletedAt = { not: null };
-      if (ctx.session?.role === "employee") {
-        where.assignments = { some: { userId: ctx.session.userId } };
-      }
+      const where = buildJobsListWhere(input, {
+        isEmployee: ctx.session?.role === "employee",
+        employeeUserId: ctx.session?.userId,
+      });
       return ctx.prisma.job.findMany({
         where,
         include: { customer: true },
@@ -70,6 +67,28 @@ export const jobsRouter = router({
         take: 200,
       });
     }),
+
+  // Exact counts per status chip on the Jobs page; uses count/groupBy instead
+  // of loading every job so counts stay cheap regardless of table size.
+  statusCounts: protectedProcedure.query(async ({ ctx }) => {
+    const accessCtx = { isEmployee: ctx.session?.role === "employee", employeeUserId: ctx.session?.userId };
+    const restriction = employeeAssignmentFilter(accessCtx);
+
+    const [all, archived, statusGroups] = await Promise.all([
+      ctx.prisma.job.count({ where: { ...restriction, deletedAt: null } }),
+      ctx.prisma.job.count({ where: { ...restriction, deletedAt: { not: null } } }),
+      ctx.prisma.job.groupBy({
+        by: ["status"],
+        where: { ...restriction, deletedAt: null },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const counts = Object.fromEntries(JOB_STATUS_VALUES.map((status) => [status, 0])) as Record<JobStatusValue, number>;
+    for (const group of statusGroups) counts[group.status as JobStatusValue] = group._count._all;
+
+    return { all, archived, ...counts };
+  }),
 
   clockable: protectedProcedure.query(async ({ ctx }) => {
     return ctx.prisma.job.findMany({
@@ -109,8 +128,14 @@ export const jobsRouter = router({
         labor: true,
         paintColors: { orderBy: { createdAt: "asc" } },
         assignments: { include: { user: true } },
-        invoices: true,
-        payments: true,
+        invoices: {
+          include: {
+            lineItems: { orderBy: { sortOrder: "asc" } },
+            payments: { orderBy: { dateReceived: "desc" } },
+          },
+          orderBy: { createdAt: "desc" },
+        },
+        payments: { include: { invoice: { select: { invoiceNumber: true } } }, orderBy: { dateReceived: "desc" } },
         expenses: {
           include: {
             attachments: {
@@ -120,7 +145,7 @@ export const jobsRouter = router({
           },
           orderBy: { expenseDate: "desc" },
         },
-        timeEntries: { include: { user: true }, orderBy: { clockIn: "desc" }, take: 50 },
+        timeEntries: { include: { user: true }, orderBy: { clockIn: "desc" } },
       },
     });
     if (!job) throw new TRPCError({ code: "NOT_FOUND" });
@@ -130,7 +155,11 @@ export const jobsRouter = router({
     ) {
       throw new TRPCError({ code: "FORBIDDEN" });
     }
-    return job;
+    const trackingSummary = calculateJobTracking(job.timeEntries, job.id);
+    return {
+      ...job,
+      trackingSummary,
+    };
   }),
 
   create: adminProcedure.input(jobInput).mutation(async ({ ctx, input }) => {
@@ -215,8 +244,26 @@ export const jobsRouter = router({
       });
     }),
 
+  updateLifecycleDates: adminProcedure
+    .input(z.object({
+      id: z.number(),
+      leadReceivedAt: z.coerce.date().nullable().optional(),
+      proposalSentAt: z.coerce.date().nullable().optional(),
+      workStartedAt: z.coerce.date().nullable().optional(),
+    }))
+    .mutation(({ ctx, input }) =>
+      ctx.prisma.job.update({
+        where: { id: input.id },
+        data: {
+          leadReceivedAt: input.leadReceivedAt,
+          proposalSentAt: input.proposalSentAt,
+          workStartedAt: input.workStartedAt,
+        },
+      })
+    ),
+
   setStatus: adminProcedure
-    .input(z.object({ id: z.number(), status: JobStatusZ }))
+    .input(z.object({ id: z.number(), status: JobStatusZ, workStartedAt: z.coerce.date().optional() }))
     .mutation(async ({ ctx, input }) => {
       const data: any = { status: input.status };
       if (input.status === "sent") data.sentAt = new Date();
@@ -227,6 +274,10 @@ export const jobsRouter = router({
           data.contractAmount = j.totalEstimate;
           data.budgetLocked = true;
         }
+      }
+      if (input.status === "active") {
+        const j = await ctx.prisma.job.findUnique({ where: { id: input.id }, select: { workStartedAt: true } });
+        if (j && !j.workStartedAt && input.workStartedAt) data.workStartedAt = input.workStartedAt;
       }
       return ctx.prisma.job.update({ where: { id: input.id }, data });
     }),
