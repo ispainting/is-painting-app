@@ -5,6 +5,8 @@ const COOKIE = "is_session";
 const PUBLIC = [
   "/login",
   "/api/trpc",
+  // Server-to-server read for the ORION marketing platform; the route checks its own bearer secret.
+  "/api/orion",
   "/_next",
   "/favicon.ico",
 ];
