@@ -41,6 +41,9 @@ const jobInput = z.object({
 const jobUpdateInput = jobInput.partial().extend({
   contractAmount: z.number().min(0).optional(),
   totalEstimate: z.number().min(0).optional(),
+  leadReceivedAt: z.coerce.date().nullable().optional(),
+  proposalSentAt: z.coerce.date().nullable().optional(),
+  workStartedAt: z.coerce.date().nullable().optional(),
 });
 
 const paintColorInput = z.object({

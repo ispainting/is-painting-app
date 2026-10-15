@@ -1,3 +1,5 @@
+import { startOfBusinessDayInMassachusetts } from "./employee-rate-resolver";
+
 export type LifecycleDateSource = {
   leadReceivedAt?: Date | string | null;
   proposalSentAt?: Date | string | null;
@@ -21,4 +23,10 @@ export function toDateInputValue(date: Date | string | null | undefined): string
   const value = date instanceof Date ? date : new Date(date);
   if (Number.isNaN(value.getTime())) return "";
   return value.toISOString().slice(0, 10);
+}
+
+export function parseLifecycleDateInput(dateOnly: string): Date | null {
+  if (!dateOnly) return null;
+  // Anchor to Massachusetts midnight so the saved day never shifts via UTC.
+  return startOfBusinessDayInMassachusetts(dateOnly);
 }

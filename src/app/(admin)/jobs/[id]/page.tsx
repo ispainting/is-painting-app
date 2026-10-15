@@ -6,7 +6,7 @@ import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { jobCanonicalTotal } from "@/lib/job-total";
-import { getLifecycleDate, toDateInputValue } from "@/lib/job-lifecycle";
+import { getLifecycleDate, toDateInputValue, parseLifecycleDateInput } from "@/lib/job-lifecycle";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { toast } from "sonner";
 import { JobExpenseEntry } from "@/components/expenses/JobExpenseEntry";
@@ -59,6 +59,9 @@ export default function JobDetailPage() {
     subcontractorBudget: 0,
     totalEstimate: 0,
     contractAmount: 0,
+    leadReceivedAt: "",
+    proposalSentAt: "",
+    workStartedAt: "",
   });
 
   const [paintForm, setPaintForm] = useState({
@@ -81,6 +84,8 @@ export default function JobDetailPage() {
     onSuccess: () => {
       utils.jobs.byId.invalidate({ id });
       utils.jobs.list.invalidate();
+      utils.business.analytics.invalidate();
+      utils.reports.dashboard.invalidate();
       toast.success("Job updated");
       setIsEditOpen(false);
     },
@@ -187,6 +192,9 @@ export default function JobDetailPage() {
       subcontractorBudget: Number(job.subcontractorBudget || 0),
       totalEstimate: Number(job.totalEstimate),
       contractAmount: Number(job.contractAmount),
+      leadReceivedAt: toDateInputValue(getLifecycleDate(job, "leadReceivedAt")),
+      proposalSentAt: toDateInputValue(getLifecycleDate(job, "proposalSentAt")),
+      workStartedAt: toDateInputValue(getLifecycleDate(job, "workStartedAt")),
     });
     setCustomerSearch(customerName);
     setShowCustomerResults(false);
@@ -212,6 +220,9 @@ export default function JobDetailPage() {
         subcontractorBudget: editForm.subcontractorBudget,
         totalEstimate: editForm.totalEstimate,
         contractAmount: editForm.contractAmount,
+        leadReceivedAt: parseLifecycleDateInput(editForm.leadReceivedAt),
+        proposalSentAt: parseLifecycleDateInput(editForm.proposalSentAt),
+        workStartedAt: parseLifecycleDateInput(editForm.workStartedAt),
       },
     });
 
@@ -412,15 +423,15 @@ export default function JobDetailPage() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div>
                 <label className="label">Lead received</label>
-                <input type="date" className="input" defaultValue={toDateInputValue(leadReceivedAt)} onChange={(event) => updateLifecycleDates.mutate({ id, leadReceivedAt: event.target.value ? new Date(event.target.value) : null })} />
+                <input type="date" className="input" defaultValue={toDateInputValue(leadReceivedAt)} onChange={(event) => updateLifecycleDates.mutate({ id, leadReceivedAt: parseLifecycleDateInput(event.target.value) })} />
               </div>
               <div>
                 <label className="label">Proposal sent</label>
-                <input type="date" className="input" defaultValue={toDateInputValue(proposalSentAt)} onChange={(event) => updateLifecycleDates.mutate({ id, proposalSentAt: event.target.value ? new Date(event.target.value) : null })} />
+                <input type="date" className="input" defaultValue={toDateInputValue(proposalSentAt)} onChange={(event) => updateLifecycleDates.mutate({ id, proposalSentAt: parseLifecycleDateInput(event.target.value) })} />
               </div>
               <div>
                 <label className="label">Work started</label>
-                <input type="date" className="input" defaultValue={toDateInputValue(workStartedAt)} onChange={(event) => updateLifecycleDates.mutate({ id, workStartedAt: event.target.value ? new Date(event.target.value) : null })} />
+                <input type="date" className="input" defaultValue={toDateInputValue(workStartedAt)} onChange={(event) => updateLifecycleDates.mutate({ id, workStartedAt: parseLifecycleDateInput(event.target.value) })} />
               </div>
             </div>
             <p className="mt-3 text-xs text-slate-500">Dates are displayed in the business timezone and feed monthly reporting.</p>
@@ -1032,6 +1043,25 @@ export default function JobDetailPage() {
               <Field label="Subcontractor budget" value={editForm.subcontractorBudget} onChange={(v) => setEditForm((f) => ({ ...f, subcontractorBudget: v }))} />
               <Field label="Total amount" value={editForm.totalEstimate} onChange={(v) => setEditForm((f) => ({ ...f, totalEstimate: v }))} />
               <Field label="Contract amount" value={editForm.contractAmount} onChange={(v) => setEditForm((f) => ({ ...f, contractAmount: v }))} />
+
+              <div className="col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Lifecycle Dates</div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="label">Lead received</label>
+                    <input type="date" className="input" value={editForm.leadReceivedAt} onChange={(e) => setEditForm((f) => ({ ...f, leadReceivedAt: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="label">Proposal sent</label>
+                    <input type="date" className="input" value={editForm.proposalSentAt} onChange={(e) => setEditForm((f) => ({ ...f, proposalSentAt: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="label">Work started</label>
+                    <input type="date" className="input" value={editForm.workStartedAt} onChange={(e) => setEditForm((f) => ({ ...f, workStartedAt: e.target.value }))} />
+                  </div>
+                </div>
+                <p className="mt-2 text-xs text-slate-500">Leave blank to clear a date. Dates use the Massachusetts business day.</p>
+              </div>
             </div>
 
             <div className="sticky bottom-0 z-10 flex justify-end gap-2 border-t border-slate-200 bg-white px-6 py-4">
