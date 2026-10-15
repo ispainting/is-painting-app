@@ -5,6 +5,7 @@ import { router, adminProcedure } from "../trpc";
 import { hashPassword } from "@/lib/auth";
 import { calculateEmployeeGrossPay } from "@/lib/employee-payroll";
 import { startOfBusinessDayInMassachusetts } from "@/lib/employee-rate-resolver";
+import { findEmployeeLoginIssues } from "@/lib/employee-login";
 
 const RoleZ = z.enum(["admin", "employee"]);
 const StatusFilterZ = z.enum(["active", "inactive", "all"]);
@@ -933,6 +934,21 @@ export const employeesRouter = router({
 
       return { ok: true, count: input.ids.length };
     }),
+
+  // Read-only diagnostic for phone-PIN clock login readiness. Returns user
+  // IDs and names only — never emails or phone numbers.
+  loginDiagnostics: adminProcedure.query(async ({ ctx }) => {
+    const employees = await ctx.prisma.user.findMany({
+      where: { role: "employee" },
+      select: { id: true, name: true, email: true, phone: true, role: true },
+    });
+    const issues = findEmployeeLoginIssues(employees);
+    return {
+      employeeCount: employees.length,
+      issueCount: issues.length,
+      issues,
+    };
+  }),
 });
 
 function groupByWeekHours(entries: Array<{ clockIn: Date; hours: number }>) {

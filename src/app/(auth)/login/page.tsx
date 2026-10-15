@@ -3,16 +3,17 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/trpc/react";
+import { postLoginRedirectPath } from "@/lib/employee-login";
 import { toast } from "sonner";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("admin@ispainting.com");
-  const [password, setPassword] = useState("admin123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const login = api.auth.login.useMutation({
     onSuccess: ({ role }) => {
       toast.success("Welcome back");
-      router.push(role === "admin" ? "/dashboard" : "/clock");
+      router.push(postLoginRedirectPath(role));
       router.refresh();
     },
     onError: (e) => toast.error(e.message),
@@ -54,9 +55,6 @@ export default function LoginPage() {
         <button className="btn btn-primary w-full" disabled={login.isPending} type="submit">
           {login.isPending ? "Signing in…" : "Sign in"}
         </button>
-        <p className="text-xs text-slate-400 text-center pt-2">
-          Default: admin@ispainting.com / admin123
-        </p>
       </form>
     </div>
   );
