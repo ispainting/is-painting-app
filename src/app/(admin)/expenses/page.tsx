@@ -6,6 +6,9 @@ import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { computeReceiptTotal } from "@/lib/receipt-totals";
+import { startOfBusinessDayInMassachusetts } from "@/lib/employee-rate-resolver";
+import { invalidateExpenseQueries } from "@/lib/expense-invalidation";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { toast } from "sonner";
 
 type UploadState = "queued" | "uploading" | "success" | "failed" | "canceled";
@@ -111,6 +114,7 @@ export default function ExpensesPage() {
   const [dragActive, setDragActive] = useState(false);
   const [saveBehavior, setSaveBehavior] = useState<"close" | "next">("close");
   const [replacementTarget, setReplacementTarget] = useState<{ expenseId: number; oldAttachmentId?: number } | null>(null);
+  const [expenseToDelete, setExpenseToDelete] = useState<{ id: number; vendor: string | null; amount: string | number; jobName: string | null; jobId: number | null } | null>(null);
 
   const [form, setForm] = useState({
     vendor: "",
@@ -192,27 +196,30 @@ export default function ExpensesPage() {
 
   const approve = api.expenses.approve.useMutation({
     onSuccess: () => {
-      void utils.expenses.list.invalidate();
-      void utils.expenses.stats.invalidate();
+      invalidateExpenseQueries(utils);
       toast.success("Approved");
     },
   });
 
   const reject = api.expenses.reject.useMutation({
     onSuccess: () => {
-      void utils.expenses.list.invalidate();
-      void utils.expenses.stats.invalidate();
+      invalidateExpenseQueries(utils);
       toast.success("Rejected");
     },
   });
 
+  const removeExpense = api.expenses.remove.useMutation({
+    onSuccess: (_data, variables) => {
+      invalidateExpenseQueries(utils, variables.jobId);
+      setExpenseToDelete(null);
+      toast.success("Expense deleted");
+    },
+    onError: (error) => toast.error(error.message || "Failed to delete expense"),
+  });
+
   const createExpense = api.expenses.create.useMutation({
-    onSuccess: async () => {
-      await Promise.all([
-        utils.expenses.list.invalidate(),
-        utils.expenses.stats.invalidate(),
-        utils.expenses.meta.invalidate(),
-      ]);
+    onSuccess: async (_data, variables) => {
+      invalidateExpenseQueries(utils, variables.jobId);
 
       setForm({
         vendor: "",
@@ -460,7 +467,7 @@ export default function ExpensesPage() {
     setSaveBehavior(behavior);
     createExpense.mutate({
       vendor: form.vendor || undefined,
-      expenseDate: new Date(form.expenseDate),
+      expenseDate: startOfBusinessDayInMassachusetts(form.expenseDate),
       description: form.description || undefined,
       amount: Number(form.amount),
       category: form.category,
@@ -837,22 +844,30 @@ export default function ExpensesPage() {
                       )}
                     </td>
                     <td className="px-4 py-2 text-right">
-                      {e.status === "pending" && (
-                        <div className="flex gap-1 justify-end">
-                          <button
-                            className="btn btn-secondary text-xs"
-                            onClick={() => approve.mutate({ id: e.id })}
-                          >
-                            Approve
-                          </button>
-                          <button
-                            className="btn btn-danger text-xs"
-                            onClick={() => reject.mutate({ id: e.id })}
-                          >
-                            Reject
-                          </button>
-                        </div>
-                      )}
+                      <div className="flex gap-1 justify-end">
+                        {e.status === "pending" && (
+                          <>
+                            <button
+                              className="btn btn-secondary text-xs"
+                              onClick={() => approve.mutate({ id: e.id })}
+                            >
+                              Approve
+                            </button>
+                            <button
+                              className="btn btn-danger text-xs"
+                              onClick={() => reject.mutate({ id: e.id })}
+                            >
+                              Reject
+                            </button>
+                          </>
+                        )}
+                        <button
+                          className="btn btn-danger text-xs"
+                          onClick={() => setExpenseToDelete({ id: e.id, vendor: e.vendor, amount: String(e.amount), jobName: e.job?.name ?? null, jobId: e.job?.id ?? null })}
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -873,6 +888,23 @@ export default function ExpensesPage() {
           queueFiles(e.target.files);
           e.currentTarget.value = "";
         }}
+      />
+
+      <ConfirmDialog
+        open={expenseToDelete !== null}
+        title="Delete expense?"
+        destructive
+        confirmLabel="Delete expense"
+        isPending={removeExpense.isPending}
+        onCancel={() => setExpenseToDelete(null)}
+        onConfirm={() => {
+          if (expenseToDelete) removeExpense.mutate({ id: expenseToDelete.id, jobId: expenseToDelete.jobId ?? undefined });
+        }}
+        message={
+          expenseToDelete
+            ? `Delete ${expenseToDelete.vendor || "this expense"} for ${formatCurrency(Number(expenseToDelete.amount))}${expenseToDelete.jobName ? ` on job "${expenseToDelete.jobName}"` : ""}? This cannot be undone.`
+            : ""
+        }
       />
     </>
   );

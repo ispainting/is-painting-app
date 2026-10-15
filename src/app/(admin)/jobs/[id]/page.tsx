@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { jobCanonicalTotal } from "@/lib/job-total";
 import { getLifecycleDate, toDateInputValue, parseLifecycleDateInput } from "@/lib/job-lifecycle";
+import { invalidateExpenseQueries } from "@/lib/expense-invalidation";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { toast } from "sonner";
 import { JobExpenseEntry } from "@/components/expenses/JobExpenseEntry";
@@ -116,6 +117,15 @@ export default function JobDetailPage() {
     onError: (e) => toast.error(e.message),
   });
 
+  const deleteExpense = api.expenses.remove.useMutation({
+    onSuccess: () => {
+      invalidateExpenseQueries(utils, id);
+      setExpenseToDelete(null);
+      toast.success("Expense deleted");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
   const addPaintColor = api.jobs.addPaintColor.useMutation({
     onSuccess: () => {
       utils.jobs.byId.invalidate({ id });
@@ -154,6 +164,7 @@ export default function JobDetailPage() {
   });
 
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [expenseToDelete, setExpenseToDelete] = useState<{ id: number; vendor: string | null; amount: string | number } | null>(null);
 
   if (isLoading || !job) return <div className="text-slate-500">Loading…</div>;
   const jobData = job as typeof job & {
@@ -847,7 +858,7 @@ export default function JobDetailPage() {
                   <p className="mt-1 text-xl font-bold text-slate-900">{formatCurrency(actualExpensesTotal)}</p>
                   <p className="text-xs text-slate-500">Total from {nonSubcontractorExpenses.length} expenses</p>
                 </div>
-                <JobExpenseEntry jobId={id} jobName={job.name} onSaved={() => utils.jobs.byId.invalidate({ id })} />
+                <JobExpenseEntry jobId={id} jobName={job.name} onSaved={() => invalidateExpenseQueries(utils, id)} />
               </div>
               {nonSubcontractorExpenses.length === 0 ? (
                 <p className="text-sm text-slate-500">No expenses tracked yet.</p>
@@ -856,7 +867,10 @@ export default function JobDetailPage() {
                   {nonSubcontractorExpenses.map((e) => (
                     <li key={e.id} className="py-3 flex items-start justify-between gap-3">
                       <div className="min-w-0"><p className="truncate text-slate-700">{e.vendor || "Expense"}</p><p className="text-xs text-slate-500">{formatDateTime(e.expenseDate)} · {e.category}{e.description ? ` · ${e.description}` : ""}</p>{e.attachments.length > 0 ? <a className="text-xs text-brand-700 hover:underline" href={`/api/expenses/attachments/${e.attachments[0].id}/preview`} target="_blank" rel="noreferrer">View Receipt</a> : <span className="text-xs text-slate-400">No receipt</span>}</div>
-                      <span className="shrink-0 font-medium">{formatCurrency(Number(e.amount))}</span>
+                      <span className="flex shrink-0 items-center gap-2">
+                        <span className="font-medium">{formatCurrency(Number(e.amount))}</span>
+                        <button type="button" className="btn btn-danger text-xs" onClick={() => setExpenseToDelete({ id: e.id, vendor: e.vendor, amount: Number(e.amount) })}>Delete</button>
+                      </span>
                     </li>
                   ))}
                 </ul>
@@ -870,9 +884,12 @@ export default function JobDetailPage() {
               ) : (
                 <ul className="text-sm divide-y">
                   {subcontractorExpenses.slice(0, 8).map((e) => (
-                    <li key={e.id} className="py-2 flex justify-between">
+                    <li key={e.id} className="py-2 flex justify-between gap-2">
                       <span>{e.vendor || "Subcontractor"}</span>
-                      <span>{formatCurrency(Number(e.amount))}</span>
+                      <span className="flex items-center gap-2">
+                        {formatCurrency(Number(e.amount))}
+                        <button type="button" className="btn btn-danger text-xs" onClick={() => setExpenseToDelete({ id: e.id, vendor: e.vendor, amount: Number(e.amount) })}>Delete</button>
+                      </span>
                     </li>
                   ))}
                 </ul>
@@ -1077,6 +1094,23 @@ export default function JobDetailPage() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={expenseToDelete !== null}
+        title="Delete expense?"
+        destructive
+        confirmLabel="Delete expense"
+        isPending={deleteExpense.isPending}
+        onCancel={() => setExpenseToDelete(null)}
+        onConfirm={() => {
+          if (expenseToDelete) deleteExpense.mutate({ id: expenseToDelete.id, jobId: id });
+        }}
+        message={
+          expenseToDelete
+            ? `Delete ${expenseToDelete.vendor || "this expense"} for ${formatCurrency(Number(expenseToDelete.amount))} on job "${job.name}"? This cannot be undone.`
+            : ""
+        }
+      />
     </>
   );
 }

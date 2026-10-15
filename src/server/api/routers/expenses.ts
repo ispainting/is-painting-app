@@ -1,4 +1,5 @@
 import { ExpenseCategory, ExpenseStatus, Prisma } from "@prisma/client";
+import { TRPCError } from "@trpc/server";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
@@ -530,4 +531,46 @@ export const expensesRouter = router({
       data: { status: "rejected", approvedById: ctx.session.userId },
     })
   ),
+
+  // Admin-only hard delete of a single expense regardless of status
+  // (pending/approved/rejected/paid). Line items cascade via the schema;
+  // directly owned attachment rows are removed in the same transaction and
+  // their receipt blobs are cleaned up through the existing storage provider.
+  remove: adminProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        jobId: z.number().int().positive().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const expense = await ctx.prisma.expense.findUnique({
+        where: { id: input.id },
+        select: {
+          id: true,
+          jobId: true,
+          attachments: { select: { id: true, storagePath: true } },
+        },
+      });
+      if (!expense) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Expense not found." });
+      }
+      if (input.jobId !== undefined && expense.jobId !== input.jobId) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Expense does not belong to the supplied job." });
+      }
+
+      await ctx.prisma.$transaction(async (tx) => {
+        // Only this expense's own attachment rows; lineItems cascade via onDelete: Cascade.
+        await tx.expenseAttachment.deleteMany({ where: { expenseId: expense.id } });
+        await tx.expense.delete({ where: { id: expense.id } });
+      });
+
+      // Best-effort blob cleanup using the existing provider; never throws.
+      const provider = getReceiptStorageProvider();
+      for (const attachment of expense.attachments) {
+        await provider.delete(attachment.storagePath).catch(() => undefined);
+      }
+
+      return { ok: true };
+    }),
 });
