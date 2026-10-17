@@ -1,7 +1,19 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { computeEntry } from "../../../lib/payroll";
+import { resolveEffectiveHourlyRate, shouldRecomputeHourlyRateSnapshot } from "../../../lib/employee-rate-resolver";
+import { liveShiftCutoff } from "../../../lib/clock";
 import { router, protectedProcedure, adminProcedure } from "../trpc";
+
+/**
+ * Where clause for a user's genuinely active shift: open AND clocked in within
+ * the live shift window. Older clockOut=null rows are historical import
+ * artifacts with authoritative stored hours and must never be selected as an
+ * active shift, block a new clock-in, or be recalculated.
+ */
+function openLiveEntryWhere(userId: number) {
+  return { userId, clockOut: null as null, clockIn: { gte: liveShiftCutoff() } };
+}
 
 function buildPayrollPayload(input: {
   clockIn: Date;
@@ -204,7 +216,8 @@ function applyReviewState(status: z.infer<typeof TimeReviewStatusZ>, approvedByI
 export const timeRouter = router({
   myActive: protectedProcedure.query(async ({ ctx }) => {
     return ctx.prisma.timeEntry.findFirst({
-      where: { userId: ctx.session!.userId, clockOut: null },
+      where: openLiveEntryWhere(ctx.session!.userId),
+      orderBy: { clockIn: "desc" },
       include: {
         job: {
           select: {
@@ -243,7 +256,7 @@ export const timeRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const open = await ctx.prisma.timeEntry.findFirst({
-        where: { userId: ctx.session!.userId, clockOut: null },
+        where: openLiveEntryWhere(ctx.session!.userId),
       });
       if (open) throw new TRPCError({ code: "BAD_REQUEST", message: "Already clocked in" });
 
@@ -296,6 +309,7 @@ export const timeRouter = router({
         clockOutLongitude: null,
         isManual: false,
       });
+      const hourlyRateSnapshot = await resolveEffectiveHourlyRate(ctx.prisma, ctx.session!.userId, clockIn);
 
       return ctx.prisma.timeEntry.create({
         data: {
@@ -313,6 +327,7 @@ export const timeRouter = router({
           overtimeOverride: false,
           reviewStatus: "pending",
           approvedById: null,
+          hourlyRateSnapshot,
           ...payroll,
         },
       });
@@ -330,7 +345,7 @@ export const timeRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const open = await ctx.prisma.timeEntry.findFirst({
-        where: { userId: ctx.session!.userId, clockOut: null },
+        where: openLiveEntryWhere(ctx.session!.userId),
       });
       if (!open) throw new TRPCError({ code: "BAD_REQUEST", message: "Not clocked in" });
       const now = new Date();
@@ -365,7 +380,7 @@ export const timeRouter = router({
 
   startBreak: protectedProcedure.mutation(async ({ ctx }) => {
     const open = await ctx.prisma.timeEntry.findFirst({
-      where: { userId: ctx.session!.userId, clockOut: null },
+      where: openLiveEntryWhere(ctx.session!.userId),
     });
     if (!open) throw new TRPCError({ code: "BAD_REQUEST", message: "Not clocked in" });
     if (open.breakStartedAt && !open.breakEndedAt) {
@@ -396,7 +411,7 @@ export const timeRouter = router({
 
   endBreak: protectedProcedure.mutation(async ({ ctx }) => {
     const open = await ctx.prisma.timeEntry.findFirst({
-      where: { userId: ctx.session!.userId, clockOut: null },
+      where: openLiveEntryWhere(ctx.session!.userId),
     });
     if (!open) throw new TRPCError({ code: "BAD_REQUEST", message: "Not clocked in" });
     if (!open.breakStartedAt || open.breakEndedAt) {
@@ -471,6 +486,19 @@ export const timeRouter = router({
 
     const reviewState = applyReviewState(input.data.reviewStatus, ctx.session!.userId, input.data.managerNotes);
 
+    const existing = input.id ? await ctx.prisma.timeEntry.findUnique({ where: { id: input.id } }) : null;
+    if (input.id && !existing) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Time entry not found" });
+    }
+
+    // Recompute the rate snapshot only when the employee or clock-in date changes;
+    // otherwise preserve the existing snapshot (e.g. editing notes/review status).
+    const hourlyRateSnapshot = !shouldRecomputeHourlyRateSnapshot(existing, { userId: input.data.userId, clockIn })
+      ? existing!.hourlyRateSnapshot == null
+        ? null
+        : Number(existing!.hourlyRateSnapshot)
+      : await resolveEffectiveHourlyRate(ctx.prisma, input.data.userId, clockIn);
+
     const baseData = {
       userId: input.data.userId,
       jobId: input.data.jobId ?? null,
@@ -494,15 +522,11 @@ export const timeRouter = router({
       rateType: normalizedRateType,
       travelHours: input.data.travelHours ?? null,
       overtimeOverride: input.data.overtimeOverride,
+      hourlyRateSnapshot,
       ...payroll,
     };
 
     if (input.id) {
-      const existing = await ctx.prisma.timeEntry.findUnique({ where: { id: input.id } });
-      if (!existing) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Time entry not found" });
-      }
-
       return ctx.prisma.timeEntry.update({
         where: { id: input.id },
         data: {
@@ -523,6 +547,8 @@ export const timeRouter = router({
   duplicateEntry: adminProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
     const existing = await ctx.prisma.timeEntry.findUnique({ where: { id: input.id } });
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Time entry not found" });
+
+    const hourlyRateSnapshot = await resolveEffectiveHourlyRate(ctx.prisma, existing.userId, existing.clockIn);
 
     return ctx.prisma.timeEntry.create({
       data: {
@@ -547,6 +573,7 @@ export const timeRouter = router({
         rateType: existing.rateType === "island" ? "special" : existing.rateType,
         travelHours: existing.travelHours,
         overtimeOverride: existing.overtimeOverride,
+        hourlyRateSnapshot,
         ...buildManualPayroll({
           clockIn: existing.clockIn,
           clockOut: existing.clockOut,

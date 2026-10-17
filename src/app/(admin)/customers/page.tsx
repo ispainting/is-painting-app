@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { isReferralSource, leadSourceOptionsWithLegacy, resolveReferralName } from "@/lib/lead-source";
+import { PIPELINE_STAGE_OPTIONS, type PipelineStageValue } from "@/lib/pipeline-stages";
+import { startOfBusinessDayInMassachusetts, todayDateInputValueInMassachusetts } from "@/lib/employee-rate-resolver";
 import { api } from "@/trpc/react";
 import { Filter, Plus, Search, SlidersHorizontal, Tags, Users } from "lucide-react";
 import { toast } from "sonner";
@@ -28,6 +31,9 @@ type CustomerFormState = {
   preferredCommunication: string;
   notes: string;
   tagsText: string;
+  leadReceivedAt: string;
+  createOpportunity: boolean;
+  opportunityStage: PipelineStageValue;
 };
 
 const EMPTY_FORM: CustomerFormState = {
@@ -42,11 +48,25 @@ const EMPTY_FORM: CustomerFormState = {
   source: "",
   leadSource: "",
   referralSource: "",
-  status: "Lead",
+  status: "",
   preferredCommunication: "",
   notes: "",
   tagsText: "",
+  leadReceivedAt: "",
+  createOpportunity: false,
+  opportunityStage: "new_lead",
 };
+
+// Main Create Customer UI defaults: Create Opportunity on, lead date = today
+// in the Massachusetts business timezone.
+function freshCreateForm(): CustomerFormState {
+  return {
+    ...EMPTY_FORM,
+    leadReceivedAt: todayDateInputValueInMassachusetts(),
+    createOpportunity: true,
+    opportunityStage: "new_lead",
+  };
+}
 
 export default function CustomersPage() {
   const utils = api.useUtils();
@@ -65,7 +85,7 @@ export default function CustomersPage() {
   const [open, setOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [form, setForm] = useState<CustomerFormState>(EMPTY_FORM);
+  const [form, setForm] = useState<CustomerFormState>(freshCreateForm);
   const [editForm, setEditForm] = useState<CustomerFormState>(EMPTY_FORM);
 
   const queryInput = {
@@ -82,11 +102,20 @@ export default function CustomersPage() {
   const { data, isLoading } = api.customers.list.useQuery(queryInput);
 
   const create = api.customers.create.useMutation({
-    onSuccess: () => {
-      toast.success("Customer added");
+    onSuccess: (result) => {
+      toast.success(
+        result.opportunityCreated
+          ? "Customer and opportunity added"
+          : result.opportunitySkippedExistingOpen
+            ? "Customer added — kept the existing open opportunity"
+            : "Customer added"
+      );
       setOpen(false);
-      setForm(EMPTY_FORM);
+      setForm(freshCreateForm());
       utils.customers.list.invalidate();
+      utils.opportunities.list.invalidate();
+      utils.business.analytics.invalidate();
+      utils.reports.dashboard.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -162,12 +191,20 @@ export default function CustomersPage() {
       preferredCommunication: "",
       notes: customer.notes || "",
       tagsText: (customer.tags || []).join(", "),
+      leadReceivedAt: "",
+      createOpportunity: false,
+      opportunityStage: "new_lead",
     });
     setEditOpen(true);
   }
 
   function toggleSelection(id: number) {
     setSelectedIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
+  }
+
+  function openCreate() {
+    setForm(freshCreateForm());
+    setOpen(true);
   }
 
   function submitCreate() {
@@ -180,13 +217,14 @@ export default function CustomersPage() {
       city: form.city,
       state: form.state,
       zipCode: form.zipCode,
-      source: form.source,
-      leadSource: form.leadSource,
-      referralSource: form.referralSource,
-      status: form.status,
+      leadSource: form.leadSource || undefined,
+      referralSource: resolveReferralName(form.leadSource, form.referralSource),
       preferredCommunication: form.preferredCommunication,
       notes: form.notes,
       tags: parseTags(form.tagsText),
+      createOpportunity: form.createOpportunity,
+      opportunityStage: form.createOpportunity ? form.opportunityStage : undefined,
+      leadReceivedAt: form.leadReceivedAt ? startOfBusinessDayInMassachusetts(form.leadReceivedAt) : undefined,
     });
   }
 
@@ -236,7 +274,7 @@ export default function CustomersPage() {
         title="Customers"
         description="Lead, client, and account management in one workspace"
         actions={
-          <button onClick={() => setOpen(true)} className="btn btn-primary">
+          <button onClick={openCreate} className="btn btn-primary">
             <Plus className="mr-1 h-4 w-4" /> New customer
           </button>
         }
@@ -397,7 +435,7 @@ export default function CustomersPage() {
                   <td colSpan={10} className="px-4 py-10 text-center">
                     <div className="text-sm font-semibold text-slate-700">No customers match these filters</div>
                     <div className="mt-1 text-sm text-slate-500">Adjust the search, clear filters, or add a new customer.</div>
-                    <button className="btn btn-primary mt-3" onClick={() => setOpen(true)}>Add Customer</button>
+                    <button className="btn btn-primary mt-3" onClick={openCreate}>Add Customer</button>
                   </td>
                 </tr>
               ) : (
@@ -441,6 +479,7 @@ export default function CustomersPage() {
       {open ? (
         <CustomerEditorModal
           title="New customer"
+          mode="create"
           form={form}
           onChange={setForm}
           onClose={() => setOpen(false)}
@@ -452,6 +491,7 @@ export default function CustomersPage() {
       {editOpen ? (
         <CustomerEditorModal
           title="Edit customer"
+          mode="edit"
           form={editForm}
           onChange={setEditForm}
           onClose={() => setEditOpen(false)}
@@ -489,6 +529,7 @@ function Field({ label, content, icon }: { label: string; content: React.ReactNo
 
 function CustomerEditorModal({
   title,
+  mode,
   form,
   onChange,
   onClose,
@@ -496,6 +537,7 @@ function CustomerEditorModal({
   pending,
 }: {
   title: string;
+  mode: "create" | "edit";
   form: CustomerFormState;
   onChange: (next: CustomerFormState) => void;
   onClose: () => void;
@@ -517,11 +559,57 @@ function CustomerEditorModal({
           <Input label="City" value={form.city} onChange={(value) => onChange({ ...form, city: value })} />
           <Input label="State" value={form.state} onChange={(value) => onChange({ ...form, state: value })} />
           <Input label="Zip Code" value={form.zipCode} onChange={(value) => onChange({ ...form, zipCode: value })} />
-          <Input label="Source" value={form.source} onChange={(value) => onChange({ ...form, source: value })} />
-          <Input label="Lead Source" value={form.leadSource} onChange={(value) => onChange({ ...form, leadSource: value })} />
-          <Input label="Referral Source" value={form.referralSource} onChange={(value) => onChange({ ...form, referralSource: value })} />
+          <div>
+            <label className="label">Lead Source</label>
+            <select className="input" value={form.leadSource} onChange={(event) => onChange({ ...form, leadSource: event.target.value })}>
+              <option value="">Select a source</option>
+              {leadSourceOptionsWithLegacy(form.leadSource).map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+          </div>
+          {isReferralSource(form.leadSource) ? (
+            <Input label="Referral Name" value={form.referralSource} onChange={(value) => onChange({ ...form, referralSource: value })} />
+          ) : null}
           <Input label="Preferred Communication" value={form.preferredCommunication} onChange={(value) => onChange({ ...form, preferredCommunication: value })} />
-          <Input label="Status" value={form.status} onChange={(value) => onChange({ ...form, status: value })} />
+          {mode === "edit" ? (
+            <Input label="Status" value={form.status} onChange={(value) => onChange({ ...form, status: value })} />
+          ) : null}
+          {mode === "create" ? (
+            <>
+              <div>
+                <label className="label">Lead Received Date</label>
+                <input
+                  type="date"
+                  className="input"
+                  value={form.leadReceivedAt}
+                  onChange={(event) => onChange({ ...form, leadReceivedAt: event.target.value })}
+                />
+              </div>
+              <label className="flex items-center gap-2 self-end pb-2 text-sm font-medium text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={form.createOpportunity}
+                  onChange={(event) => onChange({ ...form, createOpportunity: event.target.checked })}
+                />
+                Create Opportunity
+              </label>
+              {form.createOpportunity ? (
+                <div>
+                  <label className="label">Initial Pipeline Stage</label>
+                  <select
+                    className="input"
+                    value={form.opportunityStage}
+                    onChange={(event) => onChange({ ...form, opportunityStage: event.target.value as PipelineStageValue })}
+                  >
+                    {PIPELINE_STAGE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+            </>
+          ) : null}
           <Input label="Tags" value={form.tagsText} onChange={(value) => onChange({ ...form, tagsText: value })} placeholder="vip, repeat, warranty" />
           <div className="md:col-span-2">
             <label className="label">Notes</label>

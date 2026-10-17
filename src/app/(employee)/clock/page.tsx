@@ -95,8 +95,7 @@ export default function ClockPage() {
     return Math.max(0, Math.floor((now.getTime() - start.getTime()) / 1000));
   }, [active.data, isOnBreak, now]);
 
-  const latestEntry = myEntries.data?.[0];
-  const summaryEntry = active.data ?? latestEntry ?? null;
+  const summaryEntry = active.data ?? null;
   const currentStatus = isIn ? (isOnBreak ? "on-break" : "working") : "clocked-out";
 
   const statusConfig = {

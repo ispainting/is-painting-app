@@ -6,6 +6,7 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Timeline } from "@/components/ui/Timeline";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils";
+import { isReferralSource, leadSourceOptionsWithLegacy } from "@/lib/lead-source";
 import { api } from "@/trpc/react";
 import {
   BellRing,
@@ -427,8 +428,22 @@ export default function CustomerProfilePage() {
               <Input label="Primary Email" value={profileDraft.email} onChange={(value) => setProfileDraft({ ...profileDraft, email: value })} />
               <Input label="Primary Phone" value={profileDraft.phone} onChange={(value) => setProfileDraft({ ...profileDraft, phone: value })} />
               <Input label="Status" value={profileDraft.status} onChange={(value) => setProfileDraft({ ...profileDraft, status: value })} />
-              <Input label="Lead Source" value={profileDraft.leadSource} onChange={(value) => setProfileDraft({ ...profileDraft, leadSource: value })} />
-              <Input label="Referral Source" value={profileDraft.referralSource} onChange={(value) => setProfileDraft({ ...profileDraft, referralSource: value })} />
+              <div>
+                <label className="label">Lead Source</label>
+                <select
+                  className="input"
+                  value={profileDraft.leadSource}
+                  onChange={(event) => setProfileDraft({ ...profileDraft, leadSource: event.target.value })}
+                >
+                  <option value="">Not set</option>
+                  {leadSourceOptionsWithLegacy(profileDraft.leadSource).map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </div>
+              {isReferralSource(profileDraft.leadSource) ? (
+                <Input label="Referral Name" value={profileDraft.referralSource} onChange={(value) => setProfileDraft({ ...profileDraft, referralSource: value })} />
+              ) : null}
               <Input label="Preferred Communication" value={profileDraft.preferredCommunication} onChange={(value) => setProfileDraft({ ...profileDraft, preferredCommunication: value })} />
               <Input label="Last Contact" type="date" value={profileDraft.lastContactAt} onChange={(value) => setProfileDraft({ ...profileDraft, lastContactAt: value })} />
               <Input label="Next Follow-up" type="date" value={profileDraft.nextFollowUpAt} onChange={(value) => setProfileDraft({ ...profileDraft, nextFollowUpAt: value })} />
@@ -1017,6 +1032,20 @@ function PaymentTable({ payments }: { payments: any[] }) {
 }
 
 function PipelineCards({ opportunities }: { opportunities: any[] }) {
+  const utils = api.useUtils();
+  const updateOpportunity = api.opportunities.update.useMutation({
+    onSuccess: async () => {
+      await Promise.all([
+        utils.customers.profile.invalidate(),
+        utils.opportunities.list.invalidate(),
+        utils.business.analytics.invalidate(),
+        utils.reports.dashboard.invalidate(),
+      ]);
+      toast.success("Lead received date updated");
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   return (
     <SectionCard title="Opportunities">
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -1026,6 +1055,16 @@ function PipelineCards({ opportunities }: { opportunities: any[] }) {
             <div className="mt-1 text-sm text-slate-500">{opportunity.stage.replace(/_/g, " ")} • {opportunity.status}</div>
             <div className="mt-3 text-sm text-slate-600">Lead value: {formatCurrency(opportunity.leadValue)}</div>
             <div className="text-sm text-slate-600">Assigned to: {opportunity.assignedTo?.name || "Unassigned"}</div>
+            <div className="mt-2">
+              <label className="label">Lead received</label>
+              <input
+                type="date"
+                className="input"
+                value={opportunity.leadReceivedAt ? new Date(opportunity.leadReceivedAt).toISOString().slice(0, 10) : ""}
+                onChange={(event) => updateOpportunity.mutate({ id: opportunity.id, data: { leadReceivedAt: event.target.value ? new Date(event.target.value) : null } })}
+                disabled={updateOpportunity.isPending}
+              />
+            </div>
             <div className="mt-2 text-xs text-slate-500">Created {formatDate(opportunity.createdAt)}</div>
           </div>
         )) : <EmptyState text="No opportunities linked to this customer yet." />}

@@ -1,6 +1,14 @@
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { adminProcedure, protectedProcedure, router } from "../trpc";
+import { isReferralSource } from "@/lib/lead-source";
+import { TERMINAL_PIPELINE_STAGES } from "@/lib/pipeline-stages";
+
+const OpportunityStageZ = z.enum([
+  "new_lead", "onboarding", "not_answered", "follow_up",
+  "estimate_sent", "approval", "service_delivery", "review",
+  "no_reply", "lost", "not_qualified",
+]);
 
 const customerPhoneSchema = z.object({
   label: z.string().optional(),
@@ -85,6 +93,11 @@ const customerInput = z.object({
   warrantyHistory: z.array(customerWarrantyHistorySchema).default([]),
   lastContactAt: z.coerce.date().optional().nullable(),
   nextFollowUpAt: z.coerce.date().optional().nullable(),
+  // Optional pipeline intake: existing callers that omit these keep working
+  // and create only a Customer.
+  createOpportunity: z.boolean().optional(),
+  opportunityStage: OpportunityStageZ.optional(),
+  leadReceivedAt: z.coerce.date().optional(),
 });
 
 const customerUpdateInput = customerInput.partial();
@@ -513,6 +526,7 @@ export const customersRouter = router({
             stage: true,
             leadValue: true,
             source: true,
+            leadReceivedAt: true,
             createdAt: true,
             updatedAt: true,
             assignedTo: { select: { id: true, name: true } },
@@ -570,6 +584,7 @@ export const customersRouter = router({
           paidHours: true,
           grossHours: true,
           hoursWorked: true,
+          hourlyRateSnapshot: true,
           user: { select: { hourlyRate: true } },
         },
         take: 1000,
@@ -593,7 +608,7 @@ export const customersRouter = router({
 
     const totalRevenue = payments.reduce((sum, payment) => sum + money(payment.amount), 0);
     const totalExpenses = expenses.reduce((sum, expense) => sum + money(expense.amount), 0);
-    const totalPayroll = timeEntries.reduce((sum, entry) => sum + money(entry.user.hourlyRate) * totalHours(entry), 0);
+    const totalPayroll = timeEntries.reduce((sum, entry) => sum + money(entry.hourlyRateSnapshot ?? entry.user.hourlyRate) * totalHours(entry), 0);
     const totalProfit = totalRevenue - totalExpenses - totalPayroll;
     const totalJobs = customer.jobs.length;
     const jobsCompleted = customer.jobs.filter((job) => job.status === "completed").length;
@@ -779,14 +794,58 @@ export const customersRouter = router({
   }),
 
   create: adminProcedure.input(customerInput).mutation(async ({ ctx, input }) => {
-    const customer = await ctx.prisma.customer.create({
-      data: {
-        ...serializeCustomerInput(input),
+    const { createOpportunity, opportunityStage, leadReceivedAt, ...customerFields } = input;
+    const result = await ctx.prisma.$transaction(async (tx) => {
+      const customerData = {
+        ...serializeCustomerInput(customerFields),
         name: input.name,
-      },
+      };
+      // Referral Name is stored only when Lead Source is Referral.
+      if (!isReferralSource(input.leadSource)) {
+        customerData.referralSource = undefined;
+      }
+      const customer = await tx.customer.create({ data: customerData });
+
+      let opportunityId: number | null = null;
+      let opportunitySkippedExistingOpen = false;
+      if (createOpportunity) {
+        // Only an open, non-terminal opportunity blocks a new one; historical
+        // lost/not_qualified opportunities must not prevent a new lead.
+        const existingOpen = await tx.opportunity.findFirst({
+          where: {
+            customerId: customer.id,
+            status: "open",
+            stage: { notIn: TERMINAL_PIPELINE_STAGES },
+          },
+          select: { id: true },
+        });
+        if (existingOpen) {
+          opportunitySkippedExistingOpen = true;
+        } else {
+          const opportunity = await tx.opportunity.create({
+            data: {
+              customerId: customer.id,
+              name: customer.name,
+              stage: opportunityStage ?? "new_lead",
+              source: input.leadSource?.trim() || undefined,
+              leadReceivedAt: leadReceivedAt ?? undefined,
+            },
+            select: { id: true },
+          });
+          opportunityId = opportunity.id;
+        }
+      }
+
+      return { customer, opportunityId, opportunitySkippedExistingOpen };
     });
-    await writeCustomerAudit(ctx, customer.id, "customer.created", null, toJsonValue({ name: customer.name }));
-    return customer;
+
+    await writeCustomerAudit(ctx, result.customer.id, "customer.created", null, toJsonValue({ name: result.customer.name }));
+    return {
+      ...result.customer,
+      opportunityCreated: result.opportunityId !== null,
+      opportunityId: result.opportunityId,
+      opportunitySkippedExistingOpen: result.opportunitySkippedExistingOpen,
+    };
   }),
 
   update: adminProcedure
