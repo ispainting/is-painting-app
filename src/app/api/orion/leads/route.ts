@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { checkOrionAuth } from "@/lib/orion-auth";
+import { checkLeadIntakeAuth } from "@/lib/orion-auth";
 
 // Lead intake from ORION, the marketing platform. Every quote request it receives — the website
 // form, the site's chat concierge, a Facebook instant form — is posted here and lands in the sales
@@ -15,7 +15,9 @@ import { checkOrionAuth } from "@/lib/orion-auth";
 // - Same shape the admin "new opportunity" action writes (stage new_lead, sales pipeline); no
 //   automations are triggered here, exactly like that action.
 //
-// Auth: `Authorization: Bearer <ORION_API_SECRET>`, shared with /api/orion/summary.
+// Auth: `Authorization: Bearer <ORION_API_SECRET or MAKE_API_SECRET>` (see src/lib/orion-auth.ts).
+// Accepts JSON or form fields (application/x-www-form-urlencoded), so a Make HTTP module can send
+// plain key/value fields without hand-building JSON.
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,8 +26,13 @@ const MAP_TYPE = "orion_lead";
 
 const LeadInput = z.object({
   leadId: z.string().min(1).max(191),
-  source: z.enum(["Website", "Meta", "Concierge"]),
-  receivedAt: z.string().datetime(),
+  source: z.enum(["Website", "Meta", "Concierge", "Google"]),
+  // Any date the platforms send ("2026-10-16T15:44:26+0000" from Meta via Make, ISO from ORION);
+  // missing means "now".
+  receivedAt: z
+    .string()
+    .refine((value) => !Number.isNaN(Date.parse(value)), "not a date")
+    .optional(),
   name: z.string().trim().max(200).optional(),
   email: z.string().trim().email().max(200).optional(),
   phone: z.string().trim().max(30).optional(),
@@ -39,6 +46,48 @@ const LeadInput = z.object({
   details: z.record(z.string().max(5000)).optional(),
 });
 type LeadInput = z.infer<typeof LeadInput>;
+
+const KNOWN_FIELDS = new Set(["leadId", "source", "receivedAt", "name", "email", "phone", "address", "city", "state", "zipCode", "service", "message", "details"]);
+
+// Same lead, same key, whoever delivers it: ORION sends "meta:<leadgen id>", and a Make scenario
+// that maps Facebook's bare lead id gets the same prefix here, so the two never make two leads.
+function normalizeLeadId(leadId: string, source: string): string {
+  const id = leadId.trim();
+  if (/^\d+$/.test(id) && source === "Meta") return `meta:${id}`;
+  if (/^\d+$/.test(id) && source === "Google") return `google:${id}`;
+  return id;
+}
+
+async function readBody(req: Request): Promise<Record<string, unknown> | null> {
+  const type = req.headers.get("content-type") ?? "";
+  let raw: Record<string, unknown> | null;
+  if (type.includes("application/x-www-form-urlencoded") || type.includes("multipart/form-data")) {
+    const form = await req.formData().catch(() => null);
+    raw = form ? Object.fromEntries([...form.entries()].map(([k, v]) => [k, String(v)])) : null;
+  } else {
+    raw = await req.json().catch(() => null);
+  }
+  if (!raw || typeof raw !== "object") return null;
+  // Automation tools send unmapped fields as "" — treat those as missing. Unknown fields (extra
+  // form questions) are kept as details.
+  const body: Record<string, unknown> = {};
+  const details: Record<string, string> = { ...((raw.details as Record<string, string>) ?? {}) };
+  for (const [key, value] of Object.entries(raw)) {
+    if (key === "details" || value === "" || value == null) continue;
+    if (KNOWN_FIELDS.has(key)) body[key] = typeof value === "string" ? value.trim() : value;
+    else details[key] = String(value);
+  }
+  if (Object.keys(details).length) body.details = details;
+  if (typeof body.leadId === "string" && typeof body.source === "string") body.leadId = normalizeLeadId(body.leadId, body.source);
+  return body;
+}
+
+const CRM_SOURCE: Record<LeadInput["source"], { leadSource: string; source: string; label: string }> = {
+  Website: { leadSource: "Website", source: "Website form", label: "website form" },
+  Concierge: { leadSource: "Website", source: "Website chat", label: "website chat" },
+  Meta: { leadSource: "Meta", source: "Facebook form", label: "Facebook form" },
+  Google: { leadSource: "Google", source: "Google Local Services", label: "Google" },
+};
 
 const digits = (value: string) => value.replace(/\D/g, "").slice(-10);
 
@@ -75,18 +124,18 @@ function noteBody(lead: LeadInput) {
 }
 
 export async function POST(req: Request) {
-  const auth = checkOrionAuth(req);
+  const { result: auth, caller } = checkLeadIntakeAuth(req);
   if (auth === "unconfigured") {
-    console.error("[api/orion/leads] ORION_API_SECRET is not set — refusing lead intake");
+    console.error("[api/orion/leads] neither ORION_API_SECRET nor MAKE_API_SECRET is set — refusing lead intake");
     return NextResponse.json({ error: "ORION access is not configured" }, { status: 503 });
   }
   if (auth === "denied") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const parsed = LeadInput.safeParse(await req.json().catch(() => null));
+  const parsed = LeadInput.safeParse(await readBody(req));
   if (!parsed.success) return NextResponse.json({ error: "Invalid lead", issues: parsed.error.issues }, { status: 400 });
   const lead = parsed.data;
 
-  const receivedAt = new Date(lead.receivedAt);
+  const receivedAt = lead.receivedAt ? new Date(lead.receivedAt) : new Date();
   const existing = await prisma.migrationMap.findUnique({ where: { entityType_legacyId: { entityType: MAP_TYPE, legacyId: lead.leadId } } });
   if (existing) {
     // An ORION lead's opportunity is dated when the request arrived (see below); this also
@@ -105,15 +154,15 @@ export async function POST(req: Request) {
         (
           await tx.customer.create({
             data: {
-              name: lead.name || lead.email || lead.phone || "Website lead",
+              name: lead.name || lead.email || lead.phone || `${CRM_SOURCE[lead.source].label} lead`,
               email: lead.email,
               phone: lead.phone,
               address: lead.address,
               city: lead.city,
               state: lead.state,
               zipCode: lead.zipCode,
-              leadSource: lead.source === "Concierge" ? "Website" : lead.source,
-              source: lead.source === "Concierge" ? "Website chat" : lead.source === "Website" ? "Website form" : "Facebook form",
+              leadSource: CRM_SOURCE[lead.source].leadSource,
+              source: CRM_SOURCE[lead.source].source,
               status: "Lead",
               lastContactAt: receivedAt,
               createdAt: receivedAt,
@@ -129,7 +178,7 @@ export async function POST(req: Request) {
           pipeline: "sales",
           stage: "new_lead",
           status: "open",
-          source: lead.source === "Concierge" ? "Website" : lead.source,
+          source: CRM_SOURCE[lead.source].leadSource,
           notes: body,
           lastStageChangedAt: receivedAt,
           // Dated when the request arrived, not when it reached the CRM, so "leads this month" and
@@ -143,10 +192,10 @@ export async function POST(req: Request) {
         data: {
           customerId,
           type: "note",
-          subject: `Quote request received (${lead.source === "Meta" ? "Facebook form" : lead.source === "Concierge" ? "website chat" : "website form"})`,
+          subject: `Quote request received (${CRM_SOURCE[lead.source].label})`,
           body,
           occurredAt: receivedAt,
-          metadata: { via: "ORION", leadId: lead.leadId, opportunityId: opportunity.id },
+          metadata: { via: caller, leadId: lead.leadId, opportunityId: opportunity.id },
         },
       });
 
