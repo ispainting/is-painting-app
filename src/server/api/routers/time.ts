@@ -2,7 +2,18 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { computeEntry } from "../../../lib/payroll";
 import { resolveEffectiveHourlyRate, shouldRecomputeHourlyRateSnapshot } from "../../../lib/employee-rate-resolver";
+import { liveShiftCutoff } from "../../../lib/clock";
 import { router, protectedProcedure, adminProcedure } from "../trpc";
+
+/**
+ * Where clause for a user's genuinely active shift: open AND clocked in within
+ * the live shift window. Older clockOut=null rows are historical import
+ * artifacts with authoritative stored hours and must never be selected as an
+ * active shift, block a new clock-in, or be recalculated.
+ */
+function openLiveEntryWhere(userId: number) {
+  return { userId, clockOut: null as null, clockIn: { gte: liveShiftCutoff() } };
+}
 
 function buildPayrollPayload(input: {
   clockIn: Date;
@@ -205,7 +216,8 @@ function applyReviewState(status: z.infer<typeof TimeReviewStatusZ>, approvedByI
 export const timeRouter = router({
   myActive: protectedProcedure.query(async ({ ctx }) => {
     return ctx.prisma.timeEntry.findFirst({
-      where: { userId: ctx.session!.userId, clockOut: null },
+      where: openLiveEntryWhere(ctx.session!.userId),
+      orderBy: { clockIn: "desc" },
       include: {
         job: {
           select: {
@@ -244,7 +256,7 @@ export const timeRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const open = await ctx.prisma.timeEntry.findFirst({
-        where: { userId: ctx.session!.userId, clockOut: null },
+        where: openLiveEntryWhere(ctx.session!.userId),
       });
       if (open) throw new TRPCError({ code: "BAD_REQUEST", message: "Already clocked in" });
 
@@ -333,7 +345,7 @@ export const timeRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const open = await ctx.prisma.timeEntry.findFirst({
-        where: { userId: ctx.session!.userId, clockOut: null },
+        where: openLiveEntryWhere(ctx.session!.userId),
       });
       if (!open) throw new TRPCError({ code: "BAD_REQUEST", message: "Not clocked in" });
       const now = new Date();
@@ -368,7 +380,7 @@ export const timeRouter = router({
 
   startBreak: protectedProcedure.mutation(async ({ ctx }) => {
     const open = await ctx.prisma.timeEntry.findFirst({
-      where: { userId: ctx.session!.userId, clockOut: null },
+      where: openLiveEntryWhere(ctx.session!.userId),
     });
     if (!open) throw new TRPCError({ code: "BAD_REQUEST", message: "Not clocked in" });
     if (open.breakStartedAt && !open.breakEndedAt) {
@@ -399,7 +411,7 @@ export const timeRouter = router({
 
   endBreak: protectedProcedure.mutation(async ({ ctx }) => {
     const open = await ctx.prisma.timeEntry.findFirst({
-      where: { userId: ctx.session!.userId, clockOut: null },
+      where: openLiveEntryWhere(ctx.session!.userId),
     });
     if (!open) throw new TRPCError({ code: "BAD_REQUEST", message: "Not clocked in" });
     if (!open.breakStartedAt || open.breakEndedAt) {

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { getTimeListState } from "@/lib/time-list-state";
+import { isWithinLiveShiftWindow } from "@/lib/clock";
 import { formatDateTime } from "@/lib/utils";
 import { Clock3, Copy, Pencil, Plus, Printer, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -644,7 +645,13 @@ export default function TimePage() {
                     <td className="px-3 py-2">{entry.user?.name || employeeRows.find((e) => e.id === entry.userId)?.name || "Employee"}</td>
                     <td className="px-3 py-2">{entry.job?.name || "—"}</td>
                     <td className="px-3 py-2">{formatDateTime(entry.clockIn)}</td>
-                    <td className="px-3 py-2">{entry.clockOut ? formatDateTime(entry.clockOut) : "—"}</td>
+                    <td className="px-3 py-2">
+                      {entry.clockOut
+                        ? formatDateTime(entry.clockOut)
+                        : isWithinLiveShiftWindow(entry.clockIn)
+                          ? "In progress"
+                          : "Historical — missing clock out"}
+                    </td>
                     <td className="px-3 py-2 text-right">{entryHours(entry).toFixed(2)}</td>
                     <td className="px-3 py-2">{entry.isManual ? "Yes" : "No"}</td>
                     <td className="px-3 py-2 text-right">
