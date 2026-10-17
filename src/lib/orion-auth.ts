@@ -14,9 +14,11 @@ import { timingSafeEqual } from "node:crypto";
 
 type AuthResult = "ok" | "denied" | "unconfigured";
 
+// Tolerates how the key was typed into a tool's header field: "bearer" in any case, extra spaces
+// after it, or a stray space after the key.
 function bearer(req: Request): Buffer {
-  const header = req.headers.get("authorization") ?? "";
-  return Buffer.from(header.startsWith("Bearer ") ? header.slice(7) : "");
+  const match = (req.headers.get("authorization") ?? "").match(/^\s*bearer\s+(\S+)\s*$/i);
+  return Buffer.from(match ? match[1] : "");
 }
 
 function matches(given: Buffer, secret: string | undefined): boolean {
