@@ -75,6 +75,7 @@ export async function GET(req: Request) {
     recentProposals,
     recentJobs,
     recentPayments,
+    newLeadsWaiting,
   ] = await Promise.all([
     prisma.opportunity.count({ where: { createdAt: month } }),
     prisma.proposal.findMany({ where: { sentAt: month, deletedAt: null }, select: { totalAmount: true } }),
@@ -123,6 +124,13 @@ export async function GET(req: Request) {
       select: { dateReceived: true, amount: true, job: { select: { city: true } } },
       orderBy: { dateReceived: "desc" },
       take: 5,
+    }),
+    // Leads nobody has moved past "new lead" yet — how many, and how long the oldest has waited.
+    prisma.opportunity.aggregate({
+      where: { status: "open", pipeline: "sales", stage: "new_lead" },
+      _count: true,
+      _min: { createdAt: true },
+      _max: { createdAt: true },
     }),
   ]);
 
@@ -194,6 +202,11 @@ export async function GET(req: Request) {
         activeJobs: { count: activeJobs.length, amount: activeJobs.reduce((t, j) => t + jobValue(j), 0) },
         openInvoices: { count: openInvoices.length, amount: openInvoices.reduce((t, i) => t + money(i.amountRemaining), 0) },
         overdueInvoices: { count: overdueInvoices.length, amount: overdueInvoices.reduce((t, i) => t + money(i.amountRemaining), 0) },
+        newLeadsWaiting: {
+          count: newLeadsWaiting._count,
+          oldestAt: newLeadsWaiting._min.createdAt?.toISOString() ?? null,
+          newestAt: newLeadsWaiting._max.createdAt?.toISOString() ?? null,
+        },
       },
       sources: { windowDays: SOURCE_WINDOW_DAYS, rows: [...bySource.values()].sort((a, b) => b.leads - a.leads) },
       recent,
