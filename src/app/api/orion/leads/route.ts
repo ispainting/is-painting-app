@@ -138,9 +138,12 @@ export async function POST(req: Request) {
   const receivedAt = lead.receivedAt ? new Date(lead.receivedAt) : new Date();
   const existing = await prisma.migrationMap.findUnique({ where: { entityType_legacyId: { entityType: MAP_TYPE, legacyId: lead.leadId } } });
   if (existing) {
-    // An ORION lead's opportunity is dated when the request arrived (see below); this also
-    // corrects the first backfill, which was stamped with the import time.
-    await prisma.opportunity.updateMany({ where: { id: existing.newId, createdAt: { not: receivedAt } }, data: { createdAt: receivedAt } });
+    // An ORION lead's opportunity is dated when the request arrived (see below); a re-send from
+    // ORION also corrected the first backfill, which was stamped with the import time. Only ORION
+    // may re-date: a Make delivery of a lead ORION already pulled must never move its date.
+    if (caller === "ORION" && lead.receivedAt) {
+      await prisma.opportunity.updateMany({ where: { id: existing.newId, createdAt: { not: receivedAt } }, data: { createdAt: receivedAt } });
+    }
     return NextResponse.json({ status: "exists", opportunityId: existing.newId });
   }
 
