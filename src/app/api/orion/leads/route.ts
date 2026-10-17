@@ -86,10 +86,15 @@ export async function POST(req: Request) {
   if (!parsed.success) return NextResponse.json({ error: "Invalid lead", issues: parsed.error.issues }, { status: 400 });
   const lead = parsed.data;
 
-  const existing = await prisma.migrationMap.findUnique({ where: { entityType_legacyId: { entityType: MAP_TYPE, legacyId: lead.leadId } } });
-  if (existing) return NextResponse.json({ status: "exists", opportunityId: existing.newId });
-
   const receivedAt = new Date(lead.receivedAt);
+  const existing = await prisma.migrationMap.findUnique({ where: { entityType_legacyId: { entityType: MAP_TYPE, legacyId: lead.leadId } } });
+  if (existing) {
+    // An ORION lead's opportunity is dated when the request arrived (see below); this also
+    // corrects the first backfill, which was stamped with the import time.
+    await prisma.opportunity.updateMany({ where: { id: existing.newId, createdAt: { not: receivedAt } }, data: { createdAt: receivedAt } });
+    return NextResponse.json({ status: "exists", opportunityId: existing.newId });
+  }
+
   const matched = await findCustomer(lead);
   const body = noteBody(lead);
 
@@ -111,6 +116,7 @@ export async function POST(req: Request) {
               source: lead.source === "Concierge" ? "Website chat" : lead.source === "Website" ? "Website form" : "Facebook form",
               status: "Lead",
               lastContactAt: receivedAt,
+              createdAt: receivedAt,
             },
             select: { id: true },
           })
@@ -126,6 +132,9 @@ export async function POST(req: Request) {
           source: lead.source === "Concierge" ? "Website" : lead.source,
           notes: body,
           lastStageChangedAt: receivedAt,
+          // Dated when the request arrived, not when it reached the CRM, so "leads this month" and
+          // the source breakdowns count it in the right month even when it was delivered later.
+          createdAt: receivedAt,
         },
         select: { id: true },
       });
