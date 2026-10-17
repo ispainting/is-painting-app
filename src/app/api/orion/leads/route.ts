@@ -49,6 +49,42 @@ type LeadInput = z.infer<typeof LeadInput>;
 
 const KNOWN_FIELDS = new Set(["leadId", "source", "receivedAt", "name", "email", "phone", "address", "city", "state", "zipCode", "service", "message", "details"]);
 
+// The owner's Make scenario already shapes each Facebook lead for Viktor ("Lead ID", "Created time",
+// "Full name", "Phone", "Email", "Service", "Form ID", "Ad ID"). Accepting those names lets the CRM
+// step be a copy of the Viktor step with only the URL and key changed. Keys are compared without
+// case, spaces, underscores or dashes.
+const ALIASES: Record<string, string> = {
+  leadid: "leadId",
+  createdtime: "receivedAt",
+  datecreated: "receivedAt",
+  receivedat: "receivedAt",
+  fullname: "name",
+  name: "name",
+  phone: "phone",
+  phonenumber: "phone",
+  email: "email",
+  service: "service",
+  city: "city",
+  state: "state",
+  zip: "zipCode",
+  zipcode: "zipCode",
+  postcode: "zipCode",
+  streetaddress: "address",
+  address: "address",
+  message: "message",
+  source: "source",
+  details: "details",
+};
+// Fields only a Facebook lead carries — their presence means the source is Meta.
+const META_ONLY = new Set(["formid", "adid"]);
+const squash = (key: string) => key.toLowerCase().replace(/[\s_-]+/g, "");
+
+function asText(value: unknown): string {
+  if (Array.isArray(value)) return value.map(asText).filter(Boolean).join(", ");
+  if (value && typeof value === "object") return JSON.stringify(value);
+  return String(value ?? "").trim();
+}
+
 // Same lead, same key, whoever delivers it: ORION sends "meta:<leadgen id>", and a Make scenario
 // that maps Facebook's bare lead id gets the same prefix here, so the two never make two leads.
 function normalizeLeadId(leadId: string, source: string): string {
@@ -71,12 +107,21 @@ async function readBody(req: Request): Promise<Record<string, unknown> | null> {
   // Automation tools send unmapped fields as "" — treat those as missing. Unknown fields (extra
   // form questions) are kept as details.
   const body: Record<string, unknown> = {};
-  const details: Record<string, string> = { ...((raw.details as Record<string, string>) ?? {}) };
+  const details: Record<string, string> = {};
+  let looksLikeFacebook = false;
   for (const [key, value] of Object.entries(raw)) {
-    if (key === "details" || value === "" || value == null) continue;
-    if (KNOWN_FIELDS.has(key)) body[key] = typeof value === "string" ? value.trim() : value;
-    else details[key] = String(value);
+    const field = KNOWN_FIELDS.has(key) ? key : ALIASES[squash(key)];
+    if (field === "details" && value && typeof value === "object" && !Array.isArray(value)) {
+      for (const [k, v] of Object.entries(value)) if (asText(v)) details[k] = asText(v);
+      continue;
+    }
+    const text = asText(value);
+    if (!text) continue;
+    if (META_ONLY.has(squash(key))) looksLikeFacebook = true;
+    if (field && field !== "details") body[field] = text;
+    else details[key] = text;
   }
+  if (!body.source && looksLikeFacebook) body.source = "Meta";
   if (Object.keys(details).length) body.details = details;
   if (typeof body.leadId === "string" && typeof body.source === "string") body.leadId = normalizeLeadId(body.leadId, body.source);
   return body;
