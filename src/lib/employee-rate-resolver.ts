@@ -63,6 +63,19 @@ export function startOfBusinessDayInMassachusetts(dateOnly: string, timeZone = "
 }
 
 /**
+ * Today's date as a YYYY-MM-DD input value in the Massachusetts business
+ * timezone (America/New_York), for defaulting date inputs.
+ */
+export function todayDateInputValueInMassachusetts(now = new Date(), timeZone = "America/New_York"): string {
+  const parts: Record<string, string> = {};
+  const formatter = new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" });
+  for (const part of formatter.formatToParts(now)) {
+    if (part.type !== "literal") parts[part.type] = part.value;
+  }
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+/**
  * True when a time entry's stored hourlyRateSnapshot must be recomputed:
  * only when the employee or clock-in date changes. Editing unrelated fields
  * (notes, review status, etc.) must preserve the existing snapshot.

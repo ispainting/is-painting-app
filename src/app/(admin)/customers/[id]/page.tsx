@@ -6,6 +6,7 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Timeline } from "@/components/ui/Timeline";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils";
+import { isReferralSource, leadSourceOptionsWithLegacy } from "@/lib/lead-source";
 import { api } from "@/trpc/react";
 import {
   BellRing,
@@ -427,8 +428,22 @@ export default function CustomerProfilePage() {
               <Input label="Primary Email" value={profileDraft.email} onChange={(value) => setProfileDraft({ ...profileDraft, email: value })} />
               <Input label="Primary Phone" value={profileDraft.phone} onChange={(value) => setProfileDraft({ ...profileDraft, phone: value })} />
               <Input label="Status" value={profileDraft.status} onChange={(value) => setProfileDraft({ ...profileDraft, status: value })} />
-              <Input label="Lead Source" value={profileDraft.leadSource} onChange={(value) => setProfileDraft({ ...profileDraft, leadSource: value })} />
-              <Input label="Referral Source" value={profileDraft.referralSource} onChange={(value) => setProfileDraft({ ...profileDraft, referralSource: value })} />
+              <div>
+                <label className="label">Lead Source</label>
+                <select
+                  className="input"
+                  value={profileDraft.leadSource}
+                  onChange={(event) => setProfileDraft({ ...profileDraft, leadSource: event.target.value })}
+                >
+                  <option value="">Not set</option>
+                  {leadSourceOptionsWithLegacy(profileDraft.leadSource).map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </div>
+              {isReferralSource(profileDraft.leadSource) ? (
+                <Input label="Referral Name" value={profileDraft.referralSource} onChange={(value) => setProfileDraft({ ...profileDraft, referralSource: value })} />
+              ) : null}
               <Input label="Preferred Communication" value={profileDraft.preferredCommunication} onChange={(value) => setProfileDraft({ ...profileDraft, preferredCommunication: value })} />
               <Input label="Last Contact" type="date" value={profileDraft.lastContactAt} onChange={(value) => setProfileDraft({ ...profileDraft, lastContactAt: value })} />
               <Input label="Next Follow-up" type="date" value={profileDraft.nextFollowUpAt} onChange={(value) => setProfileDraft({ ...profileDraft, nextFollowUpAt: value })} />
