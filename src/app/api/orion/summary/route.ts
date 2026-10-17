@@ -102,7 +102,7 @@ export async function GET(req: Request) {
     prisma.expense.aggregate({ where: { expenseDate: month }, _sum: { amount: true } }),
     prisma.opportunity.groupBy({ by: ["stage"], where: { status: "open", pipeline: "sales" }, _count: true }),
     prisma.proposal.findMany({ where: { status: { in: ["sent", "viewed", "follow_up"] }, deletedAt: null }, select: { totalAmount: true } }),
-    prisma.job.count({ where: { status: { in: ["approved", "active"] }, deletedAt: null } }),
+    prisma.job.findMany({ where: { status: { in: ["approved", "active"] }, deletedAt: null }, select: { contractAmount: true, totalEstimate: true } }),
     prisma.invoice.findMany({ where: { status: { not: "cancelled" } }, select: { status: true, amountRemaining: true, dueDate: true } }),
     prisma.opportunity.findMany({
       where: { createdAt: { gte: sourceWindowStart } },
@@ -200,7 +200,7 @@ export async function GET(req: Request) {
       pipeline: {
         openLeadsByStage: Object.fromEntries(openByStage.map((row) => [row.stage, row._count])),
         openProposals: { count: openProposals.length, amount: sum(openProposals) },
-        activeJobs,
+        activeJobs: { count: activeJobs.length, amount: activeJobs.reduce((t, j) => t + jobValue(j), 0) },
         openInvoices: { count: openInvoices.length, amount: openInvoices.reduce((t, i) => t + money(i.amountRemaining), 0) },
         overdueInvoices: { count: overdueInvoices.length, amount: overdueInvoices.reduce((t, i) => t + money(i.amountRemaining), 0) },
       },
