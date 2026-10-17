@@ -4,11 +4,13 @@ import { timingSafeEqual } from "node:crypto";
 // src/middleware.ts because their callers have no session cookie, so every handler must call one of
 // these first. Both fail closed when no secret is configured.
 //
-// Two keys, so each caller can be cut off on its own:
+// One key per caller, so each can be cut off on its own by deleting its env var:
 // - ORION_API_SECRET: ORION, the marketing platform (ispainting-platform). Full access — it reads
 //   the summary and posts leads.
 // - VIKTOR_API_SECRET: the owner's Viktor assistant (added 2026-10-17). Read-only — summary only,
 //   never lead intake.
+// - MAKE_API_SECRET: the owner's Make scenario that forwards Facebook leads the moment they arrive
+//   (added 2026-10-17). Lead intake only — it can't read the summary.
 
 type AuthResult = "ok" | "denied" | "unconfigured";
 
@@ -35,4 +37,13 @@ export function checkReadAuth(req: Request): AuthResult {
   if (keys.length === 0) return "unconfigured";
   const given = bearer(req);
   return keys.some((key) => matches(given, key)) ? "ok" : "denied";
+}
+
+/** Lead intake: ORION's key or the Make key. Says which one, so the lead records who sent it. */
+export function checkLeadIntakeAuth(req: Request): { result: AuthResult; caller: "ORION" | "Make" | null } {
+  if (!process.env.ORION_API_SECRET && !process.env.MAKE_API_SECRET) return { result: "unconfigured", caller: null };
+  const given = bearer(req);
+  if (matches(given, process.env.ORION_API_SECRET)) return { result: "ok", caller: "ORION" };
+  if (matches(given, process.env.MAKE_API_SECRET)) return { result: "ok", caller: "Make" };
+  return { result: "denied", caller: null };
 }
