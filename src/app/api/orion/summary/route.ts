@@ -1,6 +1,6 @@
-import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { checkOrionAuth } from "@/lib/orion-auth";
 
 // Read-only business summary for ORION, the marketing platform (ispainting-platform). It lets
 // marketing decisions see real leads, proposals, jobs and money without ORION ever touching this
@@ -44,17 +44,8 @@ function normalizeSource(source: string | null | undefined) {
   return value;
 }
 
-function isAuthorized(req: Request): "ok" | "denied" | "unconfigured" {
-  const secret = process.env.ORION_API_SECRET;
-  if (!secret) return "unconfigured";
-  const header = req.headers.get("authorization") ?? "";
-  const given = Buffer.from(header.startsWith("Bearer ") ? header.slice(7) : "");
-  const expected = Buffer.from(secret);
-  return given.length === expected.length && timingSafeEqual(given, expected) ? "ok" : "denied";
-}
-
 export async function GET(req: Request) {
-  const auth = isAuthorized(req);
+  const auth = checkOrionAuth(req);
   if (auth === "unconfigured") {
     console.error("[api/orion/summary] ORION_API_SECRET is not set — refusing to serve business data");
     return NextResponse.json({ error: "ORION access is not configured" }, { status: 503 });
