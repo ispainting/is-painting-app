@@ -135,6 +135,12 @@ export async function POST(req: Request) {
   if (!parsed.success) return NextResponse.json({ error: "Invalid lead", issues: parsed.error.issues }, { status: 400 });
   const lead = parsed.data;
 
+  // Meta's Lead Ads Testing Tool fills every field with "<test lead: dummy data for …>". Answer
+  // those so the owner can check a Make connection end to end, without a junk lead in the pipeline.
+  if ([lead.name, lead.email, ...Object.values(lead.details ?? {})].some((v) => v && /dummy data|test lead/i.test(v))) {
+    return NextResponse.json({ status: "test_ok", message: "Connection works — test lead not saved." });
+  }
+
   const receivedAt = lead.receivedAt ? new Date(lead.receivedAt) : new Date();
   const existing = await prisma.migrationMap.findUnique({ where: { entityType_legacyId: { entityType: MAP_TYPE, legacyId: lead.leadId } } });
   if (existing) {
