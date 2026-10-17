@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { checkOrionAuth } from "@/lib/orion-auth";
+import { checkReadAuth } from "@/lib/orion-auth";
 
 // Read-only business summary for ORION, the marketing platform (ispainting-platform). It lets
 // marketing decisions see real leads, proposals, jobs and money without ORION ever touching this
 // database. Only totals, stages, sources, cities and amounts leave this app — never a customer's
 // name, phone, email, address or a project name, because ORION forwards what it reads to AI models.
 //
-// Auth: `Authorization: Bearer <ORION_API_SECRET>`. Fails closed when the secret isn't set.
+// Auth: `Authorization: Bearer <ORION_API_SECRET or VIKTOR_API_SECRET>` (see src/lib/orion-auth.ts).
+// Fails closed when neither is set.
 // The path is listed as public in src/middleware.ts because ORION has no session cookie.
 
 export const runtime = "nodejs";
@@ -45,9 +46,9 @@ function normalizeSource(source: string | null | undefined) {
 }
 
 export async function GET(req: Request) {
-  const auth = checkOrionAuth(req);
+  const auth = checkReadAuth(req);
   if (auth === "unconfigured") {
-    console.error("[api/orion/summary] ORION_API_SECRET is not set — refusing to serve business data");
+    console.error("[api/orion/summary] neither ORION_API_SECRET nor VIKTOR_API_SECRET is set — refusing to serve business data");
     return NextResponse.json({ error: "ORION access is not configured" }, { status: 503 });
   }
   if (auth === "denied") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
