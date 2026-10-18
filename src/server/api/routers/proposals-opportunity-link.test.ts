@@ -163,6 +163,7 @@ describe("proposals.convertToJob opportunity resolution", () => {
         findUnique: vi.fn().mockResolvedValue(null),
         findFirst: vi.fn().mockResolvedValue(null),
         create: vi.fn().mockResolvedValue({ id: 100, estimateNumber: "EST-100" }),
+        update: vi.fn().mockResolvedValue({ id: 88 }),
       },
       jobMaterial: { createMany: vi.fn() },
       jobLabor: { createMany: vi.fn() },
@@ -282,7 +283,7 @@ describe("proposals.convertToJob opportunity resolution", () => {
   it("conversion retry returns the existing linked Job instead of duplicating", async () => {
     const converted = { ...proposalWith(null), status: "converted", opportunityId: 7 };
     const { prisma, tx } = conversionMocks(converted, []);
-    prisma.job.findUnique.mockResolvedValue({ id: 88, estimateNumber: "EST-88" });
+    tx.job.findUnique.mockResolvedValue({ id: 88, estimateNumber: "EST-88", deletedAt: null, approvedAt: new Date("2026-10-01") });
 
     const result = await callerWith(prisma).convertToJob({ id: 10 });
     expect(result.jobId).toBe(88);
@@ -295,11 +296,37 @@ describe("proposals.convertToJob opportunity resolution", () => {
       proposalWith({ id: 7, customerId: 1, leadReceivedAt }),
       []
     );
-    tx.job.findUnique.mockResolvedValue({ id: 88, estimateNumber: "EST-88" });
+    tx.job.findUnique.mockResolvedValue({ id: 88, estimateNumber: "EST-88", deletedAt: null, approvedAt: new Date("2026-10-01") });
 
     const result = await callerWith(prisma).convertToJob({ id: 10 });
     expect(result.reusedExistingJob).toBe(true);
-    expect(result.id).toBe(88);
+    expect(result.jobId).toBe(88);
     expect(tx.job.create).not.toHaveBeenCalled();
+    expect(tx.job.update).not.toHaveBeenCalled();
+  });
+
+  it("restores an archived linked Job to non-archived approved instead of returning it archived", async () => {
+    const { prisma, tx } = conversionMocks(
+      proposalWith({ id: 7, customerId: 1, leadReceivedAt }),
+      []
+    );
+    tx.job.findUnique.mockResolvedValue({ id: 88, estimateNumber: "EST-88", deletedAt: new Date("2026-10-01T00:00:00Z"), approvedAt: null });
+    tx.job.update.mockResolvedValue({ id: 88, estimateNumber: "EST-88", deletedAt: null, status: "approved" });
+
+    const result = await callerWith(prisma).convertToJob({ id: 10 });
+
+    expect(tx.job.create).not.toHaveBeenCalled();
+    expect(tx.job.update).toHaveBeenCalledWith({
+      where: { id: 88 },
+      data: expect.objectContaining({ deletedAt: null, status: "approved" }),
+    });
+    expect(result.jobId).toBe(88);
+    expect(result.reusedExistingJob).toBe(true);
+
+    // The restored row satisfies the exact Jobs Approved-tab filter.
+    const approvedTabWhere = buildJobsListWhere({ status: "approved", visibility: "active" }, { isEmployee: false });
+    const restored = tx.job.update.mock.calls[0]?.[0].data;
+    expect(restored.status).toBe(approvedTabWhere.status);
+    expect(restored.deletedAt).toBe(approvedTabWhere.deletedAt);
   });
 });

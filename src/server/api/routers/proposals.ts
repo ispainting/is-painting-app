@@ -1602,11 +1602,21 @@ export const proposalsRouter = router({
     if (!proposal) throw new TRPCError({ code: "NOT_FOUND", message: "Proposal not found" });
     if (proposal.status === "converted") {
       // Idempotent retry: return the existing linked Job instead of duplicating.
-      const existingJob = proposal.opportunityId
-        ? await ctx.prisma.job.findUnique({ where: { opportunityId: proposal.opportunityId } })
-        : null;
-      if (existingJob) {
-        return { ...existingJob, jobId: existingJob.id, opportunityLinked: true, reusedExistingJob: true, warnings: [] as string[] };
+      if (proposal.opportunityId) {
+        const existingJob = await ctx.prisma.$transaction(async (tx) => {
+          const found = await tx.job.findUnique({ where: { opportunityId: proposal.opportunityId! } });
+          if (!found) return null;
+          if (!found.deletedAt) return found;
+          // An archived linked job is never a successful conversion result:
+          // restore it to active/approved atomically.
+          return tx.job.update({
+            where: { id: found.id },
+            data: { deletedAt: null, status: "approved", approvedAt: found.approvedAt ?? new Date() },
+          });
+        });
+        if (existingJob) {
+          return { ...existingJob, jobId: existingJob.id, opportunityLinked: true, reusedExistingJob: true, warnings: [] as string[] };
+        }
       }
       throw new TRPCError({
         code: "CONFLICT",
@@ -1664,11 +1674,20 @@ export const proposalsRouter = router({
       if (resolvedOpportunity) {
         const existingJob = await tx.job.findUnique({ where: { opportunityId: resolvedOpportunity.id } });
         if (existingJob) {
+          // Never return an archived job as a successful conversion: restore it
+          // to active/approved inside the same transaction.
+          const job = existingJob.deletedAt
+            ? await tx.job.update({
+                where: { id: existingJob.id },
+                data: { deletedAt: null, status: "approved", approvedAt: existingJob.approvedAt ?? new Date() },
+              })
+            : existingJob;
           await tx.proposal.updateMany({
             where: { id: proposal.id, status: { not: "converted" } },
             data: { status: "converted" },
           });
-          return { job: existingJob, reusedExistingJob: true };
+          await applyOpportunityTransition(tx, resolvedOpportunity?.id, "approval");
+          return { job, reusedExistingJob: true };
         }
       }
 
