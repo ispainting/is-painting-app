@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { LeadSourceQualityTable } from "@/components/reports/LeadSourceQualityTable";
 import {
   Area,
   AreaChart,
@@ -250,6 +251,13 @@ export default function BusinessAnalyticsPage() {
               </tbody>
             </table>
           </div>
+        </SectionCard>
+
+        <SectionCard title="Lead Source Quality" icon={Sparkles} subtitle="Lead cohort quality, conversion, and value by source for the selected timeframe.">
+          <p className="mb-3 text-xs text-slate-500">
+            Leads grouped by lead-received date (Massachusetts business days); cash collected grouped by payment date.
+          </p>
+          <LeadSourceQualityTable data={data?.leadSourceQuality} />
         </SectionCard>
 
         <ExpandableSection title="Customer Analytics" icon={Users} summary="Top customers, repeat customers, largest jobs, and most profitable jobs.">

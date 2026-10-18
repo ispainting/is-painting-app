@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Timeline } from "@/components/ui/Timeline";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils";
 import { isReferralSource, leadSourceOptionsWithLegacy } from "@/lib/lead-source";
+import { opportunityStageLabel } from "@/lib/pipeline-sync";
 import { api } from "@/trpc/react";
 import {
   BellRing,
@@ -1052,7 +1053,7 @@ function PipelineCards({ opportunities }: { opportunities: any[] }) {
         {opportunities.length ? opportunities.map((opportunity) => (
           <div key={opportunity.id} className="rounded-xl border border-slate-200 p-4">
             <div className="font-semibold text-slate-900">{opportunity.name}</div>
-            <div className="mt-1 text-sm text-slate-500">{opportunity.stage.replace(/_/g, " ")} • {opportunity.status}</div>
+            <div className="mt-1 text-sm text-slate-500">{opportunityStageLabel(opportunity.stage)} • {opportunity.status}</div>
             <div className="mt-3 text-sm text-slate-600">Lead value: {formatCurrency(opportunity.leadValue)}</div>
             <div className="text-sm text-slate-600">Assigned to: {opportunity.assignedTo?.name || "Unassigned"}</div>
             <div className="mt-2">

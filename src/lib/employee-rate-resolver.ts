@@ -75,6 +75,24 @@ export function todayDateInputValueInMassachusetts(now = new Date(), timeZone = 
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
+/** The instant of local midnight in Massachusetts for the day containing `date`. */
+export function businessDayStartInMassachusetts(date: Date): Date {
+  return startOfBusinessDayInMassachusetts(todayDateInputValueInMassachusetts(date));
+}
+
+/**
+ * Converts an arbitrary [start, endInclusive] range into exclusive
+ * Massachusetts business-day boundaries so records near midnight never shift
+ * into the wrong month.
+ */
+export function businessRangeInMassachusetts(start: Date, endInclusive: Date): { start: Date; end: Date } {
+  const endDayStart = businessDayStartInMassachusetts(endInclusive);
+  return {
+    start: businessDayStartInMassachusetts(start),
+    end: new Date(endDayStart.getTime() + 24 * 60 * 60 * 1000),
+  };
+}
+
 /**
  * True when a time entry's stored hourlyRateSnapshot must be recomputed:
  * only when the employee or clock-in date changes. Editing unrelated fields

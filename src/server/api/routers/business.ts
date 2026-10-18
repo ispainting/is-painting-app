@@ -3,6 +3,8 @@ import { z } from "zod";
 import { router, adminProcedure } from "../trpc";
 import { getLifecycleDate } from "@/lib/job-lifecycle";
 import { jobCanonicalTotal } from "@/lib/job-total";
+import { buildLeadSourceQualityReport } from "@/lib/lead-source-quality";
+import { businessRangeInMassachusetts } from "@/lib/employee-rate-resolver";
 
 const SURVIVAL_TARGET = 40_000;
 const MONTHLY_GOAL = 65_000;
@@ -262,8 +264,11 @@ async function loadBusinessHistory(prisma: any, start: Date, end: Date) {
         leadReceivedAt: true,
         createdAt: true,
         updatedAt: true,
-        customer: { select: { id: true, name: true, source: true } },
-        job: { select: { id: true, name: true } },
+        customer: { select: { id: true, name: true, source: true, leadSource: true } },
+        job: { select: { id: true, name: true, contractAmount: true, totalEstimate: true } },
+        proposals: {
+          select: { id: true, status: true, totalAmount: true, createdAt: true, sentAt: true },
+        },
       },
     }),
     prisma.proposal.findMany({
@@ -698,6 +703,18 @@ export const businessRouter = router({
     const compare = compareRange ? currentPeriodMetrics(compareRange, history) : null;
     const comparisons = compareMetrics(current, compare);
 
+    // Lead Source Quality: cohort by MA business-day lead dates; cash stays
+    // grouped by payment dateReceived inside the same MA-bounded period.
+    const maRange = businessRangeInMassachusetts(range.start, range.end);
+    const leadSourceQuality = buildLeadSourceQualityReport({
+      opportunities: history.opportunities,
+      payments: history.payments,
+      cohortStart: maRange.start,
+      cohortEnd: maRange.end,
+      cashStart: maRange.start,
+      cashEnd: maRange.end,
+    });
+
     const proposalSeries = monthlyRevenue.map((point) => {
       const monthDate = new Date(point.key + "-01T00:00:00");
       const monthProposals = history.proposals.filter((proposal: any) => isInRange(proposal.createdAt, startOfMonth(monthDate), endOfMonth(monthDate)));
@@ -752,6 +769,7 @@ export const businessRouter = router({
         series: proposalSeries,
       },
       leadSources: leadSourceAnalytics,
+      leadSourceQuality,
       customers: customerAnalytics,
       employees: employeeAnalytics,
       seasonal: seasonalTrends,

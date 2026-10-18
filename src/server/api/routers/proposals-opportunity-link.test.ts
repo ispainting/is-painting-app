@@ -160,7 +160,11 @@ describe("proposals.convertToJob opportunity resolution", () => {
     };
     const prisma = {
       proposal: { findUnique: vi.fn().mockResolvedValue(proposal) },
-      opportunity: { findMany: vi.fn().mockResolvedValue(openOpportunities) },
+      opportunity: {
+        findMany: vi.fn().mockResolvedValue(openOpportunities),
+        findUnique: vi.fn().mockResolvedValue({ id: 7, stage: "estimate_sent", status: "open" }),
+        update: vi.fn().mockResolvedValue({}),
+      },
       $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
     };
     return { prisma, tx };

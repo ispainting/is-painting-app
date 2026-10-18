@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import * as XLSX from "xlsx";
+import { LeadSourceQualityTable } from "@/components/reports/LeadSourceQualityTable";
 import {
   Area,
   AreaChart,
@@ -289,6 +290,13 @@ export default function ReportsPage() {
                   </tbody>
                 </table>
               </div>
+            </SectionBlock>
+
+            <SectionBlock title="Lead Source Quality" icon={Sparkles}>
+              <p className="mb-3 text-xs text-slate-500">
+                Lead cohort grouped by lead-received date (Massachusetts business days). Cash collected is grouped by payment date and labeled separately from lead-cohort value. Invalid/duplicate and spam/fraud leads are shown, never removed.
+              </p>
+              <LeadSourceQualityTable data={data.leadSourceQuality} />
             </SectionBlock>
 
             <SectionBlock title="Customer Intelligence" icon={FileText}>

@@ -12,13 +12,15 @@ export const PIPELINE_STAGE_OPTIONS = [
   { value: "approval", label: "Approval" },
   { value: "service_delivery", label: "Service Delivery" },
   { value: "review", label: "Review" },
-  { value: "not_qualified", label: "Unqualified" },
-  { value: "lost", label: "Lost" },
+  { value: "not_qualified", label: "Not Qualified" },
+  { value: "lost", label: "Lost / Cancelled" },
+  { value: "invalid_duplicate", label: "Invalid / Duplicate" },
+  { value: "spam_fraud", label: "Spam / Fraud" },
 ] as const;
 
 export type PipelineStageValue = (typeof PIPELINE_STAGE_OPTIONS)[number]["value"];
 
 export const PIPELINE_STAGE_VALUES = PIPELINE_STAGE_OPTIONS.map((option) => option.value) as PipelineStageValue[];
 
-/** Terminal stages: a historical opportunity in one of these must not block a new lead. */
-export const TERMINAL_PIPELINE_STAGES: PipelineStageValue[] = ["lost", "not_qualified"];
+/** Terminal stages: automation never moves an opportunity out of these; only an explicit admin action can. */
+export const TERMINAL_PIPELINE_STAGES: PipelineStageValue[] = ["lost", "not_qualified", "invalid_duplicate", "spam_fraud"];

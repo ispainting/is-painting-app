@@ -52,6 +52,8 @@ enum OpportunityStage {
   no_reply
   lost
   not_qualified
+  invalid_duplicate
+  spam_fraud
 }
 
 enum OpportunityStatus {

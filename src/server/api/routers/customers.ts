@@ -7,7 +7,7 @@ import { TERMINAL_PIPELINE_STAGES } from "@/lib/pipeline-stages";
 const OpportunityStageZ = z.enum([
   "new_lead", "onboarding", "not_answered", "follow_up",
   "estimate_sent", "approval", "service_delivery", "review",
-  "no_reply", "lost", "not_qualified",
+  "no_reply", "lost", "not_qualified", "invalid_duplicate", "spam_fraud",
 ]);
 
 const customerPhoneSchema = z.object({

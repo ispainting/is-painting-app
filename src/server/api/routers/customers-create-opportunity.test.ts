@@ -96,7 +96,7 @@ describe("customers.create opportunity intake", () => {
     // The duplicate guard checks open status and excludes terminal stages.
     const where = tx.opportunity.findFirst.mock.calls[0]?.[0].where;
     expect(where.status).toBe("open");
-    expect(where.stage.notIn).toEqual(["lost", "not_qualified"]);
+    expect(where.stage.notIn).toEqual(["lost", "not_qualified", "invalid_duplicate", "spam_fraud"]);
   });
 
   it("does not let lost/not_qualified history block a new lead", async () => {

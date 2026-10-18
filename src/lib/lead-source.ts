@@ -22,6 +22,29 @@ export type LeadSource = (typeof LEAD_SOURCE_OPTIONS)[number];
 
 export const REFERRAL_LEAD_SOURCE: LeadSource = "Referral";
 
+export const UNKNOWN_LEAD_SOURCE = "Unknown";
+
+/**
+ * Normalizes a free-text source for reporting, matching the bucket behavior
+ * analytics already uses. Legacy values pass through when canonical, map to
+ * "Other" when unrecognized, and empty becomes "Unknown" so missing
+ * attribution stays visible and correctable.
+ */
+export function normalizeLeadSourceForReport(source: string | null | undefined): string {
+  const value = (source ?? "").trim();
+  if (!value) return UNKNOWN_LEAD_SOURCE;
+  const lower = value.toLowerCase();
+  if (lower === "google") return "Google";
+  if (lower === "google business") return "Google Business";
+  if (lower === "facebook" || lower === "meta") return "Facebook";
+  if (lower === "instagram") return "Instagram";
+  if (lower === "website") return "Website";
+  if (lower === "referral") return "Referral";
+  if (lower === "builder") return "Builder";
+  if (lower === "repeat customer" || lower === "repeat_customer") return "Repeat Customer";
+  return (LEAD_SOURCE_OPTIONS as readonly string[]).includes(value) ? value : "Other";
+}
+
 export function isReferralSource(source: string | null | undefined): boolean {
   return (source ?? "").trim() === REFERRAL_LEAD_SOURCE;
 }

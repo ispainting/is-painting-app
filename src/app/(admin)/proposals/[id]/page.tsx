@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
+import { opportunityStageLabel } from "@/lib/pipeline-sync";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { toast } from "sonner";
 import type { LaborLineDraft, SectionEstimateDraft, SectionMaterialDraft } from "./SectionMaterialsAndLabor";
@@ -1552,7 +1553,7 @@ export default function ProposalDetailPage() {
               {proposal.opportunity ? (
                 <span className="text-slate-900">
                   {proposal.opportunity.name}{" "}
-                  <span className="text-slate-500">· {proposal.opportunity.stage.replace(/_/g, " ")}</span>
+                  <span className="text-slate-500">· {opportunityStageLabel(proposal.opportunity.stage)}</span>
                 </span>
               ) : (
                 <span className="text-amber-700">Not linked — conversion needs exactly one open opportunity or an explicit link.</span>

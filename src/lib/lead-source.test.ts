@@ -38,26 +38,23 @@ describe("lead source options", () => {
 describe("pipeline stage options", () => {
   it("covers every required stage with readable labels", () => {
     const values = PIPELINE_STAGE_OPTIONS.map((option) => option.value);
-    expect(values).toEqual([
-      "new_lead",
-      "onboarding",
-      "not_answered",
-      "follow_up",
-      "estimate_sent",
-      "approval",
-      "service_delivery",
-      "review",
-      "not_qualified",
-      "lost",
-    ]);
+    for (const stage of [
+      "new_lead", "onboarding", "not_answered", "follow_up",
+      "estimate_sent", "approval", "service_delivery", "review",
+      "not_qualified", "lost", "invalid_duplicate", "spam_fraud",
+    ]) {
+      expect(values).toContain(stage);
+    }
     const labels = PIPELINE_STAGE_OPTIONS.map((option) => option.label);
     expect(labels).toContain("New Lead");
-    expect(labels).toContain("Unqualified");
-    expect(labels).toContain("Lost");
+    expect(labels).toContain("Not Qualified");
+    expect(labels).toContain("Lost / Cancelled");
+    expect(labels).toContain("Invalid / Duplicate");
+    expect(labels).toContain("Spam / Fraud");
   });
 
-  it("treats lost and not_qualified as terminal", () => {
-    expect(TERMINAL_PIPELINE_STAGES).toEqual(["lost", "not_qualified"]);
+  it("treats lost, not_qualified, invalid_duplicate, and spam_fraud as terminal", () => {
+    expect(TERMINAL_PIPELINE_STAGES).toEqual(["lost", "not_qualified", "invalid_duplicate", "spam_fraud"]);
   });
 });
 

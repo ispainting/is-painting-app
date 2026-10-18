@@ -12,7 +12,16 @@ const StatusZ = z.enum(["open", "won", "lost"]);
 export const opportunitiesRouter = router({
   list: protectedProcedure.query(({ ctx }) =>
     ctx.prisma.opportunity.findMany({
-      include: { customer: true, assignedTo: true },
+      include: {
+        customer: true,
+        assignedTo: true,
+        job: { select: { id: true, name: true } },
+        proposals: {
+          select: { id: true, proposalNumber: true, status: true },
+          orderBy: { createdAt: "desc" },
+          take: 1,
+        },
+      },
       orderBy: { createdAt: "desc" },
     })
   ),

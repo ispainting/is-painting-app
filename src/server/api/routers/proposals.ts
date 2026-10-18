@@ -14,6 +14,7 @@ import {
 } from "@/lib/proposal-estimate-engine";
 import { assertCustomerLinked, ProposalNotLinkedError } from "@/lib/proposal-guards";
 import { isOpenNonTerminalOpportunity, resolveOpportunityForProposal } from "@/lib/proposal-opportunity";
+import { applyOpportunityTransition, resolveProposalEventStage, type ProposalPipelineEvent } from "@/lib/pipeline-sync";
 
 const ProposalStatusZ = z.enum(["draft", "ready", "sent", "viewed", "approved", "declined", "follow_up", "converted"]);
 const ProposalTemplateZ = z.enum([
@@ -1355,7 +1356,7 @@ export const proposalsRouter = router({
     .mutation(async ({ ctx, input }) => {
       const current = await ctx.prisma.proposal.findUnique({
         where: { id: input.id },
-        select: { status: true, sentAt: true, approvedAt: true, customerId: true },
+        select: { status: true, sentAt: true, approvedAt: true, customerId: true, opportunityId: true },
       });
 
       if (!current) {
@@ -1391,7 +1392,7 @@ export const proposalsRouter = router({
       const estimatePersistence = buildProposalEstimatePersistence(authoritativeEstimate, input.data, config);
       const finalTotalAmount = authoritativeEstimate?.estimate.finalCustomerPrice ?? input.data.totalAmount ?? budgetTotal;
 
-      return ctx.prisma.proposal.update({
+      const updated = await ctx.prisma.proposal.update({
         where: { id: input.id },
         data: {
           customerId: input.data.customerId ?? null,
@@ -1474,6 +1475,13 @@ export const proposalsRouter = router({
           paintColors: { orderBy: { sortOrder: "asc" } },
         },
       });
+      // Pipeline sync: status changes via the editor drive the linked opportunity stage.
+      await applyOpportunityTransition(
+        ctx.prisma,
+        current.opportunityId,
+        resolveProposalEventStage(input.data.status as ProposalPipelineEvent)
+      );
+      return updated;
     }),
 
   setStatus: adminProcedure
@@ -1481,7 +1489,7 @@ export const proposalsRouter = router({
     .mutation(async ({ ctx, input }) => {
       const current = await ctx.prisma.proposal.findUnique({
         where: { id: input.id },
-        select: { status: true, sentAt: true, approvedAt: true, customerId: true },
+        select: { status: true, sentAt: true, approvedAt: true, customerId: true, opportunityId: true },
       });
 
       if (!current) {
@@ -1499,7 +1507,7 @@ export const proposalsRouter = router({
         guardCustomerLinkedForStatus(current.customerId, input.status);
       }
 
-      return ctx.prisma.proposal.update({
+      const updated = await ctx.prisma.proposal.update({
         where: { id: input.id },
         data: {
           status: input.status,
@@ -1507,6 +1515,12 @@ export const proposalsRouter = router({
           approvedAt: input.status === "approved" && !current.approvedAt ? new Date() : current.approvedAt,
         },
       });
+      await applyOpportunityTransition(
+        ctx.prisma,
+        current.opportunityId,
+        resolveProposalEventStage(input.status as ProposalPipelineEvent)
+      );
+      return updated;
     }),
 
   /** Search-and-select or create-and-link happens client side via customers.create; this only links an existing customer. */
@@ -1694,6 +1708,9 @@ export const proposalsRouter = router({
 
       return { job: createdJob, reusedExistingJob: false };
     });
+
+    // Conversion keeps the pipeline at approval (forward-only, guarded).
+    await applyOpportunityTransition(ctx.prisma, resolvedOpportunity?.id, "approval");
 
     return { ...job, opportunityLinked: resolvedOpportunity !== null, reusedExistingJob, warnings };
   }),
