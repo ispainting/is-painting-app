@@ -1674,6 +1674,11 @@ export const proposalsRouter = router({
           laborBudget: seed.laborBudget,
           totalEstimate: seed.totalEstimate,
           contractAmount: seed.totalEstimate,
+          // A converted job starts approved and visible (never archived), so it
+          // appears immediately in the Jobs Approved tab.
+          status: "approved",
+          approvedAt: new Date(),
+          deletedAt: null,
           // Freshly created jobs have no lifecycle dates, so these copies can
           // never overwrite a manually edited value.
           leadReceivedAt: resolvedOpportunity?.leadReceivedAt ?? null,

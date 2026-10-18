@@ -3,16 +3,25 @@ import {
   isReferralSource,
   LEAD_SOURCE_OPTIONS,
   leadSourceOptionsWithLegacy,
+  normalizeLeadSourceForReport,
   resolveReferralName,
 } from "./lead-source";
 import { PIPELINE_STAGE_OPTIONS, TERMINAL_PIPELINE_STAGES } from "./pipeline-stages";
 import { startOfBusinessDayInMassachusetts, todayDateInputValueInMassachusetts } from "./employee-rate-resolver";
 
 describe("lead source options", () => {
-  it("includes the canonical sources used by analytics", () => {
-    for (const source of ["Google", "Website", "Referral", "Builder", "Repeat Customer", "Other"]) {
-      expect(LEAD_SOURCE_OPTIONS).toContain(source);
-    }
+  it("is exactly the canonical list", () => {
+    expect([...LEAD_SOURCE_OPTIONS]).toEqual([
+      "LSA",
+      "Google Ads",
+      "Meta Ads",
+      "Website",
+      "Chat GPT",
+      "Builder",
+      "Referral",
+      "Repeated Customer",
+      "Other",
+    ]);
   });
 
   it("preserves a historical free-text value as a legacy option", () => {
@@ -22,7 +31,7 @@ describe("lead source options", () => {
   });
 
   it("does not duplicate canonical values", () => {
-    expect(leadSourceOptionsWithLegacy("Google")).toEqual([...LEAD_SOURCE_OPTIONS]);
+    expect(leadSourceOptionsWithLegacy("Google Ads")).toEqual([...LEAD_SOURCE_OPTIONS]);
     expect(leadSourceOptionsWithLegacy("")).toEqual([...LEAD_SOURCE_OPTIONS]);
     expect(leadSourceOptionsWithLegacy(null)).toEqual([...LEAD_SOURCE_OPTIONS]);
   });
@@ -30,8 +39,32 @@ describe("lead source options", () => {
   it("keeps Referral Name only when Lead Source is Referral", () => {
     expect(isReferralSource("Referral")).toBe(true);
     expect(resolveReferralName("Referral", " Jane D ")).toBe("Jane D");
-    expect(resolveReferralName("Google", "Jane D")).toBeUndefined();
+    expect(resolveReferralName("Google Ads", "Jane D")).toBeUndefined();
     expect(resolveReferralName("Referral", "  ")).toBeUndefined();
+  });
+});
+
+describe("legacy source normalization", () => {
+  it("maps historical aliases onto canonical labels", () => {
+    expect(normalizeLeadSourceForReport("Google Local Services")).toBe("LSA");
+    expect(normalizeLeadSourceForReport("Local Services Ads")).toBe("LSA");
+    expect(normalizeLeadSourceForReport("LSA")).toBe("LSA");
+    expect(normalizeLeadSourceForReport("Google")).toBe("Google Ads");
+    expect(normalizeLeadSourceForReport("PPC")).toBe("Google Ads");
+    expect(normalizeLeadSourceForReport("Facebook")).toBe("Meta Ads");
+    expect(normalizeLeadSourceForReport("Instagram")).toBe("Meta Ads");
+    expect(normalizeLeadSourceForReport("Meta")).toBe("Meta Ads");
+    expect(normalizeLeadSourceForReport("ChatGPT")).toBe("Chat GPT");
+    expect(normalizeLeadSourceForReport("OpenAI")).toBe("Chat GPT");
+    expect(normalizeLeadSourceForReport("Repeat Customer")).toBe("Repeated Customer");
+    expect(normalizeLeadSourceForReport("Existing Customer")).toBe("Repeated Customer");
+    expect(normalizeLeadSourceForReport("word of mouth referral")).toBe("Referral");
+  });
+
+  it("keeps unknown legacy values visible and never rewrites them", () => {
+    expect(normalizeLeadSourceForReport("Home Show 2024")).toBe("Home Show 2024");
+    expect(normalizeLeadSourceForReport("")).toBe("Unknown");
+    expect(normalizeLeadSourceForReport(null)).toBe("Unknown");
   });
 });
 

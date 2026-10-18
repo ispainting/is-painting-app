@@ -185,6 +185,19 @@ describe("proposals.convertToJob opportunity resolution", () => {
     expect(result.warnings).toEqual([]);
   });
 
+  it("creates the job approved and active-visible so it appears in the Approved tab", async () => {
+    const { prisma, tx } = conversionMocks(
+      proposalWith({ id: 7, customerId: 1, leadReceivedAt }),
+      []
+    );
+    await callerWith(prisma).convertToJob({ id: 10 });
+
+    const data = tx.job.create.mock.calls[0]?.[0].data;
+    expect(data.status).toBe("approved");
+    expect(data.deletedAt).toBeNull();
+    expect(data.approvedAt).toBeInstanceOf(Date);
+  });
+
   it("legacy conversion links the single unambiguous open opportunity", async () => {
     const { prisma, tx } = conversionMocks(
       proposalWith(null),

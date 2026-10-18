@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { isReferralSource, leadSourceOptionsWithLegacy, resolveReferralName } from "@/lib/lead-source";
 import { PIPELINE_STAGE_OPTIONS, type PipelineStageValue } from "@/lib/pipeline-stages";
+import { opportunityStageLabel } from "@/lib/pipeline-sync";
 import { startOfBusinessDayInMassachusetts, todayDateInputValueInMassachusetts } from "@/lib/employee-rate-resolver";
 import { api } from "@/trpc/react";
 import { Filter, Plus, Search, SlidersHorizontal, Tags, Users } from "lucide-react";
@@ -13,7 +14,7 @@ import { toast } from "sonner";
 
 type SortBy = "name" | "createdAt" | "lastContact" | "lifetimeValue" | "openBalance" | "activeJobs" | "proposalCount";
 type SortDirection = "asc" | "desc";
-type BulkAction = "add_tags" | "remove_tags" | "set_status" | "delete";
+type BulkAction = "add_tags" | "remove_tags" | "delete";
 
 type CustomerFormState = {
   name: string;
@@ -71,7 +72,6 @@ function freshCreateForm(): CustomerFormState {
 export default function CustomersPage() {
   const utils = api.useUtils();
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("");
   const [leadSourceFilter, setLeadSourceFilter] = useState<string>("");
   const [tagFilter, setTagFilter] = useState<string>("");
   const [sortBy, setSortBy] = useState<SortBy>("createdAt");
@@ -81,7 +81,6 @@ export default function CustomersPage() {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [bulkAction, setBulkAction] = useState<BulkAction>("add_tags");
   const [bulkTags, setBulkTags] = useState("");
-  const [bulkStatus, setBulkStatus] = useState("Active");
   const [open, setOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -90,7 +89,6 @@ export default function CustomersPage() {
 
   const queryInput = {
     search,
-    statuses: statusFilter ? [statusFilter] : undefined,
     tags: tagFilter ? [tagFilter] : undefined,
     leadSources: leadSourceFilter ? [leadSourceFilter] : undefined,
     sortBy,
@@ -143,10 +141,6 @@ export default function CustomersPage() {
 
   const rows = data ?? [];
 
-  const availableStatuses = useMemo(
-    () => Array.from(new Set(rows.map((row) => row.status).filter(Boolean))).sort(),
-    [rows],
-  );
   const availableLeadSources = useMemo(
     () => Array.from(new Set(rows.map((row) => row.leadSource || row.source).filter(Boolean))).sort(),
     [rows],
@@ -257,14 +251,10 @@ export default function CustomersPage() {
     if ((bulkAction === "add_tags" || bulkAction === "remove_tags") && !parseTags(bulkTags).length) {
       return toast.error("Enter at least one tag.");
     }
-    if (bulkAction === "set_status" && !bulkStatus.trim()) {
-      return toast.error("Choose a status.");
-    }
     bulkUpdate.mutate({
       ids: selectedIds,
       action: bulkAction,
       tags: bulkAction === "add_tags" || bulkAction === "remove_tags" ? parseTags(bulkTags) : undefined,
-      status: bulkAction === "set_status" ? bulkStatus : undefined,
     });
   }
 
@@ -299,17 +289,6 @@ export default function CustomersPage() {
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
               />
-            }
-          />
-          <Field
-            label="Status"
-            content={
-              <select className="input" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-                <option value="">All statuses</option>
-                {availableStatuses.map((status) => (
-                  <option key={status} value={status || ""}>{status}</option>
-                ))}
-              </select>
             }
           />
           <Field
@@ -378,7 +357,6 @@ export default function CustomersPage() {
             <select className="input" value={bulkAction} onChange={(event) => setBulkAction(event.target.value as BulkAction)}>
               <option value="add_tags">Add tags</option>
               <option value="remove_tags">Remove tags</option>
-              <option value="set_status">Set status</option>
               <option value="delete">Archive</option>
             </select>
             <input
@@ -386,14 +364,7 @@ export default function CustomersPage() {
               placeholder="Tags, comma separated"
               value={bulkTags}
               onChange={(event) => setBulkTags(event.target.value)}
-              disabled={bulkAction === "set_status" || bulkAction === "delete"}
-            />
-            <input
-              className="input"
-              placeholder="Status"
-              value={bulkStatus}
-              onChange={(event) => setBulkStatus(event.target.value)}
-              disabled={bulkAction !== "set_status"}
+              disabled={bulkAction === "delete"}
             />
             <button className="btn btn-primary" onClick={applyBulkAction} disabled={bulkUpdate.isPending || !selectedIds.length}>
               {bulkUpdate.isPending ? "Applying…" : `Apply to ${selectedIds.length || 0}`}
@@ -415,7 +386,7 @@ export default function CustomersPage() {
                   />
                 </th>
                 <th className="px-4 py-3 font-medium">Customer</th>
-                <th className="px-4 py-3 font-medium">Status</th>
+                <th className="px-4 py-3 font-medium">Pipeline</th>
                 <th className="px-4 py-3 font-medium">Lead Source</th>
                 <th className="px-4 py-3 font-medium">Lifetime Value</th>
                 <th className="px-4 py-3 font-medium">Last Contact</th>
@@ -455,7 +426,7 @@ export default function CustomersPage() {
                         )) : <span className="text-xs text-slate-400">No tags</span>}
                       </div>
                     </td>
-                    <td className="px-4 py-3 align-top">{customer.status || "—"}</td>
+                    <td className="px-4 py-3 align-top">{customer.openStage ? opportunityStageLabel(customer.openStage) : "No open opportunity"}</td>
                     <td className="px-4 py-3 align-top">{customer.leadSource || customer.source || "—"}</td>
                     <td className="px-4 py-3 align-top">{formatCurrency(customer.metrics.lifetimeValue)}</td>
                     <td className="px-4 py-3 align-top">{formatDate(customer.lastContactAt)}</td>
@@ -572,9 +543,6 @@ function CustomerEditorModal({
             <Input label="Referral Name" value={form.referralSource} onChange={(value) => onChange({ ...form, referralSource: value })} />
           ) : null}
           <Input label="Preferred Communication" value={form.preferredCommunication} onChange={(value) => onChange({ ...form, preferredCommunication: value })} />
-          {mode === "edit" ? (
-            <Input label="Status" value={form.status} onChange={(value) => onChange({ ...form, status: value })} />
-          ) : null}
           {mode === "create" ? (
             <>
               <div>

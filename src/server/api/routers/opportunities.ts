@@ -1,5 +1,8 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, adminProcedure } from "../trpc";
+import { TERMINAL_PIPELINE_STAGES } from "@/lib/pipeline-stages";
+import { isReferralSource } from "@/lib/lead-source";
 
 const PipelineZ = z.enum(["sales", "not_interested"]);
 const StageZ = z.enum([
@@ -41,11 +44,51 @@ export const opportunitiesRouter = router({
       stage: StageZ.default("new_lead"),
       leadValue: z.number().optional(),
       source: z.string().optional(),
+      referralSource: z.string().optional(),
       assignedToId: z.number().optional(),
       notes: z.string().optional(),
       leadReceivedAt: z.coerce.date().optional(),
     }))
-    .mutation(({ ctx, input }) => ctx.prisma.opportunity.create({ data: input })),
+    .mutation(async ({ ctx, input }) => {
+      return ctx.prisma.$transaction(async (tx) => {
+        const customer = await tx.customer.findUnique({ where: { id: input.customerId }, select: { id: true } });
+        if (!customer) throw new TRPCError({ code: "NOT_FOUND", message: "Customer not found." });
+
+        // Block an accidental duplicate: one open non-terminal opportunity per
+        // customer. Terminal history never blocks a legitimate new lead.
+        const existingOpen = await tx.opportunity.findFirst({
+          where: {
+            customerId: input.customerId,
+            status: "open",
+            stage: { notIn: TERMINAL_PIPELINE_STAGES },
+          },
+          select: { id: true, name: true },
+        });
+        if (existingOpen) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `This customer already has an open opportunity ("${existingOpen.name}"). Close it as terminal before creating a new one.`,
+          });
+        }
+
+        const { referralSource, ...opportunityData } = input;
+        const opportunity = await tx.opportunity.create({ data: opportunityData });
+
+        // Preserve referral attribution on the customer without overwriting.
+        if (referralSource?.trim() && isReferralSource(input.source)) {
+          await tx.customer.updateMany({
+            where: { id: input.customerId, OR: [{ referralSource: null }, { referralSource: "" }] },
+            data: { referralSource: referralSource.trim() },
+          });
+          await tx.customer.updateMany({
+            where: { id: input.customerId, OR: [{ leadSource: null }, { leadSource: "" }] },
+            data: { leadSource: "Referral" },
+          });
+        }
+
+        return opportunity;
+      });
+    }),
 
   setStage: adminProcedure
     .input(z.object({ id: z.number(), pipeline: PipelineZ, stage: StageZ, status: StatusZ.optional() }))
@@ -77,7 +120,31 @@ export const opportunitiesRouter = router({
       ctx.prisma.opportunity.update({ where: { id: input.id }, data: input.data })
     ),
 
-  remove: adminProcedure.input(z.object({ id: z.number() })).mutation(({ ctx, input }) =>
-    ctx.prisma.opportunity.delete({ where: { id: input.id } })
-  ),
+  remove: adminProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
+    const opportunity = await ctx.prisma.opportunity.findUnique({
+      where: { id: input.id },
+      select: {
+        id: true,
+        name: true,
+        customer: { select: { name: true } },
+        job: { select: { id: true } },
+        _count: { select: { proposals: true, automationRuns: true } },
+      },
+    });
+    if (!opportunity) throw new TRPCError({ code: "NOT_FOUND", message: "Opportunity not found." });
+
+    const blockers: string[] = [];
+    if (opportunity._count.proposals > 0) blockers.push(`${opportunity._count.proposals} linked proposal(s)`);
+    if (opportunity.job) blockers.push("a linked job");
+    if (opportunity._count.automationRuns > 0) blockers.push("automation history");
+    if (blockers.length > 0) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: `Cannot delete this opportunity: it has ${blockers.join(", ")}. Remove those links first.`,
+      });
+    }
+
+    await ctx.prisma.opportunity.delete({ where: { id: input.id } });
+    return { ok: true };
+  }),
 });

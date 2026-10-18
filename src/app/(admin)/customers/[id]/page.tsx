@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Timeline } from "@/components/ui/Timeline";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils";
 import { isReferralSource, leadSourceOptionsWithLegacy } from "@/lib/lead-source";
-import { opportunityStageLabel } from "@/lib/pipeline-sync";
+import { opportunityStageLabel, isTerminalStage } from "@/lib/pipeline-sync";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { api } from "@/trpc/react";
 import {
   BellRing,
@@ -194,6 +195,21 @@ export default function CustomerProfilePage() {
 
   const payload = profile.data as any;
   const customer = payload?.customer as any;
+  const router = useRouter();
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [confirmTestCleanup, setConfirmTestCleanup] = useState(false);
+  const removeCustomer = api.customers.remove.useMutation({
+    onSuccess: () => {
+      toast.success("Customer deleted");
+      utils.customers.list.invalidate();
+      utils.opportunities.list.invalidate();
+      utils.jobs.list.invalidate();
+      utils.business.analytics.invalidate();
+      utils.reports.dashboard.invalidate();
+      router.push("/customers");
+    },
+    onError: (error) => toast.error(error.message),
+  });
 
   useEffect(() => {
     if (!customer) return;
@@ -352,7 +368,7 @@ export default function CustomerProfilePage() {
                 <Info label="Preferred Communication" value={customer.preferredCommunication || "Not set"} />
                 <Info label="Lead Source" value={customer.leadSource || customer.source || "Not set"} />
                 <Info label="Referral Source" value={customer.referralSource || "Not set"} />
-                <Info label="Status" value={customer.status || "Not set"} />
+                <Info label="Pipeline Stage" value={pipelineStageForCustomer(customer)} />
                 <Info label="Last Contact" value={formatDate(payload.stats.lastContactAt)} />
                 <Info label="Next Follow-up" value={formatDate(payload.stats.nextFollowUpAt)} />
                 <Info label="Primary Address" value={formatAddress(customer)} />
@@ -428,7 +444,6 @@ export default function CustomerProfilePage() {
               <Input label="Primary Contact" value={profileDraft.contactName} onChange={(value) => setProfileDraft({ ...profileDraft, contactName: value })} />
               <Input label="Primary Email" value={profileDraft.email} onChange={(value) => setProfileDraft({ ...profileDraft, email: value })} />
               <Input label="Primary Phone" value={profileDraft.phone} onChange={(value) => setProfileDraft({ ...profileDraft, phone: value })} />
-              <Input label="Status" value={profileDraft.status} onChange={(value) => setProfileDraft({ ...profileDraft, status: value })} />
               <div>
                 <label className="label">Lead Source</label>
                 <select
@@ -795,8 +810,42 @@ export default function CustomerProfilePage() {
           </div>
         </SectionCard>
       ) : null}
+
+      <ConfirmDialog
+        open={deleteOpen}
+        title="Delete Customer"
+        destructive
+        confirmLabel={confirmTestCleanup ? "Delete test customer and related test records" : "Delete Customer"}
+        isPending={removeCustomer.isPending}
+        onCancel={() => {
+          setDeleteOpen(false);
+          setConfirmTestCleanup(false);
+        }}
+        onConfirm={() => removeCustomer.mutate({ id, confirmTestGraphCleanup: confirmTestCleanup })}
+        message={
+          <div className="space-y-2">
+            <p>
+              Delete <span className="font-semibold">{customer.name}</span>?
+            </p>
+            <p>
+              Linked records: {(customer.opportunities || []).length} opportunity(ies), {(customer.proposals || []).length} proposal(s),{" "}
+              {(customer.jobs || []).length} job(s), {(customer.invoices || []).length} invoice(s).
+            </p>
+            <p>Protected financial/work records (invoices, payments, expenses, time entries, attachments, automation history) block deletion.</p>
+            <label className="flex items-center gap-2 text-sm font-medium text-rose-700">
+              <input type="checkbox" checked={confirmTestCleanup} onChange={(event) => setConfirmTestCleanup(event.target.checked)} />
+              Delete test customer and related test records
+            </label>
+          </div>
+        }
+      />
     </div>
   );
+}
+
+function pipelineStageForCustomer(customer: any): string {
+  const open = (customer?.opportunities || []).find((o: any) => o.status === "open" && !isTerminalStage(o.stage));
+  return open ? opportunityStageLabel(open.stage) : "No open opportunity";
 }
 
 function buildProfileDraft(customer: any, stats: any): ProfileDraft {

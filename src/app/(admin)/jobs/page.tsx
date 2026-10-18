@@ -217,7 +217,7 @@ export default function JobsPage() {
                           setConfirmDeleteOpen(true);
                         }}
                       >
-                        Delete
+                        Archive
                       </button>
                     </div>
                   </td>
@@ -335,9 +335,9 @@ export default function JobsPage() {
 
       <ConfirmDialog
         open={confirmDeleteOpen}
-        title="Delete Job"
-        message={`Are you sure you want to delete this job? This cannot be undone.`}
-        confirmLabel="Delete Job"
+        title="Archive Job"
+        message={`Archive "${selectedJob?.name}"? It moves to Archived and can be restored anytime.`}
+        confirmLabel="Archive Job"
         destructive
         isPending={deleteJob.isPending}
         onCancel={() => {

@@ -32,9 +32,9 @@ function report(opportunities: never[], payments: never[] = []) {
 
 describe("lead source resolution order", () => {
   it("prefers Opportunity.source, then Customer.leadSource, then Customer.source, then Unknown", () => {
-    expect(resolveOpportunityLeadSource(opp({ source: "Google", customer: { leadSource: "Website", source: "Legacy" } }) as never)).toBe("Google");
+    expect(resolveOpportunityLeadSource(opp({ source: "Google", customer: { leadSource: "Website", source: "Legacy" } }) as never)).toBe("Google Ads");
     expect(resolveOpportunityLeadSource(opp({ customer: { leadSource: "referral", source: "Legacy" } }) as never)).toBe("Referral");
-    expect(resolveOpportunityLeadSource(opp({ customer: { source: "Home Show 2024" } }) as never)).toBe("Other"); // preserved legacy value maps to Other bucket
+    expect(resolveOpportunityLeadSource(opp({ customer: { source: "Home Show 2024" } }) as never)).toBe("Home Show 2024"); // legacy value stays visible
     expect(resolveOpportunityLeadSource(opp({}) as never)).toBe("Unknown");
   });
 });
@@ -73,7 +73,7 @@ describe("quality classification", () => {
       opp({ id: 6, stage: "new_lead" }) as never,
     ]);
 
-    const google = rows.find((row) => row.source === "Google")!;
+    const google = rows.find((row) => row.source === "Google Ads")!;
     expect(google.totalLeads).toBe(5);
     expect(google.invalidDuplicate).toBe(1);
     expect(google.spamFraud).toBe(1);
@@ -127,5 +127,10 @@ describe("double-count protection and value rules", () => {
     ] as never[];
     const { totals } = report(opportunities, payments);
     expect(totals.cashCollected).toBe(3000);
+  });
+
+  it("keeps canonical sources as row keys", () => {
+    const { rows } = report([opp({ id: 1, source: "LSA", stage: "new_lead" }) as never]);
+    expect(rows[0]?.source).toBe("LSA");
   });
 });

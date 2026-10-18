@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
@@ -157,8 +157,34 @@ export default function JobDetailPage() {
     onSuccess: () => {
       utils.jobs.byId.invalidate({ id });
       utils.jobs.list.invalidate();
+      utils.jobs.statusCounts.invalidate();
       toast.success("Job archived");
       setConfirmDeleteOpen(false);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const restoreJob = api.jobs.restore.useMutation({
+    onSuccess: () => {
+      utils.jobs.byId.invalidate({ id });
+      utils.jobs.list.invalidate();
+      utils.jobs.statusCounts.invalidate();
+      toast.success("Job restored");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const router = useRouter();
+  const [confirmPermanentOpen, setConfirmPermanentOpen] = useState(false);
+  const deleteJobPermanently = api.jobs.remove.useMutation({
+    onSuccess: () => {
+      utils.jobs.list.invalidate();
+      utils.jobs.statusCounts.invalidate();
+      utils.business.analytics.invalidate();
+      utils.reports.dashboard.invalidate();
+      toast.success("Job permanently deleted");
+      setConfirmPermanentOpen(false);
+      router.push("/jobs");
     },
     onError: (e) => toast.error(e.message),
   });
@@ -311,9 +337,20 @@ export default function JobDetailPage() {
             <button className="btn btn-secondary" type="button" onClick={openEditModal}>
               Edit Job
             </button>
-            <button className="btn bg-rose-600 text-white hover:bg-rose-700" type="button" onClick={() => setConfirmDeleteOpen(true)}>
-              Delete Job
-            </button>
+            {job.deletedAt ? (
+              <>
+                <button className="btn btn-secondary" type="button" onClick={() => restoreJob.mutate({ id })} disabled={restoreJob.isPending}>
+                  Restore Job
+                </button>
+                <button className="btn bg-rose-600 text-white hover:bg-rose-700" type="button" onClick={() => setConfirmPermanentOpen(true)}>
+                  Delete Permanently
+                </button>
+              </>
+            ) : (
+              <button className="btn bg-rose-600 text-white hover:bg-rose-700" type="button" onClick={() => setConfirmDeleteOpen(true)}>
+                Archive Job
+              </button>
+            )}
             <select
               className="input w-auto"
               value={job.status}
@@ -325,13 +362,23 @@ export default function JobDetailPage() {
 
               <ConfirmDialog
                 open={confirmDeleteOpen}
-                title="Delete Job"
-                message="Are you sure you want to delete this job? This cannot be undone."
-                confirmLabel="Delete Job"
+                title="Archive Job"
+                message="Archive this job? It disappears from the normal tabs and moves to Archived. You can restore it anytime."
+                confirmLabel="Archive Job"
                 destructive
                 isPending={archiveJob.isPending}
                 onCancel={() => setConfirmDeleteOpen(false)}
                 onConfirm={() => archiveJob.mutate({ id })}
+              />
+              <ConfirmDialog
+                open={confirmPermanentOpen}
+                title="Delete Job Permanently"
+                message={`Permanently delete "${job.name}"? This is only possible for zero-history test jobs. Jobs with invoices, payments, expenses, or time entries are protected and cannot be deleted. This cannot be undone.`}
+                confirmLabel="Delete Permanently"
+                destructive
+                isPending={deleteJobPermanently.isPending}
+                onCancel={() => setConfirmPermanentOpen(false)}
+                onConfirm={() => deleteJobPermanently.mutate({ id })}
               />
             </select>
           </div>

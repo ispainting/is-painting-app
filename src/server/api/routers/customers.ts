@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { adminProcedure, protectedProcedure, router } from "../trpc";
 import { isReferralSource } from "@/lib/lead-source";
 import { TERMINAL_PIPELINE_STAGES } from "@/lib/pipeline-stages";
@@ -377,6 +378,12 @@ export const customersRouter = router({
           take: 1,
           select: { occurredAt: true },
         },
+        opportunities: {
+          where: { status: "open" },
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: { stage: true },
+        },
         _count: {
           select: {
             proposals: { where: { deletedAt: null } },
@@ -413,6 +420,7 @@ export const customersRouter = router({
         leadSource: customer.leadSource,
         referralSource: customer.referralSource,
         status: customer.status,
+        openStage: customer.opportunities[0]?.stage ?? null,
         tags: customer.tags,
         notes: customer.notes,
         createdAt: customer.createdAt,
@@ -864,6 +872,106 @@ export const customersRouter = router({
         toJsonValue({ name: customer.name, status: customer.status, tags: customer.tags }),
       );
       return customer;
+    }),
+
+  /**
+   * Admin-only customer deletion. Empty customers delete outright. Customers
+   * with protected financial/work history are always blocked. A disposable
+   * Preview test graph (opportunities/proposals/jobs with zero protected
+   * records) requires the explicit confirmTestGraphCleanup flag.
+   */
+  remove: adminProcedure
+    .input(z.object({ id: z.number(), confirmTestGraphCleanup: z.boolean().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      const customer = await ctx.prisma.customer.findUnique({
+        where: { id: input.id },
+        select: {
+          id: true,
+          name: true,
+          deletedAt: true,
+          _count: {
+            select: {
+              opportunities: true,
+              proposals: true,
+              jobs: true,
+              invoices: true,
+              files: true,
+              reviewSubmissions: true,
+            },
+          },
+        },
+      });
+      if (!customer || customer.deletedAt) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Customer not found." });
+      }
+
+      const jobs = await ctx.prisma.job.findMany({ where: { customerId: input.id }, select: { id: true } });
+      const jobIds = jobs.map((job) => job.id);
+      const invoices = await ctx.prisma.invoice.findMany({ where: { customerId: input.id }, select: { id: true } });
+      const invoiceIds = invoices.map((invoice) => invoice.id);
+      const proposals = await ctx.prisma.proposal.findMany({ where: { customerId: input.id }, select: { id: true } });
+      const proposalIds = proposals.map((proposal) => proposal.id);
+
+      const [jobPayments, invoicePayments, expenseCount, timeEntryCount, proposalAttachmentCount, automationRunCount] =
+        await Promise.all([
+          ctx.prisma.payment.count({ where: { jobId: { in: jobIds } } }),
+          ctx.prisma.payment.count({ where: { invoiceId: { in: invoiceIds } } }),
+          ctx.prisma.expense.count({ where: { jobId: { in: jobIds } } }),
+          ctx.prisma.timeEntry.count({ where: { jobId: { in: jobIds } } }),
+          ctx.prisma.proposalAttachment.count({ where: { proposalId: { in: proposalIds } } }),
+          ctx.prisma.automationRun.count({ where: { opportunity: { customerId: input.id } } }),
+        ]);
+
+      const blockers: string[] = [];
+      if (customer._count.invoices > 0) blockers.push(`${customer._count.invoices} invoice(s)`);
+      if (jobPayments + invoicePayments > 0) blockers.push(`${jobPayments + invoicePayments} payment(s)`);
+      if (expenseCount > 0) blockers.push(`${expenseCount} expense(s)`);
+      if (timeEntryCount > 0) blockers.push(`${timeEntryCount} time entrie(s)/payroll record(s)`);
+      if (proposalAttachmentCount > 0) blockers.push(`${proposalAttachmentCount} attachment(s)`);
+      if (automationRunCount > 0) blockers.push(`${automationRunCount} automation run(s)`);
+      if (customer._count.reviewSubmissions > 0) blockers.push(`${customer._count.reviewSubmissions} review(s)`);
+      if (customer._count.files > 0) blockers.push(`${customer._count.files} file(s)`);
+
+      const summary = {
+        opportunities: customer._count.opportunities,
+        proposals: customer._count.proposals,
+        jobs: customer._count.jobs,
+        invoices: customer._count.invoices,
+      };
+
+      if (blockers.length > 0) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: `Cannot delete ${customer.name}: protected history exists (${blockers.join(", ")}). Accounting and work records are never cascade-deleted.`,
+        });
+      }
+
+      const hasChildren = summary.opportunities + summary.proposals + summary.jobs > 0;
+      if (!hasChildren) {
+        // No linked records: permanently delete; touchpoints cascade by schema.
+        await ctx.prisma.customer.delete({ where: { id: input.id } });
+        await writeCustomerAudit(ctx, input.id, "customer.deleted", toJsonValue({ name: customer.name }), null);
+        return { ok: true, mode: "deleted" as const, summary };
+      }
+
+      if (!input.confirmTestGraphCleanup) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: `${customer.name} has ${summary.opportunities} opportunity(ies), ${summary.proposals} proposal(s), and ${summary.jobs} job(s) with no protected financial history. Confirm "Delete test customer and related test records" to proceed.`,
+        });
+      }
+
+      await ctx.prisma.$transaction(async (tx) => {
+        // Jobs cascade materials/labor/paint colors/assignments; proposals
+        // cascade their section trees; opportunities have no protected links
+        // (verified above). Only this customer's graph is touched.
+        await tx.job.deleteMany({ where: { customerId: input.id } });
+        await tx.proposal.deleteMany({ where: { customerId: input.id } });
+        await tx.opportunity.deleteMany({ where: { customerId: input.id } });
+        await tx.customer.delete({ where: { id: input.id } });
+      });
+      await writeCustomerAudit(ctx, input.id, "customer.deleted", toJsonValue({ name: customer.name, testGraphCleanup: true }), null);
+      return { ok: true, mode: "test_graph_cleanup" as const, summary };
     }),
 
   bulkUpdate: adminProcedure.input(bulkCustomerActionInput).mutation(async ({ ctx, input }) => {

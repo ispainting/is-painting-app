@@ -415,4 +415,46 @@ export const jobsRouter = router({
   archive: adminProcedure.input(z.object({ id: z.number() })).mutation(({ ctx, input }) =>
     ctx.prisma.job.update({ where: { id: input.id }, data: { deletedAt: new Date() } })
   ),
+
+  restore: adminProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
+    const job = await ctx.prisma.job.findUnique({ where: { id: input.id }, select: { id: true, deletedAt: true } });
+    if (!job) throw new TRPCError({ code: "NOT_FOUND", message: "Job not found." });
+    return ctx.prisma.job.update({ where: { id: input.id }, data: { deletedAt: null } });
+  }),
+
+  /**
+   * Permanent deletion, admin-only, for archived zero-history jobs only.
+   * Blocked when the job has invoices, payments, expenses, or time entries.
+   * Child operational records (materials, labor, paint colors, assignments)
+   * cascade via schema onDelete: Cascade. Repeating deletion returns NOT_FOUND.
+   */
+  remove: adminProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
+    const job = await ctx.prisma.job.findUnique({
+      where: { id: input.id },
+      select: {
+        id: true,
+        name: true,
+        deletedAt: true,
+        _count: { select: { invoices: true, payments: true, expenses: true, timeEntries: true } },
+      },
+    });
+    if (!job) throw new TRPCError({ code: "NOT_FOUND", message: "Job not found." });
+
+    const blockers: string[] = [];
+    if (job._count.invoices > 0) blockers.push(`${job._count.invoices} invoice(s)`);
+    if (job._count.payments > 0) blockers.push(`${job._count.payments} payment(s)`);
+    if (job._count.expenses > 0) blockers.push(`${job._count.expenses} expense(s)`);
+    if (job._count.timeEntries > 0) blockers.push(`${job._count.timeEntries} time entrie(s)/payroll record(s)`);
+    if (blockers.length > 0) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: `Cannot permanently delete this job: it has ${blockers.join(", ")}. Accounting and work history is protected.`,
+      });
+    }
+
+    // Safe zero-history job: materials, labor, paint colors, and assignments
+    // cascade with the job row per the schema.
+    await ctx.prisma.job.delete({ where: { id: input.id } });
+    return { ok: true };
+  }),
 });
