@@ -34,12 +34,16 @@ describe("jobs.clockable matches Jobs → Active exactly", () => {
     expect(where.deletedAt).toBeNull();
   });
 
-  it("restricts employees to their assigned active jobs", async () => {
+  it("lets every employee see every active job, even when not assigned", async () => {
     const prisma = { job: { findMany: vi.fn().mockResolvedValue([]) } };
     await jobsRouter.createCaller({ prisma: prisma as never, session: employeeSession }).clockable();
     const where = prisma.job.findMany.mock.calls[0]?.[0].where;
     expect(where.status).toBe("active");
-    expect(where.assignments).toEqual({ some: { userId: 7 } });
+    expect(where.deletedAt).toBeNull();
+    // No assignment restriction: identical to the admin Active-tab query.
+    expect(where.assignments).toBeUndefined();
+    const expected = buildJobsListWhere(buildJobsListInputForPageFilter("active"), { isEmployee: false });
+    expect(where).toMatchObject(expected);
   });
 });
 
