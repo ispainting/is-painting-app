@@ -13,6 +13,7 @@ import {
   type ProposalGeneralLiabilityMode,
 } from "@/lib/proposal-estimate-engine";
 import { assertCustomerLinked, ProposalNotLinkedError } from "@/lib/proposal-guards";
+import { isOpenNonTerminalOpportunity, resolveOpportunityForProposal } from "@/lib/proposal-opportunity";
 
 const ProposalStatusZ = z.enum(["draft", "ready", "sent", "viewed", "approved", "declined", "follow_up", "converted"]);
 const ProposalTemplateZ = z.enum([
@@ -207,6 +208,8 @@ const proposalInput = z.object({
   // Nullable: a Proposal can be created and estimated as an unlinked draft
   // ('Client not linked') before a Customer is selected or created.
   customerId: z.number().nullable().optional(),
+  // Optional pipeline link; omitted by legacy callers leaves it untouched/null.
+  opportunityId: z.number().int().positive().nullable().optional(),
   projectName: z.string().optional(),
   address: z.string().optional(),
   city: z.string().optional(),
@@ -877,6 +880,33 @@ function guardCustomerLinkedForStatus(customerId: number | null, status: "sent" 
   }
 }
 
+/**
+ * Validates an explicit Proposal -> Opportunity link: the opportunity must
+ * exist, belong to the proposal's customer, and be open and non-terminal.
+ * Never changes Opportunity.stage.
+ */
+async function validateProposalOpportunityLink(
+  prisma: any,
+  customerId: number | null,
+  opportunityId: number
+): Promise<number> {
+  const opportunity = await prisma.opportunity.findUnique({
+    where: { id: opportunityId },
+    select: { id: true, customerId: true, stage: true, status: true },
+  });
+  if (!opportunity) throw new TRPCError({ code: "NOT_FOUND", message: "Opportunity not found" });
+  if (customerId == null) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Link a customer to this proposal before linking an opportunity." });
+  }
+  if (opportunity.customerId !== customerId) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Opportunity does not belong to the selected customer." });
+  }
+  if (!isOpenNonTerminalOpportunity(opportunity)) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Opportunity is closed or terminal and cannot be linked." });
+  }
+  return opportunity.id;
+}
+
 function runSanitizeSections(
   sections: z.infer<typeof proposalSectionInput>[],
   defaults: ProposalPricingDefaults
@@ -1191,6 +1221,7 @@ export const proposalsRouter = router({
         options: { orderBy: { sortOrder: "asc" } },
         attachments: { orderBy: { sortOrder: "asc" } },
         paintColors: { orderBy: { sortOrder: "asc" } },
+        opportunity: true,
       },
     })
   ),
@@ -1209,6 +1240,10 @@ export const proposalsRouter = router({
       guardCustomerLinkedForStatus(input.customerId ?? null, input.status);
     }
 
+    const linkedOpportunityId = input.opportunityId != null
+      ? await validateProposalOpportunityLink(ctx.prisma, input.customerId ?? null, input.opportunityId)
+      : null;
+
     const proposalNumber = nextNumber("PROP", last?.proposalNumber);
     const budgetTotal = input.materialsBudget + input.laborBudget + input.subcontractorBudget;
     const sanitizedSections = runSanitizeSections(input.sections, config);
@@ -1224,6 +1259,7 @@ export const proposalsRouter = router({
     return ctx.prisma.proposal.create({
       data: {
         customerId: input.customerId ?? null,
+        opportunityId: linkedOpportunityId,
         projectName: normalizedProjectName,
         address: input.address,
         city: input.city,
@@ -1338,6 +1374,13 @@ export const proposalsRouter = router({
         guardCustomerLinkedForStatus(nextCustomerId, input.data.status);
       }
 
+      // undefined leaves the existing link untouched; null explicitly clears it.
+      const linkedOpportunityId = input.data.opportunityId === undefined
+        ? undefined
+        : input.data.opportunityId === null
+          ? null
+          : await validateProposalOpportunityLink(ctx.prisma, nextCustomerId, input.data.opportunityId);
+
       const config = await getProposalPricingDefaults(ctx);
       const budgetTotal = input.data.materialsBudget + input.data.laborBudget + input.data.subcontractorBudget;
       const sanitizedSections = runSanitizeSections(input.data.sections, config);
@@ -1352,6 +1395,7 @@ export const proposalsRouter = router({
         where: { id: input.id },
         data: {
           customerId: input.data.customerId ?? null,
+          opportunityId: linkedOpportunityId,
           projectName: input.data.projectName,
           address: input.data.address,
           city: input.data.city,
@@ -1485,6 +1529,31 @@ export const proposalsRouter = router({
     }),
 
   /**
+   * Admin-only manual link/correction of a Proposal's Opportunity. Never
+   * changes Opportunity.stage; null clears the link.
+   */
+  setOpportunity: adminProcedure
+    .input(z.object({ id: z.number(), opportunityId: z.number().int().positive().nullable() }))
+    .mutation(async ({ ctx, input }) => {
+      const proposal = await ctx.prisma.proposal.findUnique({
+        where: { id: input.id },
+        select: { id: true, customerId: true, status: true },
+      });
+      if (!proposal) throw new TRPCError({ code: "NOT_FOUND", message: "Proposal not found" });
+      if (proposal.status === "converted") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Converted proposals are read-only." });
+      }
+      const linkedId = input.opportunityId === null
+        ? null
+        : await validateProposalOpportunityLink(ctx.prisma, proposal.customerId, input.opportunityId);
+      return ctx.prisma.proposal.update({
+        where: { id: proposal.id },
+        data: { opportunityId: linkedId },
+        include: { opportunity: true },
+      });
+    }),
+
+  /**
    * Converts an accepted Proposal into a Job, preserving the estimated labor
    * hours, estimated material quantities/costs, estimated labor/material
    * selling prices, and proposal total exactly as saved — never recalculated
@@ -1494,7 +1563,10 @@ export const proposalsRouter = router({
   convertToJob: adminProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
     const proposal = await ctx.prisma.proposal.findUnique({
       where: { id: input.id },
-      include: { sections: { include: { materials: true }, orderBy: { sortOrder: "asc" } } },
+      include: {
+        sections: { include: { materials: true }, orderBy: { sortOrder: "asc" } },
+        opportunity: { select: { id: true, customerId: true, leadReceivedAt: true } },
+      },
     });
 
     if (!proposal) throw new TRPCError({ code: "NOT_FOUND", message: "Proposal not found" });
@@ -1511,11 +1583,55 @@ export const proposalsRouter = router({
       throw error;
     }
 
+    // Resolve the Opportunity: an explicit valid link first; for legacy
+    // unlinked proposals, fall back only when exactly one open, non-terminal
+    // opportunity exists for the customer. Never guess among multiples.
+    const warnings: string[] = [];
+    let resolvedOpportunity: { id: number; leadReceivedAt: Date | null } | null = null;
+    if (proposal.opportunity) {
+      if (proposal.opportunity.customerId !== proposal.customerId) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "The linked opportunity belongs to a different customer. Relink it before converting." });
+      }
+      resolvedOpportunity = proposal.opportunity;
+    } else {
+      const candidates = await ctx.prisma.opportunity.findMany({
+        where: {
+          customerId: proposal.customerId as number,
+          status: "open",
+          stage: { notIn: ["lost", "not_qualified"] },
+        },
+        select: { id: true, leadReceivedAt: true, status: true, stage: true },
+        orderBy: { createdAt: "desc" },
+      });
+      const resolution = resolveOpportunityForProposal(candidates);
+      if (resolution.kind === "multiple") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Multiple open opportunities exist for this customer. Link one explicitly before converting." });
+      }
+      if (resolution.kind === "single") {
+        resolvedOpportunity = resolution.opportunity;
+      } else {
+        warnings.push("No open opportunity found for this customer; the job was created without an opportunity link.");
+      }
+    }
+
     const snapshot = buildProposalEstimateSnapshotFromSavedProposal(proposal);
 
     const seed = buildJobEstimateFromProposal(snapshot);
 
-    const job = await ctx.prisma.$transaction(async (tx) => {
+    const { job, reusedExistingJob } = await ctx.prisma.$transaction(async (tx) => {
+      // Respect the unique Job.opportunityId constraint: if this opportunity
+      // already produced a Job, reuse it instead of duplicating or failing.
+      if (resolvedOpportunity) {
+        const existingJob = await tx.job.findUnique({ where: { opportunityId: resolvedOpportunity.id } });
+        if (existingJob) {
+          await tx.proposal.updateMany({
+            where: { id: proposal.id, status: { not: "converted" } },
+            data: { status: "converted" },
+          });
+          return { job: existingJob, reusedExistingJob: true };
+        }
+      }
+
       // Re-check + flip status inside the transaction so two concurrent conversions
       // cannot both pass the earlier check and create duplicate Jobs.
       const claimed = await tx.proposal.updateMany({
@@ -1532,6 +1648,7 @@ export const proposalsRouter = router({
       const createdJob = await tx.job.create({
         data: {
           customerId: proposal.customerId as number,
+          opportunityId: resolvedOpportunity?.id ?? null,
           estimateNumber,
           name: proposal.projectName,
           address: proposal.address,
@@ -1543,6 +1660,9 @@ export const proposalsRouter = router({
           laborBudget: seed.laborBudget,
           totalEstimate: seed.totalEstimate,
           contractAmount: seed.totalEstimate,
+          // Freshly created jobs have no lifecycle dates, so these copies can
+          // never overwrite a manually edited value.
+          leadReceivedAt: resolvedOpportunity?.leadReceivedAt ?? null,
           proposalSentAt: proposal.sentAt ?? null,
         },
       });
@@ -1572,18 +1692,10 @@ export const proposalsRouter = router({
         });
       }
 
-      return createdJob;
+      return { job: createdJob, reusedExistingJob: false };
     });
 
-    const linkedOpportunity = await ctx.prisma.opportunity.findFirst({
-      where: { job: { id: job.id } },
-      select: { leadReceivedAt: true },
-    });
-    if (linkedOpportunity?.leadReceivedAt) {
-      await ctx.prisma.job.update({ where: { id: job.id }, data: { leadReceivedAt: linkedOpportunity.leadReceivedAt } });
-    }
-
-    return job;
+    return { ...job, opportunityLinked: resolvedOpportunity !== null, reusedExistingJob, warnings };
   }),
 
   generateProposalDraft: adminProcedure

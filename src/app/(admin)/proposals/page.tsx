@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "@/trpc/react";
+import { isOpenNonTerminalOpportunity, resolveOpportunityForProposal } from "@/lib/proposal-opportunity";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
@@ -26,6 +27,7 @@ export default function ProposalsPage() {
   );
   const [form, setForm] = useState({
     customerId: 0,
+    opportunityId: 0,
     projectName: "",
     address: "",
     city: "",
@@ -54,9 +56,13 @@ export default function ProposalsPage() {
     onSuccess: () => {
       toast.success("Proposal created");
       utils.proposals.list.invalidate();
+      utils.opportunities.list.invalidate();
+      utils.business.analytics.invalidate();
+      utils.reports.dashboard.invalidate();
       setOpen(false);
       setForm({
         customerId: 0,
+        opportunityId: 0,
         projectName: "",
         address: "",
         city: "",
@@ -87,6 +93,7 @@ export default function ProposalsPage() {
     setForm((f) => ({
       ...f,
       customerId: customer.id,
+      opportunityId: 0,
       address: customer.address || "",
       city: customer.city || "",
       state: customer.state || "",
@@ -95,6 +102,30 @@ export default function ProposalsPage() {
     setCustomerSearch(customer.name);
     setShowCustomerResults(false);
   };
+
+  // Resolve the pipeline opportunity for the selected customer: exactly one
+  // open, non-terminal opportunity auto-links; multiple require an explicit
+  // choice; none leaves the proposal unlinked with a warning.
+  const opportunitiesQuery = api.opportunities.list.useQuery(undefined, { enabled: open });
+  const validOpportunities = useMemo(
+    () =>
+      (opportunitiesQuery.data ?? []).filter(
+        (o) => o.customer?.id === form.customerId && isOpenNonTerminalOpportunity(o)
+      ),
+    [opportunitiesQuery.data, form.customerId]
+  );
+  const opportunityResolution = useMemo(() => resolveOpportunityForProposal(validOpportunities), [validOpportunities]);
+  useEffect(() => {
+    setForm((f) => {
+      if (opportunityResolution.kind === "single") {
+        return f.opportunityId === opportunityResolution.opportunity.id ? f : { ...f, opportunityId: opportunityResolution.opportunity.id };
+      }
+      if (f.opportunityId !== 0 && !validOpportunities.some((o) => o.id === f.opportunityId)) {
+        return { ...f, opportunityId: 0 };
+      }
+      return f;
+    });
+  }, [opportunityResolution, validOpportunities]);
 
   return (
     <>
@@ -222,6 +253,34 @@ export default function ProposalsPage() {
                 </div>
               </div>
 
+              {form.customerId > 0 && (
+                <div className="col-span-2">
+                  <label className="label">Opportunity</label>
+                  {opportunityResolution.kind === "none" && (
+                    <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                      No open opportunity exists for this customer — the proposal will remain unlinked.
+                    </p>
+                  )}
+                  {opportunityResolution.kind === "single" && (
+                    <p className="px-1 text-xs text-slate-600">
+                      Linked automatically: <span className="font-medium text-slate-900">{opportunityResolution.opportunity.name}</span>
+                    </p>
+                  )}
+                  {opportunityResolution.kind === "multiple" && (
+                    <select
+                      className="input"
+                      value={form.opportunityId}
+                      onChange={(e) => setForm((f) => ({ ...f, opportunityId: Number(e.target.value) }))}
+                    >
+                      <option value={0}>Select an opportunity…</option>
+                      {opportunityResolution.opportunities.map((o) => (
+                        <option key={o.id} value={o.id}>{o.name}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              )}
+
               <div className="col-span-2">
                 <label className="label">Project Name</label>
                 <input className="input" value={form.projectName} onChange={(e) => setForm((f) => ({ ...f, projectName: e.target.value }))} />
@@ -262,7 +321,7 @@ export default function ProposalsPage() {
               <button
                 className="btn btn-primary"
                 disabled={create.isPending}
-                onClick={() => create.mutate({ ...form, customerId: form.customerId > 0 ? form.customerId : null, projectName: form.projectName.trim() || "Untitled Proposal" })}
+                onClick={() => create.mutate({ ...form, customerId: form.customerId > 0 ? form.customerId : null, opportunityId: form.opportunityId > 0 ? form.opportunityId : undefined, projectName: form.projectName.trim() || "Untitled Proposal" })}
               >
                 {create.isPending ? "Creating…" : form.customerId > 0 ? "Create Proposal" : "Start Draft (No Client Yet)"}
               </button>

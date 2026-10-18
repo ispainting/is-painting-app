@@ -567,13 +567,32 @@ export default function ProposalDetailPage() {
     onError: (e) => toast.error(e.message),
   });
   const convertToJob = api.proposals.convertToJob.useMutation({
-    onSuccess: (job) => {
-      toast.success(`Converted to Job ${job.estimateNumber}`);
+    onSuccess: (result) => {
+      toast.success(`Converted to Job ${result.estimateNumber}`);
+      for (const warning of result.warnings ?? []) toast.warning(warning);
+      if (result.reusedExistingJob) toast.info("This opportunity already had a job — the existing job was reused.");
       utils.proposals.byId.invalidate({ id });
       utils.proposals.list.invalidate();
+      utils.jobs.list.invalidate();
+      utils.opportunities.list.invalidate();
+      utils.business.analytics.invalidate();
+      utils.reports.dashboard.invalidate();
     },
     onError: (e) => toast.error(e.message),
   });
+  const setOpportunity = api.proposals.setOpportunity.useMutation({
+    onSuccess: () => {
+      toast.success("Opportunity link updated");
+      utils.proposals.byId.invalidate({ id });
+      utils.proposals.list.invalidate();
+      utils.opportunities.list.invalidate();
+      utils.customers.list.invalidate();
+      utils.business.analytics.invalidate();
+      utils.reports.dashboard.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const opportunitiesQuery = api.opportunities.list.useQuery(undefined, { enabled: !!proposal });
   const [collapsedOptions, setCollapsedOptions] = useState<Record<number, boolean>>({});
   const [collapsedSections, setCollapsedSections] = useState<Record<number, boolean>>({});
   const [selectedSectionTemplate, setSelectedSectionTemplate] = useState<(typeof SECTION_TEMPLATES)[number]>("interior_painting");
@@ -1522,6 +1541,37 @@ export default function ProposalDetailPage() {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {isLinked && !isReadOnly && (
+        <div className="card mb-4 border border-slate-200 p-4 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <span className="font-semibold text-slate-700">Opportunity: </span>
+              {proposal.opportunity ? (
+                <span className="text-slate-900">
+                  {proposal.opportunity.name}{" "}
+                  <span className="text-slate-500">· {proposal.opportunity.stage.replace(/_/g, " ")}</span>
+                </span>
+              ) : (
+                <span className="text-amber-700">Not linked — conversion needs exactly one open opportunity or an explicit link.</span>
+              )}
+            </div>
+            <select
+              className="input w-auto"
+              value={proposal.opportunity?.id ?? 0}
+              disabled={setOpportunity.isPending}
+              onChange={(e) => setOpportunity.mutate({ id, opportunityId: Number(e.target.value) || null })}
+            >
+              <option value={0}>No link</option>
+              {(opportunitiesQuery.data ?? [])
+                .filter((o) => o.customer?.id === proposal.customerId)
+                .map((o) => (
+                  <option key={o.id} value={o.id}>{o.name}</option>
+                ))}
+            </select>
+          </div>
         </div>
       )}
 

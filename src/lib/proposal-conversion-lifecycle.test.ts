@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-// Mirrors convertToJob: the proposal creates the job with proposalSentAt, then
-// the opportunity is found through the Job back-relation (Opportunity.job),
-// never via a Proposal.opportunityId column, which does not exist.
+// Mirrors the repaired convertToJob: the job is created inside one transaction
+// with proposalSentAt plus the resolved opportunity's id and leadReceivedAt.
+// The old post-create lookup through the Job back-relation was dead code
+// (Job.opportunityId was never written) and has been removed.
 const proposal = {
   id: 10,
   customerId: 1,
@@ -17,37 +18,36 @@ function buildMocks(leadReceivedAt: Date | null) {
       update: vi.fn().mockResolvedValue({ id: 100 }),
     },
     opportunity: {
-      findFirst: vi.fn().mockResolvedValue(leadReceivedAt ? { leadReceivedAt } : null),
+      findFirst: vi.fn().mockResolvedValue(leadReceivedAt ? { id: 7, leadReceivedAt } : null),
     },
   };
 }
 
 async function convertLikeRouter(prisma: ReturnType<typeof buildMocks>) {
-  const job = await prisma.job.create({
-    data: { proposalSentAt: proposal.sentAt ?? null },
-  });
   const linkedOpportunity = await prisma.opportunity.findFirst({
-    where: { job: { id: job.id } },
-    select: { leadReceivedAt: true },
+    where: { customerId: proposal.customerId, status: "open" },
+    select: { id: true, leadReceivedAt: true },
   });
-  if (linkedOpportunity?.leadReceivedAt) {
-    await prisma.job.update({ where: { id: job.id }, data: { leadReceivedAt: linkedOpportunity.leadReceivedAt } });
-  }
-  return job;
+  return prisma.job.create({
+    data: {
+      opportunityId: linkedOpportunity?.id ?? null,
+      leadReceivedAt: linkedOpportunity?.leadReceivedAt ?? null,
+      proposalSentAt: proposal.sentAt ?? null,
+    },
+  });
 }
 
 describe("proposal conversion lifecycle dates", () => {
-  it("copies the linked opportunity leadReceivedAt into the job", async () => {
+  it("copies the linked opportunity leadReceivedAt into the job at creation", async () => {
     const leadReceivedAt = new Date("2026-08-15T00:00:00Z");
     const prisma = buildMocks(leadReceivedAt);
 
     await convertLikeRouter(prisma);
 
-    expect(prisma.opportunity.findFirst).toHaveBeenCalledWith({
-      where: { job: { id: 100 } },
-      select: { leadReceivedAt: true },
+    expect(prisma.job.create).toHaveBeenCalledWith({
+      data: { opportunityId: 7, leadReceivedAt, proposalSentAt: proposal.sentAt },
     });
-    expect(prisma.job.update).toHaveBeenCalledWith({ where: { id: 100 }, data: { leadReceivedAt } });
+    expect(prisma.job.update).not.toHaveBeenCalled();
   });
 
   it("leaves leadReceivedAt null when no linked opportunity exists", async () => {

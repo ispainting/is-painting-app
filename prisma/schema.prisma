@@ -780,6 +780,7 @@ model Opportunity {
 
   customer       Customer        @relation(fields: [customerId], references: [id])
   job            Job?
+  proposals      Proposal[]
   assignedTo     User?           @relation(fields: [assignedToId], references: [id])
   automationRuns AutomationRun[]
 
@@ -795,6 +796,9 @@ model Proposal {
   /// PROPOSED (not yet migrated to Production): relaxed from required to optional so a
   /// Proposal can exist as an unlinked draft before a Customer is selected or created.
   customerId          Int?
+  /// Nullable pipeline link: zero or one Opportunity per Proposal; one Opportunity
+  /// may have many Proposals (revisions or independent quotes). No backfill.
+  opportunityId       Int?
   projectName         String
   address             String?
   city                String?           @db.VarChar(100)
@@ -855,12 +859,14 @@ model Proposal {
   updatedAt                       DateTime               @updatedAt
 
   customer    Customer?            @relation(fields: [customerId], references: [id])
+  opportunity Opportunity?         @relation(fields: [opportunityId], references: [id])
   sections    ProposalSection[]
   options     ProposalOption[]
   attachments ProposalAttachment[]
   paintColors ProposalPaintColor[]
 
   @@index([customerId])
+  @@index([opportunityId])
   @@index([status])
   @@index([deletedAt])
 }
