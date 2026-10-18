@@ -51,6 +51,28 @@ export default function JobsPage() {
     },
     onError: (e) => toast.error(e.message),
   });
+  const restoreJob = api.jobs.restore.useMutation({
+    onSuccess: () => {
+      toast.success("Job restored");
+      utils.jobs.list.invalidate();
+      utils.jobs.statusCounts.invalidate();
+      utils.business.analytics.invalidate();
+      utils.reports.dashboard.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const [permanentTarget, setPermanentTarget] = useState<{ id: number; name: string } | null>(null);
+  const removeJob = api.jobs.remove.useMutation({
+    onSuccess: () => {
+      toast.success("Job permanently deleted");
+      utils.jobs.list.invalidate();
+      utils.jobs.statusCounts.invalidate();
+      utils.business.analytics.invalidate();
+      utils.reports.dashboard.invalidate();
+      setPermanentTarget(null);
+    },
+    onError: (e) => toast.error(e.message),
+  });
   const create = api.jobs.create.useMutation({
     onSuccess: () => {
       toast.success("Job created");
@@ -208,17 +230,42 @@ export default function JobsPage() {
                       >
                         Edit
                       </button>
-                      <button
-                        type="button"
-                        className="btn bg-rose-600 text-white hover:bg-rose-700"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setSelectedJob({ id: j.id, name: j.name });
-                          setConfirmDeleteOpen(true);
-                        }}
-                      >
-                        Archive
-                      </button>
+                      {j.deletedAt ? (
+                        <>
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              restoreJob.mutate({ id: j.id });
+                            }}
+                          >
+                            Restore
+                          </button>
+                          <button
+                            type="button"
+                            className="btn bg-rose-600 text-white hover:bg-rose-700"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setPermanentTarget({ id: j.id, name: j.name });
+                            }}
+                          >
+                            Delete Permanently
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn bg-rose-600 text-white hover:bg-rose-700"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedJob({ id: j.id, name: j.name });
+                            setConfirmDeleteOpen(true);
+                          }}
+                        >
+                          Archive
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -347,6 +394,20 @@ export default function JobsPage() {
         onConfirm={() => {
           if (!selectedJob) return;
           deleteJob.mutate({ id: selectedJob.id });
+        }}
+      />
+
+      <ConfirmDialog
+        open={permanentTarget !== null}
+        title="Delete Job Permanently"
+        message={`Permanently delete "${permanentTarget?.name}"? Only zero-history jobs can be deleted; jobs with invoices, payments, expenses, or time entries are protected. This cannot be undone.`}
+        confirmLabel="Delete Permanently"
+        destructive
+        isPending={removeJob.isPending}
+        onCancel={() => setPermanentTarget(null)}
+        onConfirm={() => {
+          if (!permanentTarget) return;
+          removeJob.mutate({ id: permanentTarget.id });
         }}
       />
     </>

@@ -12,7 +12,7 @@ describe("customers.remove safety", () => {
     invoiceIds?: number[];
     proposalIds?: number[];
     opportunities?: Array<{ id: number; job: { id: number } | null; _count: { proposals: number; automationRuns: number } }>;
-    counts?: { jobPayments?: number; invoicePayments?: number; expenses?: number; timeEntries?: number; proposalAttachments?: number };
+    counts?: { jobPayments?: number; invoicePayments?: number; expenses?: number; timeEntries?: number; proposalAttachments?: number; automationRuns?: number };
   }) {
     const counts = overrides.counts ?? {};
     const prisma = {
@@ -45,6 +45,7 @@ describe("customers.remove safety", () => {
       expense: { count: vi.fn().mockResolvedValue(counts.expenses ?? 0) },
       timeEntry: { count: vi.fn().mockResolvedValue(counts.timeEntries ?? 0) },
       proposalAttachment: { count: vi.fn().mockResolvedValue(counts.proposalAttachments ?? 0) },
+      automationRun: { count: vi.fn().mockResolvedValue(counts.automationRuns ?? 0) },
       auditLog: { create: vi.fn().mockResolvedValue({}) },
       $transaction: vi.fn(async (cb: (client: unknown) => unknown) => cb(prisma)),
     };
@@ -111,7 +112,7 @@ describe("customers.remove safety", () => {
     expect(prisma.customer.delete).toHaveBeenCalledWith({ where: { id: 10 } });
   });
 
-  it("blocks when an opportunity is linked to real work", async () => {
+  it("blocks a linked opportunity only until test cleanup is explicitly confirmed", async () => {
     const prisma = removeMocks({
       customer: {
         id: 10,
@@ -121,10 +122,29 @@ describe("customers.remove safety", () => {
       },
       opportunities: [{ id: 77, job: { id: 42 }, _count: { proposals: 0, automationRuns: 0 } }],
     });
+
+    // Single-confirmation path: linked opportunities block.
     await expect(
-      customersRouter.createCaller({ prisma: prisma as never, session: adminSession }).remove({ id: 10, confirmTestGraphCleanup: true })
+      customersRouter.createCaller({ prisma: prisma as never, session: adminSession }).remove({ id: 10 })
     ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
     expect(prisma.customer.delete).not.toHaveBeenCalled();
+
+    // Confirmed test cleanup: the linked-but-unprotected graph deletes.
+    const prisma2 = removeMocks({
+      customer: {
+        id: 10,
+        name: "Synthetic Customer",
+        deletedAt: null,
+        _count: { opportunities: 1, proposals: 0, jobs: 1, invoices: 0, files: 0, reviewSubmissions: 0 },
+      },
+      jobIds: [42],
+      opportunities: [{ id: 77, job: { id: 42 }, _count: { proposals: 0, automationRuns: 0 } }],
+    });
+    const result = await customersRouter
+      .createCaller({ prisma: prisma2 as never, session: adminSession })
+      .remove({ id: 10, confirmTestGraphCleanup: true });
+    expect(result.mode).toBe("test_graph_cleanup");
+    expect(prisma2.customer.delete).toHaveBeenCalledWith({ where: { id: 10 } });
   });
 
   it("requires the explicit second confirmation for a test graph", async () => {
@@ -169,6 +189,82 @@ describe("customers.remove safety", () => {
     expect(prisma.proposal.deleteMany).toHaveBeenCalledWith({ where: { customerId: 10 } });
     expect(prisma.opportunity.deleteMany).toHaveBeenCalledWith({ where: { customerId: 10 } });
     expect(prisma.customer.delete).toHaveBeenCalledWith({ where: { id: 10 } });
+  });
+
+  it("deletes the exact TEST graph atomically: customer + opportunity + converted/archived proposals + linked job", async () => {
+    // Mirrors the Preview test graph: 1 customer, 1 opportunity, multiple
+    // converted/archived proposals (converted proposal keeps the link), 1 job.
+    const prisma = removeMocks({
+      customer: {
+        id: 10,
+        name: "Synthetic Customer",
+        deletedAt: null,
+        _count: { opportunities: 1, proposals: 3, jobs: 1, invoices: 0, files: 0, reviewSubmissions: 0 },
+      },
+      jobIds: [260],
+      proposalIds: [60, 61, 62], // converted + archived proposals included
+      opportunities: [{ id: 77, job: { id: 260 }, _count: { proposals: 3, automationRuns: 0 } }],
+    });
+
+    const result = await customersRouter
+      .createCaller({ prisma: prisma as never, session: adminSession })
+      .remove({ id: 10, confirmTestGraphCleanup: true });
+
+    expect(result.mode).toBe("test_graph_cleanup");
+
+    // Dependency order: proposals → jobs → opportunity → customer.
+    const order = (fn: ReturnType<typeof vi.fn>) => fn.mock.invocationCallOrder[0];
+    expect(order(prisma.proposal.deleteMany)).toBeLessThan(order(prisma.job.deleteMany));
+    expect(order(prisma.job.deleteMany)).toBeLessThan(order(prisma.opportunity.deleteMany));
+    expect(order(prisma.opportunity.deleteMany)).toBeLessThan(order(prisma.customer.delete));
+
+    // Only this customer's graph.
+    expect(prisma.proposal.deleteMany).toHaveBeenCalledWith({ where: { customerId: 10 } });
+    expect(prisma.customer.delete).toHaveBeenCalledWith({ where: { id: 10 } });
+  });
+
+  it("blocks the same graph WITHOUT the explicit test-cleanup confirmation", async () => {
+    const prisma = removeMocks({
+      customer: {
+        id: 10,
+        name: "Synthetic Customer",
+        deletedAt: null,
+        _count: { opportunities: 1, proposals: 3, jobs: 1, invoices: 0, files: 0, reviewSubmissions: 0 },
+      },
+      jobIds: [260],
+      proposalIds: [60, 61, 62],
+      opportunities: [{ id: 77, job: { id: 260 }, _count: { proposals: 3, automationRuns: 0 } }],
+    });
+
+    await expect(
+      customersRouter.createCaller({ prisma: prisma as never, session: adminSession }).remove({ id: 10 })
+    ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("rolls back everything when a delete fails mid-transaction", async () => {
+    const prisma = removeMocks({
+      customer: {
+        id: 10,
+        name: "Synthetic Customer",
+        deletedAt: null,
+        _count: { opportunities: 1, proposals: 1, jobs: 1, invoices: 0, files: 0, reviewSubmissions: 0 },
+      },
+      jobIds: [260],
+      proposalIds: [60],
+      opportunities: [{ id: 77, job: { id: 260 }, _count: { proposals: 1, automationRuns: 0 } }],
+    });
+    prisma.$transaction.mockImplementation(async (cb: (client: unknown) => unknown) => {
+      const tx = {
+        ...prisma,
+        opportunity: { ...prisma.opportunity, deleteMany: vi.fn().mockRejectedValue(new Error("synthetic FK failure")) },
+      };
+      return cb(tx);
+    });
+
+    await expect(
+      customersRouter.createCaller({ prisma: prisma as never, session: adminSession }).remove({ id: 10, confirmTestGraphCleanup: true })
+    ).rejects.toThrow("synthetic FK failure");
   });
 });
 

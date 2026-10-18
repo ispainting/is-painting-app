@@ -912,18 +912,18 @@ export const customersRouter = router({
       const proposals = await ctx.prisma.proposal.findMany({ where: { customerId: input.id }, select: { id: true } });
       const proposalIds = proposals.map((proposal) => proposal.id);
 
-      const [jobPayments, invoicePayments, expenseCount, timeEntryCount, proposalAttachmentCount] =
+      const [jobPayments, invoicePayments, expenseCount, timeEntryCount, proposalAttachmentCount, automationRunCount] =
         await Promise.all([
           ctx.prisma.payment.count({ where: { jobId: { in: jobIds } } }),
           ctx.prisma.payment.count({ where: { invoiceId: { in: invoiceIds } } }),
           ctx.prisma.expense.count({ where: { jobId: { in: jobIds } } }),
           ctx.prisma.timeEntry.count({ where: { jobId: { in: jobIds } } }),
           ctx.prisma.proposalAttachment.count({ where: { proposalId: { in: proposalIds } } }),
+          ctx.prisma.automationRun.count({ where: { opportunity: { customerId: input.id } } }),
         ]);
 
       // Classify opportunities: disposable (auto-created, no links) vs linked
-      // to real work. Linked ones block deletion; disposable ones are removed
-      // together with the customer in the single-confirmation path.
+      // to real work.
       const opportunityRows = await ctx.prisma.opportunity.findMany({
         where: { customerId: input.id },
         select: { id: true, job: { select: { id: true } }, _count: { select: { proposals: true, automationRuns: true } } },
@@ -932,13 +932,15 @@ export const customersRouter = router({
         (opportunity) => opportunity.job !== null || opportunity._count.proposals > 0 || opportunity._count.automationRuns > 0
       ).length;
 
+      // Protected financial/work history ALWAYS blocks, even when test cleanup
+      // is confirmed. Linked proposals/jobs are not by themselves protected.
       const blockers: string[] = [];
       if (customer._count.invoices > 0) blockers.push(`${customer._count.invoices} invoice(s)`);
       if (jobPayments + invoicePayments > 0) blockers.push(`${jobPayments + invoicePayments} payment(s)`);
       if (expenseCount > 0) blockers.push(`${expenseCount} expense(s)`);
       if (timeEntryCount > 0) blockers.push(`${timeEntryCount} time entrie(s)/payroll record(s)`);
       if (proposalAttachmentCount > 0) blockers.push(`${proposalAttachmentCount} attachment(s)`);
-      if (linkedOpportunityCount > 0) blockers.push(`${linkedOpportunityCount} opportunity(ies) linked to proposals, jobs, or automation history`);
+      if (automationRunCount > 0) blockers.push(`${automationRunCount} automation run(s)`);
       if (customer._count.reviewSubmissions > 0) blockers.push(`${customer._count.reviewSubmissions} review(s)`);
       if (customer._count.files > 0) blockers.push(`${customer._count.files} file(s)`);
 
@@ -957,8 +959,15 @@ export const customersRouter = router({
       }
 
       const hasOperationalChildren = summary.proposals + summary.jobs > 0;
-      if (!hasOperationalChildren) {
-        // Safe: zero proposals/jobs and only disposable opportunities remain.
+      if (!input.confirmTestGraphCleanup) {
+        // Single-confirmation path: only zero proposals/jobs and disposable
+        // auto-created opportunities.
+        if (hasOperationalChildren || linkedOpportunityCount > 0) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: `${customer.name} has linked proposals/jobs/opportunities with no protected financial history. Confirm "Delete test customer and related test records" to proceed.`,
+          });
+        }
         await ctx.prisma.$transaction(async (tx) => {
           await tx.opportunity.deleteMany({ where: { customerId: input.id } });
           await tx.customer.delete({ where: { id: input.id } });
@@ -967,19 +976,12 @@ export const customersRouter = router({
         return { ok: true, mode: "deleted" as const, summary };
       }
 
-      if (!input.confirmTestGraphCleanup) {
-        throw new TRPCError({
-          code: "PRECONDITION_FAILED",
-          message: `${customer.name} has ${summary.proposals} proposal(s) and ${summary.jobs} job(s) with no protected financial history. Confirm "Delete test customer and related test records" to proceed.`,
-        });
-      }
-
+      // Confirmed disposable test graph: delete everything atomically in
+      // dependency order — proposals (including archived/converted) and
+      // disposable jobs first, then opportunities, then the customer.
       await ctx.prisma.$transaction(async (tx) => {
-        // Jobs cascade materials/labor/paint colors/assignments; proposals
-        // cascade their section trees; only disposable opportunities remain
-        // (linked ones blocked above). Only this customer's graph is touched.
-        await tx.job.deleteMany({ where: { customerId: input.id } });
         await tx.proposal.deleteMany({ where: { customerId: input.id } });
+        await tx.job.deleteMany({ where: { customerId: input.id } });
         await tx.opportunity.deleteMany({ where: { customerId: input.id } });
         await tx.customer.delete({ where: { id: input.id } });
       });
