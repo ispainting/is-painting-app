@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { proposalsRouter } from "./proposals";
+import { buildJobsListWhere } from "@/lib/job-filters";
 
 const adminSession = { userId: 1, role: "admin" as const, email: "admin@example.test", name: "Admin" };
 
@@ -196,6 +197,27 @@ describe("proposals.convertToJob opportunity resolution", () => {
     expect(data.status).toBe("approved");
     expect(data.deletedAt).toBeNull();
     expect(data.approvedAt).toBeInstanceOf(Date);
+
+    // Integration-style proof: the created row satisfies the exact Jobs
+    // Approved-tab filter produced by buildJobsListWhere.
+    const approvedTabWhere = buildJobsListWhere({ status: "approved", visibility: "active" }, { isEmployee: false });
+    expect(data.status).toBe(approvedTabWhere.status);
+    expect(data.deletedAt).toBe(approvedTabWhere.deletedAt);
+    expect(data.customerId).toBe(1);
+    expect(data.opportunityId).toBe(7);
+    expect(data.totalEstimate).toBe(1000);
+    expect(data.contractAmount).toBe(1000);
+  });
+
+  it("moves the linked Opportunity only after the Job is successfully created", async () => {
+    const { prisma, tx } = conversionMocks(
+      proposalWith({ id: 7, customerId: 1, leadReceivedAt }),
+      []
+    );
+    tx.job.create.mockRejectedValueOnce(new Error("synthetic insert failure"));
+
+    await expect(callerWith(prisma).convertToJob({ id: 10 })).rejects.toThrow("synthetic insert failure");
+    expect(prisma.opportunity.update).not.toHaveBeenCalled();
   });
 
   it("legacy conversion links the single unambiguous open opportunity", async () => {

@@ -11,7 +11,8 @@ describe("customers.remove safety", () => {
     jobIds?: number[];
     invoiceIds?: number[];
     proposalIds?: number[];
-    counts?: { jobPayments?: number; invoicePayments?: number; expenses?: number; timeEntries?: number; proposalAttachments?: number; automationRuns?: number };
+    opportunities?: Array<{ id: number; job: { id: number } | null; _count: { proposals: number; automationRuns: number } }>;
+    counts?: { jobPayments?: number; invoicePayments?: number; expenses?: number; timeEntries?: number; proposalAttachments?: number };
   }) {
     const counts = overrides.counts ?? {};
     const prisma = {
@@ -27,10 +28,15 @@ describe("customers.remove safety", () => {
             : overrides.customer
         ),
         delete: vi.fn().mockResolvedValue({}),
+        deleteMany: vi.fn(),
       },
-      job: { findMany: vi.fn().mockResolvedValue((overrides.jobIds ?? []).map((id) => ({ id }))) },
+      job: { findMany: vi.fn().mockResolvedValue((overrides.jobIds ?? []).map((id) => ({ id }))), deleteMany: vi.fn() },
       invoice: { findMany: vi.fn().mockResolvedValue((overrides.invoiceIds ?? []).map((id) => ({ id }))) },
-      proposal: { findMany: vi.fn().mockResolvedValue((overrides.proposalIds ?? []).map((id) => ({ id }))) },
+      proposal: { findMany: vi.fn().mockResolvedValue((overrides.proposalIds ?? []).map((id) => ({ id }))), deleteMany: vi.fn() },
+      opportunity: {
+        findMany: vi.fn().mockResolvedValue(overrides.opportunities ?? []),
+        deleteMany: vi.fn().mockResolvedValue({ count: (overrides.opportunities ?? []).length }),
+      },
       payment: {
         count: vi.fn()
           .mockResolvedValueOnce(counts.jobPayments ?? 0)
@@ -39,7 +45,6 @@ describe("customers.remove safety", () => {
       expense: { count: vi.fn().mockResolvedValue(counts.expenses ?? 0) },
       timeEntry: { count: vi.fn().mockResolvedValue(counts.timeEntries ?? 0) },
       proposalAttachment: { count: vi.fn().mockResolvedValue(counts.proposalAttachments ?? 0) },
-      automationRun: { count: vi.fn().mockResolvedValue(counts.automationRuns ?? 0) },
       auditLog: { create: vi.fn().mockResolvedValue({}) },
       $transaction: vi.fn(async (cb: (client: unknown) => unknown) => cb(prisma)),
     };
@@ -87,6 +92,41 @@ describe("customers.remove safety", () => {
     expect(prisma.customer.delete).toHaveBeenCalledWith({ where: { id: 10 } });
   });
 
+  it("deletes a disposable auto-created opportunity together with the customer in one step", async () => {
+    const prisma = removeMocks({
+      customer: {
+        id: 10,
+        name: "Synthetic Customer",
+        deletedAt: null,
+        _count: { opportunities: 1, proposals: 0, jobs: 0, invoices: 0, files: 0, reviewSubmissions: 0 },
+      },
+      opportunities: [{ id: 77, job: null, _count: { proposals: 0, automationRuns: 0 } }],
+    });
+
+    const result = await customersRouter.createCaller({ prisma: prisma as never, session: adminSession }).remove({ id: 10 });
+
+    expect(result.mode).toBe("deleted");
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.opportunity.deleteMany).toHaveBeenCalledWith({ where: { customerId: 10 } });
+    expect(prisma.customer.delete).toHaveBeenCalledWith({ where: { id: 10 } });
+  });
+
+  it("blocks when an opportunity is linked to real work", async () => {
+    const prisma = removeMocks({
+      customer: {
+        id: 10,
+        name: "Synthetic Customer",
+        deletedAt: null,
+        _count: { opportunities: 1, proposals: 0, jobs: 0, invoices: 0, files: 0, reviewSubmissions: 0 },
+      },
+      opportunities: [{ id: 77, job: { id: 42 }, _count: { proposals: 0, automationRuns: 0 } }],
+    });
+    await expect(
+      customersRouter.createCaller({ prisma: prisma as never, session: adminSession }).remove({ id: 10, confirmTestGraphCleanup: true })
+    ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+    expect(prisma.customer.delete).not.toHaveBeenCalled();
+  });
+
   it("requires the explicit second confirmation for a test graph", async () => {
     const prisma = removeMocks({
       customer: {
@@ -114,18 +154,20 @@ describe("customers.remove safety", () => {
       },
       jobIds: [50],
       proposalIds: [60],
+      opportunities: [
+        { id: 77, job: null, _count: { proposals: 0, automationRuns: 0 } },
+        { id: 78, job: null, _count: { proposals: 0, automationRuns: 0 } },
+      ],
     });
-    (prisma as any).job.deleteMany = vi.fn().mockResolvedValue({ count: 1 });
-    (prisma as any).proposal.deleteMany = vi.fn().mockResolvedValue({ count: 1 });
-    (prisma as any).opportunity = { deleteMany: vi.fn().mockResolvedValue({ count: 2 }) };
 
     const result = await customersRouter
       .createCaller({ prisma: prisma as never, session: adminSession })
       .remove({ id: 10, confirmTestGraphCleanup: true });
 
     expect(result.mode).toBe("test_graph_cleanup");
-    expect((prisma as any).job.deleteMany).toHaveBeenCalledWith({ where: { customerId: 10 } });
-    expect((prisma as any).opportunity.deleteMany).toHaveBeenCalledWith({ where: { customerId: 10 } });
+    expect(prisma.job.deleteMany).toHaveBeenCalledWith({ where: { customerId: 10 } });
+    expect(prisma.proposal.deleteMany).toHaveBeenCalledWith({ where: { customerId: 10 } });
+    expect(prisma.opportunity.deleteMany).toHaveBeenCalledWith({ where: { customerId: 10 } });
     expect(prisma.customer.delete).toHaveBeenCalledWith({ where: { id: 10 } });
   });
 });

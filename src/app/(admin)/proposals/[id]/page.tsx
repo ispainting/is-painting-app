@@ -575,7 +575,11 @@ export default function ProposalDetailPage() {
       utils.proposals.byId.invalidate({ id });
       utils.proposals.list.invalidate();
       utils.jobs.list.invalidate();
+      utils.jobs.byId.invalidate({ id: result.id });
+      utils.jobs.statusCounts.invalidate();
       utils.opportunities.list.invalidate();
+      utils.customers.list.invalidate();
+      utils.customers.profile.invalidate();
       utils.business.analytics.invalidate();
       utils.reports.dashboard.invalidate();
     },
