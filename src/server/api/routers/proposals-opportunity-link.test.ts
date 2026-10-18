@@ -43,6 +43,14 @@ function createMocks() {
 }
 
 describe("proposals.create opportunity link", () => {
+  it("rejects manual status=converted at creation (convertToJob only)", async () => {
+    const prisma = createMocks();
+    await expect(
+      callerWith(prisma).create({ ...minimalCreateInput, customerId: 10, status: "converted" as never })
+    ).rejects.toMatchObject({ code: "BAD_REQUEST", message: "Use Convert to Job to convert a proposal." });
+    expect(prisma.proposal.create).not.toHaveBeenCalled();
+  });
+
   it("keeps legacy callers compatible: omitted opportunityId stays null", async () => {
     const prisma = createMocks();
     await callerWith(prisma).create({ ...minimalCreateInput, customerId: 10, projectName: "Legacy" });
@@ -158,9 +166,14 @@ describe("proposals.convertToJob opportunity resolution", () => {
       },
       jobMaterial: { createMany: vi.fn() },
       jobLabor: { createMany: vi.fn() },
+      opportunity: {
+        findUnique: vi.fn().mockResolvedValue({ id: 7, stage: "estimate_sent", status: "open" }),
+        update: vi.fn().mockResolvedValue({}),
+      },
     };
     const prisma = {
       proposal: { findUnique: vi.fn().mockResolvedValue(proposal) },
+      job: { findUnique: vi.fn().mockResolvedValue(null) },
       opportunity: {
         findMany: vi.fn().mockResolvedValue(openOpportunities),
         findUnique: vi.fn().mockResolvedValue({ id: 7, stage: "estimate_sent", status: "open" }),
@@ -266,10 +279,14 @@ describe("proposals.convertToJob opportunity resolution", () => {
     expect(data.proposalSentAt).toBeNull();
   });
 
-  it("conversion retry never creates a duplicate Job", async () => {
-    const converted = { ...proposalWith(null), status: "converted" };
+  it("conversion retry returns the existing linked Job instead of duplicating", async () => {
+    const converted = { ...proposalWith(null), status: "converted", opportunityId: 7 };
     const { prisma, tx } = conversionMocks(converted, []);
-    await expect(callerWith(prisma).convertToJob({ id: 10 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    prisma.job.findUnique.mockResolvedValue({ id: 88, estimateNumber: "EST-88" });
+
+    const result = await callerWith(prisma).convertToJob({ id: 10 });
+    expect(result.jobId).toBe(88);
+    expect(result.reusedExistingJob).toBe(true);
     expect(tx.job.create).not.toHaveBeenCalled();
   });
 

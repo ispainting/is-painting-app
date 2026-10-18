@@ -297,7 +297,7 @@ export default function ProposalsPage() {
               <div>
                 <label className="label">Status</label>
                 <select className="input" value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as (typeof STATUSES)[number] }))}>
-                  {STATUSES.map((s) => <option key={s} value={s}>{s === "declined" ? "rejected" : s}</option>)}
+                  {STATUSES.filter((s) => s !== "converted").map((s) => <option key={s} value={s}>{s === "declined" ? "rejected" : s}</option>)}
                 </select>
               </div>
 

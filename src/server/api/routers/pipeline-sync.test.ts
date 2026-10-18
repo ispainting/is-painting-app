@@ -47,6 +47,15 @@ describe("proposals.setStatus → opportunity sync", () => {
     await proposalsRouter.createCaller({ prisma: prisma as never, session: adminSession }).setStatus({ id: 1, status: "sent" });
     expect(prisma.opportunity.update).not.toHaveBeenCalled();
   });
+
+  it("setStatus cannot assign converted manually", async () => {
+    const prisma = mocks("estimate_sent");
+    await expect(
+      proposalsRouter.createCaller({ prisma: prisma as never, session: adminSession }).setStatus({ id: 1, status: "converted" })
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(prisma.proposal.update).not.toHaveBeenCalled();
+    expect(prisma.opportunity.update).not.toHaveBeenCalled();
+  });
 });
 
 describe("jobs.setStatus → opportunity sync", () => {
@@ -131,6 +140,10 @@ describe("convertToJob → approval stage", () => {
       },
       jobMaterial: { createMany: vi.fn() },
       jobLabor: { createMany: vi.fn() },
+      opportunity: {
+        findUnique: vi.fn().mockResolvedValue({ id: 7, stage: "estimate_sent", status: "open" }),
+        update: vi.fn().mockResolvedValue({}),
+      },
     };
     const prisma = {
       proposal: {
@@ -169,7 +182,7 @@ describe("convertToJob → approval stage", () => {
     expect(tx.proposal.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: { status: "converted" } })
     );
-    expect(prisma.opportunity.update).toHaveBeenCalledWith(
+    expect(tx.opportunity.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ stage: "approval" }) })
     );
   });

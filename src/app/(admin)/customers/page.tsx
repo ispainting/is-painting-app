@@ -7,6 +7,7 @@ import { formatCurrency, formatDate } from "@/lib/utils";
 import { isReferralSource, leadSourceOptionsWithLegacy, resolveReferralName } from "@/lib/lead-source";
 import { PIPELINE_STAGE_OPTIONS, type PipelineStageValue } from "@/lib/pipeline-stages";
 import { opportunityStageLabel } from "@/lib/pipeline-sync";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { startOfBusinessDayInMassachusetts, todayDateInputValueInMassachusetts } from "@/lib/employee-rate-resolver";
 import { api } from "@/trpc/react";
 import { Filter, Plus, Search, SlidersHorizontal, Tags, Users } from "lucide-react";
@@ -84,6 +85,8 @@ export default function CustomersPage() {
   const [open, setOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
+  const [confirmTestCleanup, setConfirmTestCleanup] = useState(false);
   const [form, setForm] = useState<CustomerFormState>(freshCreateForm);
   const [editForm, setEditForm] = useState<CustomerFormState>(EMPTY_FORM);
 
@@ -135,6 +138,21 @@ export default function CustomersPage() {
       setSelectedIds([]);
       setBulkTags("");
       utils.customers.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const removeCustomer = api.customers.remove.useMutation({
+    onSuccess: () => {
+      toast.success("Customer deleted");
+      utils.customers.list.invalidate();
+      utils.opportunities.list.invalidate();
+      utils.proposals.list.invalidate();
+      utils.jobs.list.invalidate();
+      utils.business.analytics.invalidate();
+      utils.reports.dashboard.invalidate();
+      setDeleteTarget(null);
+      setConfirmTestCleanup(false);
     },
     onError: (error) => toast.error(error.message),
   });
@@ -437,6 +455,15 @@ export default function CustomersPage() {
                       <div className="inline-flex items-center gap-2">
                         <Link href={`/customers/${customer.id}`} className="btn btn-secondary text-xs">Open</Link>
                         <button className="btn btn-secondary text-xs" onClick={() => openEdit(customer)}>Edit</button>
+                        <button
+                          className="btn bg-rose-600 text-white text-xs hover:bg-rose-700"
+                          onClick={() => {
+                            setDeleteTarget({ id: customer.id, name: customer.name });
+                            setConfirmTestCleanup(false);
+                          }}
+                        >
+                          Delete
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -470,6 +497,37 @@ export default function CustomersPage() {
           pending={update.isPending}
         />
       ) : null}
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="Delete Customer"
+        destructive
+        confirmLabel={confirmTestCleanup ? "Delete test customer and related test records" : "Delete Customer"}
+        isPending={removeCustomer.isPending}
+        onCancel={() => {
+          setDeleteTarget(null);
+          setConfirmTestCleanup(false);
+        }}
+        onConfirm={() => {
+          if (!deleteTarget) return;
+          removeCustomer.mutate({ id: deleteTarget.id, confirmTestGraphCleanup: confirmTestCleanup });
+        }}
+        message={
+          <span className="block space-y-2">
+            <span className="block">
+              Delete <span className="font-semibold">{deleteTarget?.name}</span>?
+            </span>
+            <span className="block text-xs">
+              Empty customers and their empty auto-created opportunities are deleted immediately. Customers with invoices,
+              payments, expenses, time entries, or other protected history cannot be deleted.
+            </span>
+            <label className="flex items-center gap-2 text-xs font-medium text-rose-700">
+              <input type="checkbox" checked={confirmTestCleanup} onChange={(event) => setConfirmTestCleanup(event.target.checked)} />
+              Delete test customer and related test records
+            </label>
+          </span>
+        }
+      />
     </>
   );
 }

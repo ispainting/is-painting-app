@@ -1237,6 +1237,11 @@ export const proposalsRouter = router({
       getProposalPricingDefaults(ctx),
     ]);
 
+    // "converted" only ever comes from convertToJob's atomic transaction.
+    if (input.status === "converted") {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Use Convert to Job to convert a proposal." });
+    }
+
     if (input.status === "sent" || input.status === "approved") {
       guardCustomerLinkedForStatus(input.customerId ?? null, input.status);
     }
@@ -1375,6 +1380,11 @@ export const proposalsRouter = router({
         guardCustomerLinkedForStatus(nextCustomerId, input.data.status);
       }
 
+      // "converted" is never settable through the editor; only convertToJob.
+      if (input.data.status === "converted") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Use Convert to Job to convert a proposal." });
+      }
+
       // undefined leaves the existing link untouched; null explicitly clears it.
       const linkedOpportunityId = input.data.opportunityId === undefined
         ? undefined
@@ -1503,6 +1513,12 @@ export const proposalsRouter = router({
         });
       }
 
+      // Conversion to a Job only ever happens inside convertToJob's atomic
+      // transaction — never through a plain status edit.
+      if (input.status === "converted") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Use Convert to Job to convert a proposal." });
+      }
+
       if (input.status === "sent" || input.status === "approved") {
         guardCustomerLinkedForStatus(current.customerId, input.status);
       }
@@ -1585,7 +1601,17 @@ export const proposalsRouter = router({
 
     if (!proposal) throw new TRPCError({ code: "NOT_FOUND", message: "Proposal not found" });
     if (proposal.status === "converted") {
-      throw new TRPCError({ code: "FORBIDDEN", message: "This proposal has already been converted to a Job." });
+      // Idempotent retry: return the existing linked Job instead of duplicating.
+      const existingJob = proposal.opportunityId
+        ? await ctx.prisma.job.findUnique({ where: { opportunityId: proposal.opportunityId } })
+        : null;
+      if (existingJob) {
+        return { ...existingJob, jobId: existingJob.id, opportunityLinked: true, reusedExistingJob: true, warnings: [] as string[] };
+      }
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: "This proposal is marked converted but has no linked job. Contact an administrator to repair the link.",
+      });
     }
 
     try {
@@ -1646,19 +1672,12 @@ export const proposalsRouter = router({
         }
       }
 
-      // Re-check + flip status inside the transaction so two concurrent conversions
-      // cannot both pass the earlier check and create duplicate Jobs.
-      const claimed = await tx.proposal.updateMany({
-        where: { id: proposal.id, status: { not: "converted" } },
-        data: { status: "converted" },
-      });
-      if (claimed.count !== 1) {
-        throw new TRPCError({ code: "CONFLICT", message: "This proposal has already been converted to a Job." });
-      }
-
       const last = await tx.job.findFirst({ orderBy: { id: "desc" }, select: { estimateNumber: true } });
       const estimateNumber = nextNumber("EST", last?.estimateNumber);
 
+      // Create the Job FIRST. Only after it exists do we flip the proposal and
+      // advance the opportunity — any failure rolls the whole transaction back
+      // and leaves the proposal in its previous status.
       const createdJob = await tx.job.create({
         data: {
           customerId: proposal.customerId as number,
@@ -1711,13 +1730,20 @@ export const proposalsRouter = router({
         });
       }
 
+      // Only after the Job exists: flip the proposal and advance the pipeline.
+      const claimed = await tx.proposal.updateMany({
+        where: { id: proposal.id, status: { not: "converted" } },
+        data: { status: "converted" },
+      });
+      if (claimed.count !== 1) {
+        throw new TRPCError({ code: "CONFLICT", message: "This proposal has already been converted to a Job." });
+      }
+      await applyOpportunityTransition(tx, resolvedOpportunity?.id, "approval");
+
       return { job: createdJob, reusedExistingJob: false };
     });
 
-    // Conversion keeps the pipeline at approval (forward-only, guarded).
-    await applyOpportunityTransition(ctx.prisma, resolvedOpportunity?.id, "approval");
-
-    return { ...job, opportunityLinked: resolvedOpportunity !== null, reusedExistingJob, warnings };
+    return { ...job, jobId: job.id, opportunityLinked: resolvedOpportunity !== null, reusedExistingJob, warnings };
   }),
 
   generateProposalDraft: adminProcedure

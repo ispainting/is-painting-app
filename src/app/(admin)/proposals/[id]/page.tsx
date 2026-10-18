@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
@@ -24,6 +24,8 @@ const TABS = [
 
 type ProposalTab = (typeof TABS)[number]["id"];
 const PROPOSAL_STATUSES = ["draft", "ready", "sent", "viewed", "approved", "declined", "follow_up", "converted"] as const;
+// "converted" is intentionally absent: conversion only happens through the
+// atomic Convert to Job mutation, never through a status edit.
 const STATUS_OPTIONS: Array<{ value: (typeof PROPOSAL_STATUSES)[number]; label: string }> = [
   { value: "draft", label: "Draft" },
   { value: "ready", label: "Ready" },
@@ -31,7 +33,6 @@ const STATUS_OPTIONS: Array<{ value: (typeof PROPOSAL_STATUSES)[number]; label: 
   { value: "viewed", label: "Viewed" },
   { value: "approved", label: "Approved" },
   { value: "declined", label: "Rejected" },
-  { value: "converted", label: "Converted" },
 ];
 const PROPOSAL_TYPES = ["residential", "commercial", "restoration", "maintenance", "new_construction", "custom"] as const;
 const PROPOSAL_TEMPLATES = [
@@ -549,6 +550,7 @@ export default function ProposalDetailPage() {
   const { data: proposal, isLoading } = api.proposals.byId.useQuery({ id });
   const [tab, setTab] = useState<ProposalTab>("pricing");
   const [customerSearch, setCustomerSearch] = useState("");
+  const router = useRouter();
   const [showCustomerResults, setShowCustomerResults] = useState(false);
   const customers = api.customers.list.useQuery({ search: customerSearch.trim() || undefined }, { enabled: !!proposal });
   const [linkClientOpen, setLinkClientOpen] = useState(false);
@@ -569,19 +571,24 @@ export default function ProposalDetailPage() {
   });
   const convertToJob = api.proposals.convertToJob.useMutation({
     onSuccess: (result) => {
+      if (!result.jobId) {
+        toast.error("Conversion did not return a job. Nothing was converted.");
+        return;
+      }
       toast.success(`Converted to Job ${result.estimateNumber}`);
       for (const warning of result.warnings ?? []) toast.warning(warning);
       if (result.reusedExistingJob) toast.info("This opportunity already had a job — the existing job was reused.");
       utils.proposals.byId.invalidate({ id });
       utils.proposals.list.invalidate();
       utils.jobs.list.invalidate();
-      utils.jobs.byId.invalidate({ id: result.id });
+      utils.jobs.byId.invalidate({ id: result.jobId });
       utils.jobs.statusCounts.invalidate();
       utils.opportunities.list.invalidate();
       utils.customers.list.invalidate();
       utils.customers.profile.invalidate();
       utils.business.analytics.invalidate();
       utils.reports.dashboard.invalidate();
+      router.push(`/jobs/${result.jobId}`);
     },
     onError: (e) => toast.error(e.message),
   });
