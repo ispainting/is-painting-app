@@ -95,11 +95,15 @@ export const jobsRouter = router({
   }),
 
   clockable: protectedProcedure.query(async ({ ctx }) => {
+    // Exactly the Jobs → Active tab definition (status active, not archived),
+    // including the employee assignment restriction — the two screens can
+    // never disagree.
+    const where = buildJobsListWhere(
+      { status: "active", visibility: "active" },
+      { isEmployee: ctx.session?.role === "employee", employeeUserId: ctx.session?.userId }
+    );
     return ctx.prisma.job.findMany({
-      where: {
-        deletedAt: null,
-        status: { in: ["estimate", "sent", "approved", "active"] },
-      },
+      where: where as never,
       orderBy: [{ status: "asc" }, { name: "asc" }],
       select: {
         id: true,

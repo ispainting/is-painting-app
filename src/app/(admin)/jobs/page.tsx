@@ -44,6 +44,7 @@ export default function JobsPage() {
       toast.success("Job archived");
       utils.jobs.list.invalidate();
       utils.jobs.statusCounts.invalidate();
+      utils.jobs.clockable.invalidate();
       utils.business.analytics.invalidate();
       utils.reports.dashboard.invalidate();
       setConfirmDeleteOpen(false);
@@ -56,6 +57,7 @@ export default function JobsPage() {
       toast.success("Job restored");
       utils.jobs.list.invalidate();
       utils.jobs.statusCounts.invalidate();
+      utils.jobs.clockable.invalidate();
       utils.business.analytics.invalidate();
       utils.reports.dashboard.invalidate();
     },
@@ -67,6 +69,7 @@ export default function JobsPage() {
       toast.success("Job permanently deleted");
       utils.jobs.list.invalidate();
       utils.jobs.statusCounts.invalidate();
+      utils.jobs.clockable.invalidate();
       utils.business.analytics.invalidate();
       utils.reports.dashboard.invalidate();
       setPermanentTarget(null);
@@ -78,6 +81,7 @@ export default function JobsPage() {
       toast.success("Job created");
       utils.jobs.list.invalidate();
       utils.jobs.statusCounts.invalidate();
+      utils.jobs.clockable.invalidate();
       utils.business.analytics.invalidate();
       utils.reports.dashboard.invalidate();
       setOpen(false);

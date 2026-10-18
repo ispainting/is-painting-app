@@ -583,6 +583,7 @@ export default function ProposalDetailPage() {
       utils.jobs.list.invalidate();
       utils.jobs.byId.invalidate({ id: result.jobId });
       utils.jobs.statusCounts.invalidate();
+      utils.jobs.clockable.invalidate();
       utils.opportunities.list.invalidate();
       utils.customers.list.invalidate();
       utils.customers.profile.invalidate();

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/trpc/react";
 import { formatDateTime } from "@/lib/utils";
-import { CLOCK_IN_NOT_AT_JOBSITE, formatClockDuration, normalizeClockInJobId } from "@/lib/clock";
+import { CLOCK_IN_NOT_AT_JOBSITE, CLOCKABLE_REFETCH_INTERVAL_MS, formatClockDuration, normalizeClockInJobId } from "@/lib/clock";
 import { toast } from "sonner";
 import { InstallPrompt } from "@/components/employee/InstallPrompt";
 import { BadgeCheck, BriefcaseBusiness, Clock3, Coffee, LogIn, LogOut, PlayCircle, TimerReset } from "lucide-react";
@@ -32,7 +32,7 @@ export default function ClockPage() {
   const router = useRouter();
   const active = api.time.myActive.useQuery();
   const myEntries = api.time.myEntries.useQuery({ days: 14 });
-  const jobs = api.jobs.clockable.useQuery();
+  const jobs = api.jobs.clockable.useQuery(undefined, { refetchInterval: CLOCKABLE_REFETCH_INTERVAL_MS });
   const me = api.auth.me.useQuery();
 
   const [jobId, setJobId] = useState(CLOCK_IN_NOT_AT_JOBSITE);

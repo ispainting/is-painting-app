@@ -1,5 +1,8 @@
 export const CLOCK_IN_NOT_AT_JOBSITE = "not_at_jobsite";
 
+/** Clock-In job list auto-refresh cadence: every hour. */
+export const CLOCKABLE_REFETCH_INTERVAL_MS = 60 * 60 * 1000;
+
 /**
  * Maximum length of a live shift. clockOut=null entries older than this are
  * historical import artifacts with authoritative stored hours — never live

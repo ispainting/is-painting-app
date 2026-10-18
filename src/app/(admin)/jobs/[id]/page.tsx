@@ -85,6 +85,8 @@ export default function JobDetailPage() {
     onSuccess: () => {
       utils.jobs.byId.invalidate({ id });
       utils.jobs.list.invalidate();
+      utils.jobs.statusCounts.invalidate();
+      utils.jobs.clockable.invalidate();
       utils.business.analytics.invalidate();
       utils.reports.dashboard.invalidate();
       toast.success("Job updated");
@@ -97,6 +99,8 @@ export default function JobDetailPage() {
     onSuccess: () => {
       utils.jobs.byId.invalidate({ id });
       utils.jobs.list.invalidate();
+      utils.jobs.statusCounts.invalidate();
+      utils.jobs.clockable.invalidate();
       utils.business.analytics.invalidate();
       utils.reports.dashboard.invalidate();
       toast.success("Status updated");
@@ -158,6 +162,7 @@ export default function JobDetailPage() {
       utils.jobs.byId.invalidate({ id });
       utils.jobs.list.invalidate();
       utils.jobs.statusCounts.invalidate();
+      utils.jobs.clockable.invalidate();
       toast.success("Job archived");
       setConfirmDeleteOpen(false);
     },
@@ -169,6 +174,7 @@ export default function JobDetailPage() {
       utils.jobs.byId.invalidate({ id });
       utils.jobs.list.invalidate();
       utils.jobs.statusCounts.invalidate();
+      utils.jobs.clockable.invalidate();
       toast.success("Job restored");
     },
     onError: (e) => toast.error(e.message),
@@ -180,6 +186,7 @@ export default function JobDetailPage() {
     onSuccess: () => {
       utils.jobs.list.invalidate();
       utils.jobs.statusCounts.invalidate();
+      utils.jobs.clockable.invalidate();
       utils.business.analytics.invalidate();
       utils.reports.dashboard.invalidate();
       toast.success("Job permanently deleted");
