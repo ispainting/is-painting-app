@@ -5,6 +5,7 @@ import { getLifecycleDate } from "@/lib/job-lifecycle";
 import { jobCanonicalTotal } from "@/lib/job-total";
 import { buildLeadSourceQualityReport } from "@/lib/lead-source-quality";
 import { businessRangeInMassachusetts } from "@/lib/employee-rate-resolver";
+import { selectOpenProposals } from "@/lib/open-pipeline";
 
 const SURVIVAL_TARGET = 40_000;
 const MONTHLY_GOAL = 65_000;
@@ -288,6 +289,9 @@ async function loadBusinessHistory(prisma: any, start: Date, end: Date) {
         sentAt: true,
         approvedAt: true,
         updatedAt: true,
+        deletedAt: true,
+        opportunityId: true,
+        opportunity: { select: { job: { select: { id: true } } } },
         customer: { select: { id: true, name: true, source: true } },
       },
     }),
@@ -428,8 +432,9 @@ function currentPeriodMetrics(range: { start: Date; end: Date }, history: Awaite
   const netProfit = grossProfit - overheadExpenses;
   const profitMargin = revenue > 0 ? netProfit / revenue : null;
 
-  const openProposals = history.proposals.filter((proposal: any) => !["approved", "declined", "converted"].includes(proposal.status)).length;
-  const openProposalValue = history.proposals.filter((proposal: any) => !["approved", "declined", "converted"].includes(proposal.status)).reduce((sum: number, proposal: any) => sum + money(proposal.totalAmount), 0);
+  const openPipeline = selectOpenProposals(history.proposals);
+  const openProposals = openPipeline.length;
+  const openProposalValue = openPipeline.reduce((sum: number, proposal: any) => sum + money(proposal.totalAmount), 0);
   const wonProposals = history.proposals.filter((proposal: any) => ["approved", "converted"].includes(proposal.status));
   const lostProposals = history.proposals.filter((proposal: any) => proposal.status === "declined");
   const proposalsSent = proposals.filter((proposal: any) => isInRange(proposal.sentAt, range.start, range.end)).length;
