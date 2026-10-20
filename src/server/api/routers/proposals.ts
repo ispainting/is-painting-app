@@ -13,7 +13,7 @@ import {
   type ProposalGeneralLiabilityMode,
 } from "@/lib/proposal-estimate-engine";
 import { assertCustomerLinked, ProposalNotLinkedError } from "@/lib/proposal-guards";
-import { isOpenNonTerminalOpportunity, resolveOpportunityForProposal } from "@/lib/proposal-opportunity";
+import { resolveOpportunityForProposal } from "@/lib/proposal-opportunity";
 import { applyOpportunityTransition, resolveProposalEventStage, type ProposalPipelineEvent } from "@/lib/pipeline-sync";
 
 const ProposalStatusZ = z.enum(["draft", "ready", "sent", "viewed", "approved", "declined", "follow_up", "converted"]);
@@ -883,7 +883,7 @@ function guardCustomerLinkedForStatus(customerId: number | null, status: "sent" 
 
 /**
  * Validates an explicit Proposal -> Opportunity link: the opportunity must
- * exist, belong to the proposal's customer, and be open and non-terminal.
+ * exist and belong to the proposal's customer, including historical outcomes.
  * Never changes Opportunity.stage.
  */
 async function validateProposalOpportunityLink(
@@ -901,9 +901,6 @@ async function validateProposalOpportunityLink(
   }
   if (opportunity.customerId !== customerId) {
     throw new TRPCError({ code: "BAD_REQUEST", message: "Opportunity does not belong to the selected customer." });
-  }
-  if (!isOpenNonTerminalOpportunity(opportunity)) {
-    throw new TRPCError({ code: "BAD_REQUEST", message: "Opportunity is closed or terminal and cannot be linked." });
   }
   return opportunity.id;
 }
@@ -1391,6 +1388,9 @@ export const proposalsRouter = router({
         : input.data.opportunityId === null
           ? null
           : await validateProposalOpportunityLink(ctx.prisma, nextCustomerId, input.data.opportunityId);
+      if (current.opportunityId && linkedOpportunityId === undefined) {
+        await validateProposalOpportunityLink(ctx.prisma, input.data.customerId ?? null, current.opportunityId);
+      }
 
       const config = await getProposalPricingDefaults(ctx);
       const budgetTotal = input.data.materialsBudget + input.data.laborBudget + input.data.subcontractorBudget;
@@ -1488,8 +1488,9 @@ export const proposalsRouter = router({
       // Pipeline sync: status changes via the editor drive the linked opportunity stage.
       await applyOpportunityTransition(
         ctx.prisma,
-        current.opportunityId,
-        resolveProposalEventStage(input.data.status as ProposalPipelineEvent)
+        updated.opportunityId,
+        resolveProposalEventStage(input.data.status as ProposalPipelineEvent),
+        { changedById: ctx.session.userId, effectiveAt: updated.approvedAt ?? updated.sentAt ?? undefined }
       );
       return updated;
     }),
@@ -1534,7 +1535,8 @@ export const proposalsRouter = router({
       await applyOpportunityTransition(
         ctx.prisma,
         current.opportunityId,
-        resolveProposalEventStage(input.status as ProposalPipelineEvent)
+        resolveProposalEventStage(input.status as ProposalPipelineEvent),
+        { changedById: ctx.session.userId, effectiveAt: updated.approvedAt ?? updated.sentAt ?? undefined }
       );
       return updated;
     }),
@@ -1545,9 +1547,6 @@ export const proposalsRouter = router({
     .mutation(async ({ ctx, input }) => {
       const proposal = await ctx.prisma.proposal.findUnique({ where: { id: input.id }, select: { status: true } });
       if (!proposal) throw new TRPCError({ code: "NOT_FOUND", message: "Proposal not found" });
-      if (proposal.status === "converted") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Converted proposals are read-only." });
-      }
       const customer = await ctx.prisma.customer.findUnique({ where: { id: input.customerId }, select: { id: true } });
       if (!customer) throw new TRPCError({ code: "NOT_FOUND", message: "Customer not found" });
 
@@ -1570,9 +1569,6 @@ export const proposalsRouter = router({
         select: { id: true, customerId: true, status: true },
       });
       if (!proposal) throw new TRPCError({ code: "NOT_FOUND", message: "Proposal not found" });
-      if (proposal.status === "converted") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Converted proposals are read-only." });
-      }
       const linkedId = input.opportunityId === null
         ? null
         : await validateProposalOpportunityLink(ctx.prisma, proposal.customerId, input.opportunityId);
@@ -1648,6 +1644,7 @@ export const proposalsRouter = router({
         where: {
           customerId: proposal.customerId as number,
           status: "open",
+          archivedAt: null,
           stage: { notIn: ["lost", "not_qualified"] },
         },
         select: { id: true, leadReceivedAt: true, status: true, stage: true },
@@ -1686,7 +1683,7 @@ export const proposalsRouter = router({
             where: { id: proposal.id, status: { not: "converted" } },
             data: { status: "converted" },
           });
-          await applyOpportunityTransition(tx, resolvedOpportunity?.id, "approval");
+          await applyOpportunityTransition(tx, resolvedOpportunity?.id, "approval", { changedById: ctx.session.userId });
           return { job, reusedExistingJob: true };
         }
       }

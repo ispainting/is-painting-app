@@ -10,8 +10,10 @@ export const PIPELINE_STAGE_OPTIONS = [
   { value: "follow_up", label: "Follow Up" },
   { value: "estimate_sent", label: "Estimate Sent" },
   { value: "approval", label: "Approval" },
+  { value: "on_hold", label: "On Hold / Postponed" },
   { value: "service_delivery", label: "Service Delivery" },
   { value: "review", label: "Review" },
+  { value: "completed", label: "Completed" },
   { value: "not_qualified", label: "Not Qualified" },
   { value: "lost", label: "Lost / Cancelled" },
   { value: "invalid_duplicate", label: "Invalid / Duplicate" },
@@ -23,4 +25,4 @@ export type PipelineStageValue = (typeof PIPELINE_STAGE_OPTIONS)[number]["value"
 export const PIPELINE_STAGE_VALUES = PIPELINE_STAGE_OPTIONS.map((option) => option.value) as PipelineStageValue[];
 
 /** Terminal stages: automation never moves an opportunity out of these; only an explicit admin action can. */
-export const TERMINAL_PIPELINE_STAGES: PipelineStageValue[] = ["lost", "not_qualified", "invalid_duplicate", "spam_fraud"];
+export const TERMINAL_PIPELINE_STAGES: PipelineStageValue[] = ["lost", "not_qualified", "invalid_duplicate", "spam_fraud", "completed"];

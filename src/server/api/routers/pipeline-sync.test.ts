@@ -75,7 +75,7 @@ describe("jobs.setStatus → opportunity sync", () => {
   it.each([
     ["approved", "approval"],
     ["active", "service_delivery"],
-    ["completed", "review"],
+    ["completed", "completed"],
     ["cancelled", "lost"],
   ] as const)("job %s → opportunity %s", async (jobStatus, expectedStage) => {
     const prisma = mocks("estimate_sent");
@@ -85,11 +85,11 @@ describe("jobs.setStatus → opportunity sync", () => {
     );
   });
 
-  it("on_hold moves a nonterminal opportunity backward to estimate_sent (approved exception)", async () => {
+  it("on_hold moves a nonterminal opportunity into the hold stage", async () => {
     const prisma = mocks("service_delivery");
     await jobsRouter.createCaller({ prisma: prisma as never, session: adminSession }).setStatus({ id: 1, status: "on_hold" });
     expect(prisma.opportunity.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ stage: "estimate_sent" }) })
+      expect.objectContaining({ data: expect.objectContaining({ stage: "on_hold" }) })
     );
   });
 

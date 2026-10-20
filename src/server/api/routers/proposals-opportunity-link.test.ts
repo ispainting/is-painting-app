@@ -76,14 +76,12 @@ describe("proposals.create opportunity link", () => {
     expect(prisma.proposal.create).not.toHaveBeenCalled();
   });
 
-  it("rejects a terminal or closed opportunity", async () => {
+  it("allows linking historical terminal opportunities for reconciliation", async () => {
     const prisma = createMocks();
     prisma.opportunity.findUnique.mockResolvedValue({ id: 5, customerId: 10, status: "open", stage: "not_qualified" });
 
-    await expect(
-      callerWith(prisma).create({ ...minimalCreateInput, customerId: 10, opportunityId: 5 })
-    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
-    expect(prisma.proposal.create).not.toHaveBeenCalled();
+    await expect(callerWith(prisma).create({ ...minimalCreateInput, customerId: 10, opportunityId: 5 })).resolves.toEqual({ id: 1 });
+    expect(prisma.proposal.create.mock.calls[0]?.[0].data.opportunityId).toBe(5);
   });
 });
 
@@ -117,19 +115,19 @@ describe("proposals.setOpportunity", () => {
     expect(prisma.opportunity.findUnique).not.toHaveBeenCalled();
   });
 
-  it("rejects customer-mismatched and terminal opportunities", async () => {
+  it("rejects customer-mismatched opportunities and allows terminal links", async () => {
     const prisma = setOpportunityMocks();
     prisma.opportunity.findUnique.mockResolvedValueOnce({ id: 5, customerId: 99, status: "open", stage: "review" });
     await expect(callerWith(prisma).setOpportunity({ id: 1, opportunityId: 5 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
 
     prisma.opportunity.findUnique.mockResolvedValueOnce({ id: 5, customerId: 10, status: "open", stage: "lost" });
-    await expect(callerWith(prisma).setOpportunity({ id: 1, opportunityId: 5 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(callerWith(prisma).setOpportunity({ id: 1, opportunityId: 5 })).resolves.toEqual({ id: 1 });
   });
 
-  it("refuses to change a converted proposal", async () => {
+  it("allows linking converted proposals to historical opportunities", async () => {
     const prisma = setOpportunityMocks();
     prisma.proposal.findUnique.mockResolvedValue({ id: 1, customerId: 10, status: "converted" });
-    await expect(callerWith(prisma).setOpportunity({ id: 1, opportunityId: 5 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(callerWith(prisma).setOpportunity({ id: 1, opportunityId: 5 })).resolves.toEqual({ id: 1 });
   });
 });
 

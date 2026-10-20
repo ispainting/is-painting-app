@@ -3,6 +3,7 @@
  * lives here — routers call these helpers instead of scattering stage logic.
  */
 import { TERMINAL_PIPELINE_STAGES } from "./pipeline-stages";
+import { opportunityValues } from "./opportunity-values";
 
 export const OPPORTUNITY_STAGE_LABELS: Record<string, string> = {
   new_lead: "New Lead",
@@ -18,6 +19,8 @@ export const OPPORTUNITY_STAGE_LABELS: Record<string, string> = {
   not_qualified: "Not Qualified",
   invalid_duplicate: "Invalid / Duplicate",
   spam_fraud: "Spam / Fraud",
+  on_hold: "On Hold / Postponed",
+  completed: "Completed",
 };
 
 export function opportunityStageLabel(stage: string): string {
@@ -75,9 +78,9 @@ export function resolveJobStatusStage(status: string): string | null {
     case "active":
       return "service_delivery";
     case "completed":
-      return "review";
+      return "completed";
     case "on_hold":
-      return "estimate_sent"; // explicit approved exception: may move backward
+      return "on_hold";
     case "cancelled":
       return "lost"; // displayed as "Lost / Cancelled"
     default:
@@ -86,7 +89,11 @@ export function resolveJobStatusStage(status: string): string | null {
 }
 
 /** Terminal stages automation may enter (job cancelled → lost). */
-const AUTO_ALLOWED_TERMINAL_TARGETS = new Set(["lost"]);
+const AUTO_ALLOWED_TERMINAL_TARGETS = new Set(["lost", "completed"]);
+
+export function opportunityStatusForStage(stage: string): "open" | "won" | "lost" {
+  return stage === "completed" ? "won" : isTerminalStage(stage) ? "lost" : "open";
+}
 
 /**
  * Decides whether an automatic transition applies. Rules:
@@ -97,15 +104,18 @@ const AUTO_ALLOWED_TERMINAL_TARGETS = new Set(["lost"]);
  * - forward-only along STAGE_ORDER, except the explicit on_hold exception
  */
 export function shouldAutoTransition(
-  current: { stage: string; status: string },
+  current: { stage: string; status: string; archivedAt?: Date | null },
   targetStage: string | null,
   options?: { allowBackward?: boolean }
 ): boolean {
   if (!targetStage || current.stage === targetStage) return false;
   if (current.status !== "open") return false;
+  if (current.archivedAt) return false;
   if (isTerminalStage(current.stage)) return false;
   if (isTerminalStage(targetStage)) return AUTO_ALLOWED_TERMINAL_TARGETS.has(targetStage);
   if (options?.allowBackward) return true;
+  if (targetStage === "on_hold") return true;
+  if (current.stage === "on_hold") return true;
   // A declined proposal returns the opportunity to follow_up from the
   // proposal-area stages; production stages never move backward.
   if (targetStage === "follow_up" && (current.stage === "estimate_sent" || current.stage === "approval")) return true;
@@ -118,7 +128,7 @@ export function shouldAutoTransition(
 type StageTransitionPrisma = {
   opportunity: {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    findUnique: (args: any) => Promise<{ id: number; stage: string; status: string } | null>;
+    findUnique: (args: any) => Promise<{ id: number; stage: string; status: string; archivedAt?: Date | null; leadValue?: unknown; proposals?: Array<{ id: number; status: string; totalAmount: unknown; createdAt: Date; deletedAt?: Date | null }> } | null>;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     update: (args: any) => Promise<unknown>;
   };
@@ -132,20 +142,33 @@ export async function applyOpportunityTransition(
   prisma: StageTransitionPrisma,
   opportunityId: number | null | undefined,
   targetStage: string | null,
-  options?: { allowBackward?: boolean }
+  options?: { allowBackward?: boolean; effectiveAt?: Date; changedById?: number; reason?: string }
 ): Promise<{ applied: boolean; stage: string | null }> {
   if (!opportunityId || !targetStage) return { applied: false, stage: null };
   const current = await prisma.opportunity.findUnique({
     where: { id: opportunityId },
-    select: { id: true, stage: true, status: true },
+    select: { id: true, stage: true, status: true, archivedAt: true, leadValue: true, proposals: true },
   });
   if (!current) return { applied: false, stage: null };
-  if (!shouldAutoTransition({ stage: current.stage, status: current.status }, targetStage, options)) {
+  if (!shouldAutoTransition(current, targetStage, options)) {
     return { applied: false, stage: current.stage };
   }
+  const effectiveAt = options?.effectiveAt ?? new Date();
+  const terminal = isTerminalStage(targetStage);
   await prisma.opportunity.update({
-    where: { id: current.id },
-    data: { stage: targetStage, lastStageChangedAt: new Date() },
+    where: { id: current.id, stage: current.stage, status: "open", archivedAt: null },
+    data: {
+      stage: targetStage,
+      status: opportunityStatusForStage(targetStage),
+      lastStageChangedAt: effectiveAt,
+      outcomeAt: terminal ? effectiveAt : null,
+      outcomeReason: terminal ? options?.reason ?? "Job workflow" : null,
+      ...(targetStage === "lost" ? { lostValue: opportunityValues(current).expected } : {}),
+      stageHistory: { create: {
+        previousStage: current.stage, newStage: targetStage, effectiveAt,
+        changedById: options?.changedById, reason: options?.reason ?? "Workflow synchronization",
+      } },
+    },
   });
   return { applied: true, stage: targetStage };
 }

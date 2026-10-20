@@ -1557,7 +1557,7 @@ export default function ProposalDetailPage() {
         </div>
       )}
 
-      {isLinked && !isReadOnly && (
+      {isLinked && (
         <div className="card mb-4 border border-slate-200 p-4 text-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>

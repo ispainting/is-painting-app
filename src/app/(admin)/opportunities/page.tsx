@@ -1,295 +1,120 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { formatCurrency, formatDate } from "@/lib/utils";
-import { opportunityStageLabel } from "@/lib/pipeline-sync";
-import { PIPELINE_STAGE_OPTIONS, TERMINAL_PIPELINE_STAGES } from "@/lib/pipeline-stages";
-import { LEAD_SOURCE_OPTIONS, isReferralSource, leadSourceOptionsWithLegacy } from "@/lib/lead-source";
-import { startOfBusinessDayInMassachusetts, todayDateInputValueInMassachusetts } from "@/lib/employee-rate-resolver";
+import { OpportunityEditor, type OpportunityCardData } from "@/components/OpportunityEditor";
+import { formatCurrency } from "@/lib/utils";
+import { opportunityStageLabel, isTerminalStage } from "@/lib/pipeline-sync";
+import { PIPELINE_STAGE_OPTIONS } from "@/lib/pipeline-stages";
+import { LEAD_SOURCE_OPTIONS, normalizeLeadSourceForReport } from "@/lib/lead-source";
+import { formatOpportunityDate, latestOpportunityProposal, opportunityDateInput, opportunityLeadDate, opportunityValues } from "@/lib/opportunity-values";
+import { todayDateInputValueInMassachusetts } from "@/lib/employee-rate-resolver";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
-import { Plus } from "lucide-react";
 import { toast } from "sonner";
-
-const SALES_STAGES = [
-  "new_lead", "onboarding", "not_answered", "follow_up",
-  "estimate_sent", "approval", "service_delivery", "review",
-] as const;
 
 export default function OpportunitiesPage() {
   const utils = api.useUtils();
-  const { data, isLoading } = api.opportunities.list.useQuery();
-  const setStage = api.opportunities.setStage.useMutation({
-    onSuccess: async () => {
-      await Promise.all([
-        utils.opportunities.list.invalidate(),
-        utils.proposals.list.invalidate(),
-        utils.jobs.list.invalidate(),
-        utils.customers.list.invalidate(),
-        utils.business.analytics.invalidate(),
-        utils.reports.dashboard.invalidate(),
-      ]);
-      toast.success("Stage updated");
-    },
-  });
-
-  const [createOpen, setCreateOpen] = useState(false);
-  const [customerSearch, setCustomerSearch] = useState("");
-  const [showCustomerResults, setShowCustomerResults] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string; customerName: string } | null>(null);
-  const emptyForm = () => ({
-    customerId: 0,
-    name: "",
-    stage: "new_lead" as string,
-    leadValue: "",
-    leadSource: "",
-    referralSource: "",
-    notes: "",
-    leadReceivedAt: todayDateInputValueInMassachusetts(),
-  });
-  const [form, setForm] = useState(emptyForm);
-  const customers = api.customers.list.useQuery(
-    { search: customerSearch.trim() || undefined },
-    { enabled: createOpen }
-  );
-
-  const create = api.opportunities.create.useMutation({
-    onSuccess: () => {
-      toast.success("Opportunity created");
-      utils.opportunities.list.invalidate();
-      utils.customers.list.invalidate();
-      utils.business.analytics.invalidate();
-      utils.reports.dashboard.invalidate();
-      setCreateOpen(false);
-      setForm(emptyForm());
-      setCustomerSearch("");
-    },
-    onError: (e) => toast.error(e.message),
-  });
-
-  const removeOpportunity = api.opportunities.remove.useMutation({
-    onSuccess: () => {
-      toast.success("Opportunity deleted");
-      utils.opportunities.list.invalidate();
-      utils.customers.list.invalidate();
-      utils.business.analytics.invalidate();
-      utils.reports.dashboard.invalidate();
-      setDeleteTarget(null);
-    },
-    onError: (e) => toast.error(e.message),
-  });
-
-  function submitCreate() {
-    if (!form.customerId) return toast.error("Select a customer first.");
-    if (!form.name.trim()) return toast.error("Enter an opportunity name.");
-    create.mutate({
-      customerId: form.customerId,
-      name: form.name.trim(),
-      stage: form.stage as never,
-      leadValue: form.leadValue ? Number(form.leadValue) : undefined,
-      source: form.leadSource || undefined,
-      referralSource: isReferralSource(form.leadSource) ? form.referralSource.trim() || undefined : undefined,
-      notes: form.notes.trim() || undefined,
-      leadReceivedAt: form.leadReceivedAt ? startOfBusinessDayInMassachusetts(form.leadReceivedAt) : undefined,
-    });
+  const query = api.opportunities.list.useQuery();
+  const [editor, setEditor] = useState<OpportunityCardData | "new" | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<OpportunityCardData | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
+  const [search, setSearch] = useState("");
+  const [source, setSource] = useState("");
+  const [service, setService] = useState("");
+  const [stage, setStage] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [followUp, setFollowUp] = useState("");
+  const [view, setView] = useState<"kanban" | "table">("kanban");
+  const [openedFromUrl, setOpenedFromUrl] = useState(false);
+  useEffect(() => {
+    if (!query.data || openedFromUrl) return;
+    const id = Number(new URLSearchParams(window.location.search).get("open"));
+    if (id) {
+      const opportunity = query.data.find((o) => o.id === id);
+      if (opportunity) setEditor(opportunity);
+      else toast.error("Opportunity not found.");
+    }
+    setOpenedFromUrl(true);
+  }, [query.data, openedFromUrl]);
+  async function refresh() {
+    await Promise.all([
+      utils.opportunities.invalidate(), utils.proposals.invalidate(), utils.jobs.invalidate(),
+      utils.customers.invalidate(), utils.business.invalidate(), utils.reports.invalidate(),
+    ]);
   }
-
-  const grouped = SALES_STAGES.map((stage) => ({
-    stage,
-    items: (data ?? []).filter((o) => o.pipeline === "sales" && o.stage === stage),
-  }));
-  const terminalGrouped = TERMINAL_PIPELINE_STAGES.map((stage) => ({
-    stage,
-    items: (data ?? []).filter((o) => o.pipeline === "sales" && o.stage === stage),
-  }));
-
-  return (
-    <>
-      <PageHeader
-        title="Opportunities"
-        description="Sales pipeline"
-        actions={
-          <button type="button" className="btn btn-primary" onClick={() => setCreateOpen(true)}>
-            <Plus className="mr-1 h-4 w-4" /> New Opportunity
-          </button>
-        }
-      />
-      {isLoading ? (
-        <div className="text-slate-500">Loading…</div>
-      ) : (
-        <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {grouped.map((col) => (
-              <StageColumn key={col.stage} stage={col.stage} items={col.items} onStage={(id, stage, pipeline) => setStage.mutate({ id, pipeline, stage: stage as any })} onDelete={(o) => setDeleteTarget({ id: o.id, name: o.name, customerName: o.customer?.name ?? "" })} />
-            ))}
-          </div>
-          <h2 className="mt-6 text-sm font-semibold text-slate-700">Closed / Terminal</h2>
-          <div className="mt-2 grid grid-cols-2 md:grid-cols-4 gap-3">
-            {terminalGrouped.map((col) => (
-              <StageColumn key={col.stage} stage={col.stage} items={col.items} onStage={(id, stage, pipeline) => setStage.mutate({ id, pipeline, stage: stage as any })} onDelete={(o) => setDeleteTarget({ id: o.id, name: o.name, customerName: o.customer?.name ?? "" })} />
-            ))}
-          </div>
-        </>
-      )}
-
-      {createOpen && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
-          <div className="card w-full max-w-xl max-h-[90vh] flex flex-col overflow-hidden">
-            <div className="px-6 pt-6 pb-3 border-b border-slate-200">
-              <div className="text-lg font-semibold">New Opportunity</div>
-            </div>
-            <div className="grid grid-cols-2 gap-3 overflow-y-auto px-6 py-4 flex-1">
-              <div className="col-span-2 relative">
-                <label className="label">Customer</label>
-                <input
-                  className="input"
-                  value={customerSearch}
-                  onFocus={() => setShowCustomerResults(true)}
-                  onChange={(e) => {
-                    setCustomerSearch(e.target.value);
-                    setShowCustomerResults(true);
-                    setForm((f) => ({ ...f, customerId: 0 }));
-                  }}
-                  placeholder="Search customer by name"
-                />
-                {showCustomerResults && customerSearch.trim().length > 0 && (
-                  <div className="absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-md border border-slate-200 bg-white shadow-sm">
-                    {(customers.data ?? []).map((c) => (
-                      <button
-                        key={c.id}
-                        type="button"
-                        className="w-full text-left px-3 py-2 hover:bg-slate-50 border-b border-slate-100 last:border-b-0"
-                        onClick={() => {
-                          setForm((f) => ({ ...f, customerId: c.id }));
-                          setCustomerSearch(c.name);
-                          setShowCustomerResults(false);
-                        }}
-                      >
-                        <div className="text-sm font-medium text-slate-900">{c.name}</div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div className="col-span-2">
-                <label className="label">Opportunity / Project Name</label>
-                <input className="input" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
-              </div>
-              <div>
-                <label className="label">Lead Received Date</label>
-                <input type="date" className="input" value={form.leadReceivedAt} onChange={(e) => setForm((f) => ({ ...f, leadReceivedAt: e.target.value }))} />
-              </div>
-              <div>
-                <label className="label">Lead Source</label>
-                <select className="input" value={form.leadSource} onChange={(e) => setForm((f) => ({ ...f, leadSource: e.target.value }))}>
-                  <option value="">Select a source</option>
-                  {leadSourceOptionsWithLegacy(form.leadSource).map((option) => (
-                    <option key={option} value={option}>{option}</option>
-                  ))}
-                </select>
-              </div>
-              {isReferralSource(form.leadSource) && (
-                <div className="col-span-2">
-                  <label className="label">Referral Name</label>
-                  <input className="input" value={form.referralSource} onChange={(e) => setForm((f) => ({ ...f, referralSource: e.target.value }))} />
-                </div>
-              )}
-              <div>
-                <label className="label">Initial Pipeline Stage</label>
-                <select className="input" value={form.stage} onChange={(e) => setForm((f) => ({ ...f, stage: e.target.value }))}>
-                  {PIPELINE_STAGE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="label">Estimated Value</label>
-                <input type="number" min="0" step="0.01" className="input" value={form.leadValue} onChange={(e) => setForm((f) => ({ ...f, leadValue: e.target.value }))} />
-              </div>
-              <div className="col-span-2">
-                <label className="label">Notes</label>
-                <textarea className="input min-h-20" value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 border-t border-slate-200 px-6 py-4">
-              <button className="btn btn-secondary" onClick={() => setCreateOpen(false)}>Cancel</button>
-              <button className="btn btn-primary" disabled={create.isPending || !form.customerId || !form.name.trim()} onClick={submitCreate}>
-                {create.isPending ? "Creating…" : "Create Opportunity"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <ConfirmDialog
-        open={deleteTarget !== null}
-        title="Delete Opportunity"
-        destructive
-        confirmLabel="Delete Opportunity"
-        isPending={removeOpportunity.isPending}
-        onCancel={() => setDeleteTarget(null)}
-        onConfirm={() => deleteTarget && removeOpportunity.mutate({ id: deleteTarget.id })}
-        message={deleteTarget ? `Delete opportunity "${deleteTarget.name}" for ${deleteTarget.customerName}? Only empty opportunities without linked proposals, jobs, or automation history can be deleted.` : ""}
-      />
-    </>
-  );
-}
-
-function StageColumn({
-  stage,
-  items,
-  onStage,
-  onDelete,
-}: {
-  stage: string;
-  items: any[];
-  onStage: (id: number, stage: string, pipeline: "sales" | "not_interested") => void;
-  onDelete: (opportunity: any) => void;
-}) {
-  return (
-    <div className="bg-slate-100 rounded-lg p-3 min-h-[200px]">
-      <div className="text-xs uppercase font-semibold text-slate-600 mb-2">
-        {opportunityStageLabel(stage)}
+  const archive = api.opportunities.setArchived.useMutation({ onSuccess: refresh, onError: (e) => toast.error(e.message) });
+  const remove = api.opportunities.remove.useMutation({ onSuccess: async () => { await refresh(); setDeleteTarget(null); toast.success("Opportunity deleted"); }, onError: (e) => toast.error(e.message) });
+  const today = todayDateInputValueInMassachusetts();
+  const filtered = (query.data ?? []).filter((o) => {
+    const leadDate = opportunityDateInput(opportunityLeadDate(o));
+    const due = opportunityDateInput(o.followUpAt);
+    return (showArchived || !o.archivedAt) &&
+      (!search || `${o.name} ${o.customer.name} ${o.notes ?? ""}`.toLowerCase().includes(search.toLowerCase())) &&
+      (!source || normalizeLeadSourceForReport(o.source ?? o.customer.leadSource ?? o.customer.source) === source) &&
+      (!service || o.serviceType === service) && (!stage || o.stage === stage) &&
+      (!from || leadDate >= from) && (!to || leadDate <= to) &&
+      (!followUp || (!isTerminalStage(o.stage) && o.status === "open" && !!due && (followUp === "overdue" ? due < today : due <= today)));
+  });
+  const sources = Array.from(new Set([...LEAD_SOURCE_OPTIONS, ...(query.data ?? []).map((o) => normalizeLeadSourceForReport(o.source ?? o.customer.leadSource ?? o.customer.source))]));
+  const services = Array.from(new Set((query.data ?? []).map((o) => o.serviceType).filter((s): s is string => !!s)));
+  function card(o: OpportunityCardData) {
+    const values = opportunityValues(o);
+    const proposal = latestOpportunityProposal(o.proposals);
+    const safeToDelete = !o.archivedAt && !o.outcomeAt && !o.job && !o.proposals.length && !o._count.stageHistory && !o._count.automationRuns;
+    return <article key={o.id} className="card mb-2 p-3 text-sm">
+      <div className="font-semibold">{o.name} {o.archivedAt && <span className="text-slate-500">(Archived)</span>}</div>
+      <Link href={`/customers/${o.customerId}`} className="text-brand-700">{o.customer.name}</Link>
+      <div className="mt-2 font-medium">Lead received: {formatOpportunityDate(opportunityLeadDate(o))}</div>
+      <div className="text-xs text-slate-500">Stage changed: {formatOpportunityDate(o.lastStageChangedAt)}</div>
+      {o.followUpAt && <div className="text-xs">Follow-up: {formatOpportunityDate(o.followUpAt)}</div>}
+      {isTerminalStage(o.stage) && <div className="text-xs">Outcome: {formatOpportunityDate(o.outcomeAt)} {o.outcomeReason}</div>}
+      <dl className="my-2 text-xs">
+        <div>Initial Estimated Value: {formatCurrency(values.initial)}</div>
+        <div>Latest Proposal Value: {proposal ? formatCurrency(values.quoted) : "Not linked"}</div>
+        <div>Job Contract Value: {o.job ? formatCurrency(values.won) : "Not linked"}</div>
+      </dl>
+      {proposal && <div className="text-xs">Current Proposal: {proposal.proposalNumber} <Link className="text-brand-700" href={`/proposals/${proposal.id}`}>Open Proposal</Link> ({o.proposals.length} revision(s))</div>}
+      {o.job && <div className="text-xs"><Link className="text-brand-700" href={`/jobs/${o.job.id}`}>Open Job: {o.job.name}</Link></div>}
+      <div className="mt-3 flex flex-wrap gap-3 text-xs">
+        <button className="text-brand-700" onClick={() => setEditor(o)}>Edit</button>
+        <Link className="text-brand-700" href={`/opportunities?open=${o.id}`} onClick={(e) => { e.preventDefault(); setEditor(o); }}>Open</Link>
+        <button disabled={archive.isPending} onClick={() => archive.mutate({ id: o.id, archived: !o.archivedAt })}>{o.archivedAt ? "Restore / Unarchive" : "Archive"}</button>
+        {safeToDelete && <button className="text-red-600" onClick={() => setDeleteTarget(o)}>Delete</button>}
       </div>
-      {items.map((o) => (
-        <div key={o.id} className="card p-3 mb-2 text-sm">
-          <div className="font-medium">{o.name}</div>
-          <div className="text-xs text-slate-500">
-            <Link href={`/customers/${o.customerId}`} className="text-brand-700 hover:underline">{o.customer.name}</Link>
-          </div>
-          <div className="text-xs text-slate-500 mt-1">
-            {o.leadValue ? formatCurrency(Number(o.leadValue)) : ""} · {formatDate(o.createdAt)}
-          </div>
-          {o.proposals?.[0] ? (
-            <div className="text-xs text-slate-500 mt-1">
-              Proposal <Link href={`/proposals/${o.proposals[0].id}`} className="text-brand-700 hover:underline">{o.proposals[0].proposalNumber}</Link> · {o.proposals[0].status}
-            </div>
-          ) : null}
-          {o.job ? (
-            <div className="text-xs text-slate-500 mt-1">
-              Job: <Link href={`/jobs/${o.job.id}`} className="text-brand-700 hover:underline">{o.job.name}</Link>
-            </div>
-          ) : null}
-          <select
-            className="input mt-2 text-xs"
-            value={o.stage}
-            onChange={(e) => onStage(o.id, e.target.value, o.pipeline)}
-          >
-            {PIPELINE_STAGE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-          <button
-            type="button"
-            className="mt-1 text-xs text-rose-600 hover:underline"
-            onClick={() => onDelete(o)}
-          >
-            Delete
-          </button>
-        </div>
-      ))}
+    </article>;
+  }
+  function columns(terminal: boolean) {
+    const options = [...PIPELINE_STAGE_OPTIONS, { value: "no_reply", label: "No Reply (legacy)" }].filter((s) => isTerminalStage(s.value) === terminal);
+    return <div className="flex gap-3 overflow-x-auto pb-4">{options.map((s) => {
+      const items = filtered.filter((o) => o.stage === s.value);
+      return <section key={s.value} className="w-72 min-w-72 rounded-lg bg-slate-100 p-3">
+        <h3 className="mb-2 text-sm font-semibold">{s.label} ({items.length})</h3>
+        <div className="mb-2 text-xs">Expected: {formatCurrency(items.reduce((sum, o) => sum + opportunityValues(o).expected, 0))}</div>
+        <div className="max-h-[65vh] min-h-32 overflow-y-auto pr-1">{items.map(card)}</div>
+      </section>;
+    })}</div>;
+  }
+  return <>
+    <PageHeader title="Opportunities" description="Lead dates and historical outcomes in America/New_York" actions={<button className="btn btn-primary" onClick={() => setEditor("new")}>New Opportunity</button>} />
+    <div className="card mb-4 grid grid-cols-2 gap-3 p-4 md:grid-cols-4">
+      <label>Search<input className="input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Project or customer" /></label>
+      <label>Lead Source<select className="input" value={source} onChange={(e) => setSource(e.target.value)}><option value="">All sources</option>{sources.map((s) => <option key={s}>{s}</option>)}</select></label>
+      <label>Service<select className="input" value={service} onChange={(e) => setService(e.target.value)}><option value="">All services</option>{services.map((s) => <option key={s}>{s}</option>)}</select></label>
+      <label>Stage<select className="input" value={stage} onChange={(e) => setStage(e.target.value)}><option value="">All stages</option>{PIPELINE_STAGE_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}<option value="no_reply">No Reply (legacy)</option></select></label>
+      <label>Lead Received From<input type="date" className="input" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
+      <label>Lead Received Through<input type="date" className="input" value={to} onChange={(e) => setTo(e.target.value)} /></label>
+      <label>Follow-up<select className="input" value={followUp} onChange={(e) => setFollowUp(e.target.value)}><option value="">All</option><option value="due">Due today or overdue</option><option value="overdue">Overdue</option></select></label>
+      <div className="flex flex-col justify-center gap-2"><label><input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} /> Show Archived</label><button className="btn btn-secondary" onClick={() => setView(view === "kanban" ? "table" : "kanban")}>{view === "kanban" ? "Table view" : "Kanban view"}</button></div>
     </div>
-  );
+    {query.error && <p role="alert" className="text-red-600">{query.error.message}</p>}
+    {query.isLoading ? <p>Loading...</p> : view === "table" ? <div className="max-h-[75vh] overflow-auto"><table className="w-full"><thead><tr><th>Opportunity</th><th>Stage</th></tr></thead><tbody>{filtered.map((o) => <tr key={o.id}><td>{card(o)}</td><td>{opportunityStageLabel(o.stage)}</td></tr>)}</tbody></table></div> : <>
+      {columns(false)}
+      <details className="mt-4" key={stage} open={stage && isTerminalStage(stage) ? true : undefined}><summary className="mb-3 cursor-pointer font-semibold">Closed / Terminal ({filtered.filter((o) => isTerminalStage(o.stage)).length})</summary>{columns(true)}</details>
+    </>}
+    {editor && <OpportunityEditor opportunity={editor === "new" ? undefined : editor} onClose={() => setEditor(null)} onSaved={refresh} />}
+    <ConfirmDialog open={!!deleteTarget} title="Delete disposable Opportunity" message="Only a record with no links or lifecycle history can be deleted. Archive historical records instead." confirmLabel="Delete" destructive isPending={remove.isPending} onCancel={() => setDeleteTarget(null)} onConfirm={() => deleteTarget && remove.mutate({ id: deleteTarget.id })} />
+  </>;
 }

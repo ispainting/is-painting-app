@@ -6,12 +6,13 @@ import { jobCanonicalTotal } from "@/lib/job-total";
 import { buildLeadSourceQualityReport } from "@/lib/lead-source-quality";
 import { businessRangeInMassachusetts } from "@/lib/employee-rate-resolver";
 import { selectOpenProposals } from "@/lib/open-pipeline";
+import { LEAD_SOURCE_OPTIONS, normalizeLeadSourceForReport } from "@/lib/lead-source";
 
 const SURVIVAL_TARGET = 40_000;
 const MONTHLY_GOAL = 65_000;
 const CLOSE_RATE_BASELINE = 0.4;
 const DIRECT_EXPENSE_CATEGORIES = new Set(["materials", "labor", "subcontractor", "travel", "equipment"]);
-const SOURCE_BUCKETS = ["Google", "Google Business", "Facebook", "Instagram", "Website", "Referral", "Builder", "Repeat Customer", "Other", "Unknown"];
+const SOURCE_BUCKETS = [...LEAD_SOURCE_OPTIONS];
 
 const analyticsInput = z.object({
   periodType: z.enum(["month", "quarter", "year", "custom"]).default("month"),
@@ -52,18 +53,7 @@ function endOfQuarterFromMonth(year: number, quarter: number) {
 }
 
 function normalizeSource(source: string | null | undefined) {
-  const value = (source ?? "").trim();
-  if (!value) return "Unknown";
-  const lower = value.toLowerCase();
-  if (lower === "google") return "Google";
-  if (lower === "google business") return "Google Business";
-  if (lower === "facebook" || lower === "meta") return "Facebook";
-  if (lower === "instagram") return "Instagram";
-  if (lower === "website") return "Website";
-  if (lower === "referral") return "Referral";
-  if (lower === "builder") return "Builder";
-  if (lower === "repeat customer" || lower === "repeat_customer") return "Repeat Customer";
-  return SOURCE_BUCKETS.includes(value) ? value : "Other";
+  return normalizeLeadSourceForReport(source);
 }
 
 function isInRange(date: Date | null | undefined, start: Date, end: Date) {
@@ -255,20 +245,28 @@ async function loadBusinessHistory(prisma: any, start: Date, end: Date) {
       },
     }),
     prisma.opportunity.findMany({
-      where: { leadReceivedAt: { gte: start, lte: end } },
+      where: { OR: [
+        { leadReceivedAt: { gte: start, lte: end } },
+        { leadReceivedAt: null, createdAt: { gte: start, lte: end } },
+      ] },
       select: {
         id: true,
         source: true,
         stage: true,
         status: true,
         leadValue: true,
+        lostValue: true,
+        archivedAt: true,
+        outcomeAt: true,
+        followUpAt: true,
+        stageHistory: { select: { newStage: true, effectiveAt: true } },
         leadReceivedAt: true,
         createdAt: true,
         updatedAt: true,
         customer: { select: { id: true, name: true, source: true, leadSource: true } },
-        job: { select: { id: true, name: true, contractAmount: true, totalEstimate: true } },
+        job: { select: { id: true, name: true, contractAmount: true, totalEstimate: true, approvedAt: true } },
         proposals: {
-          select: { id: true, status: true, totalAmount: true, createdAt: true, sentAt: true },
+          select: { id: true, status: true, totalAmount: true, createdAt: true, sentAt: true, approvedAt: true, deletedAt: true },
         },
       },
     }),

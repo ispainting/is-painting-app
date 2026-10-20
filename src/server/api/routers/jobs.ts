@@ -5,6 +5,8 @@ import { computeEstimate, nextNumber } from "@/lib/utils";
 import { calculateJobTracking } from "@/lib/job-tracking";
 import { buildJobsListWhere, employeeAssignmentFilter, JOB_STATUS_VALUES, type JobStatusValue } from "@/lib/job-filters";
 import { applyOpportunityTransition, resolveJobStatusStage } from "@/lib/pipeline-sync";
+import { linkJobOpportunity, validateOpportunityCustomer } from "@/lib/opportunity-links";
+import { Prisma } from "@prisma/client";
 
 const JobStatusZ = z.enum([
   "estimate", "sent", "approved", "active", "completed", "on_hold", "cancelled",
@@ -210,6 +212,9 @@ export const jobsRouter = router({
     .mutation(async ({ ctx, input }) => {
       const existing = await ctx.prisma.job.findUnique({ where: { id: input.id } });
       if (!existing) throw new TRPCError({ code: "NOT_FOUND" });
+      if (existing.opportunityId && input.data.customerId !== undefined) {
+        await validateOpportunityCustomer(ctx.prisma, existing.opportunityId, input.data.customerId);
+      }
 
       const merged = { ...existing, ...input.data };
       const calc = computeEstimate({
@@ -252,7 +257,7 @@ export const jobsRouter = router({
       });
       // Setting workStartedAt through the edit form also advances the pipeline.
       if (input.data.workStartedAt != null) {
-        await applyOpportunityTransition(ctx.prisma, existing.opportunityId, "service_delivery");
+        await applyOpportunityTransition(ctx.prisma, existing.opportunityId, "service_delivery", { effectiveAt: input.data.workStartedAt, changedById: ctx.session.userId });
       }
       return updated;
     }),
@@ -275,7 +280,7 @@ export const jobsRouter = router({
       });
       // Setting workStartedAt advances the linked opportunity to service_delivery.
       if (input.workStartedAt != null) {
-        await applyOpportunityTransition(ctx.prisma, updated.opportunityId, "service_delivery");
+        await applyOpportunityTransition(ctx.prisma, updated.opportunityId, "service_delivery", { effectiveAt: input.workStartedAt, changedById: ctx.session.userId });
       }
       return updated;
     }),
@@ -301,6 +306,8 @@ export const jobsRouter = router({
       // Pipeline sync: job status drives the linked opportunity stage.
       await applyOpportunityTransition(ctx.prisma, existing?.opportunityId, resolveJobStatusStage(input.status), {
         allowBackward: input.status === "on_hold",
+        changedById: ctx.session.userId,
+        effectiveAt: input.status === "active" ? input.workStartedAt : undefined,
       });
       return updated;
     }),
@@ -314,6 +321,13 @@ export const jobsRouter = router({
         create: { userId: input.userId, jobId: input.jobId },
       })
     ),
+
+  setOpportunity: adminProcedure
+    .input(z.object({ id: z.number(), opportunityId: z.number().int().positive().nullable() }))
+    .mutation(({ ctx, input }) => ctx.prisma.$transaction(
+      (tx) => linkJobOpportunity(tx, input.id, input.opportunityId),
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+    )),
 
   unassignEmployee: adminProcedure
     .input(z.object({ jobId: z.number(), userId: z.number() }))

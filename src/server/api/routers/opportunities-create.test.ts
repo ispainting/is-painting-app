@@ -38,9 +38,15 @@ describe("opportunities.create duplicate guard", () => {
     const { prisma, tx } = createMocks(null);
     await callerWith(prisma).create(input);
     expect(tx.opportunity.create).toHaveBeenCalledTimes(1);
+    expect(tx.opportunity.create.mock.calls[0]?.[0].data.stageHistory.create).toEqual(
+      expect.objectContaining({
+        newStage: "new_lead",
+        changedById: adminSession.userId,
+      })
+    );
     const where = tx.opportunity.findFirst.mock.calls[0]?.[0].where;
     expect(where.status).toBe("open");
-    expect(where.stage.notIn).toEqual(["lost", "not_qualified", "invalid_duplicate", "spam_fraud"]);
+    expect(where.stage.notIn).toEqual(["lost", "not_qualified", "invalid_duplicate", "spam_fraud", "completed"]);
   });
 
   it("preserves referral attribution without overwriting existing customer values", async () => {
@@ -92,18 +98,32 @@ describe("opportunities.remove guard", () => {
     expect(prisma.opportunity.delete).toHaveBeenCalledWith({ where: { id: 5 } });
   });
 
-  it("blocks when linked proposals, jobs, or automation history exist", async () => {
+  it("allows deleting an accidental opportunity with its initial stage-history event", async () => {
     const prisma = removeMocks({
-      id: 5,
-      name: "Linked",
+      id: 55,
+      name: "Accidental",
       customer: { name: "Customer" },
-      job: { id: 42 },
-      _count: { proposals: 2, automationRuns: 1 },
+      job: null,
+      _count: { proposals: 0, automationRuns: 0 },
     });
-    await expect(callerWith(prisma).remove({ id: 5 })).rejects.toMatchObject({
-      code: "PRECONDITION_FAILED",
-      message: expect.stringContaining("2 linked proposal(s)"),
-    });
+    await expect(callerWith(prisma).remove({ id: 55 })).resolves.toEqual({ ok: true });
+    expect(prisma.opportunity.delete).toHaveBeenCalledExactlyOnceWith({ where: { id: 55 } });
+  });
+
+  it.each([
+    ["linked Proposal", { _count: { proposals: 1, automationRuns: 0 }, job: null }],
+    ["linked Job", { _count: { proposals: 0, automationRuns: 0 }, job: { id: 42 } }],
+    ["protected automation data", { _count: { proposals: 0, automationRuns: 1 }, job: null }],
+  ])("blocks deletion with %s", async (_label, overrides) => {
+    const opportunity = Object.assign({
+      id: 5,
+      name: "Protected",
+      customer: { name: "Customer" },
+      job: null,
+      _count: { proposals: 0, automationRuns: 0 },
+    }, overrides);
+    const prisma = removeMocks(opportunity);
+    await expect(callerWith(prisma).remove({ id: 5 })).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
     expect(prisma.opportunity.delete).not.toHaveBeenCalled();
   });
 

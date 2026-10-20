@@ -1,8 +1,9 @@
 "use client";
 
 import { formatCurrency } from "@/lib/utils";
+import type { LeadSourceQualityRow } from "@/lib/lead-source-quality";
 
-type LeadSourceQualityRowView = {
+type LegacyLeadSourceQualityRowView = {
   source: string;
   totalLeads: number;
   invalidDuplicate: number;
@@ -22,6 +23,7 @@ type LeadSourceQualityRowView = {
   avgWonJobValue: number | null;
   cashCollected: number;
 };
+type LeadSourceQualityRowView = LegacyLeadSourceQualityRowView & Partial<LeadSourceQualityRow>;
 
 function pct(value: number | null) {
   return value == null ? "—" : `${(value * 100).toFixed(1)}%`;
@@ -50,6 +52,17 @@ const HEADERS = [
   "Won job value",
   "Avg won job",
   "Cash collected",
+  "On Hold",
+  "Completed",
+  "Archived",
+  "Initial estimated value",
+  "Pipeline expected value",
+  "Lost value",
+  "Follow-ups overdue",
+  "Avg days to proposal",
+  "Avg days to Won/Lost",
+  "Avg days to Won",
+  "Avg days to Lost",
 ] as const;
 
 function RowCells({ row, bold }: { row: LeadSourceQualityRowView; bold?: boolean }) {
@@ -74,6 +87,17 @@ function RowCells({ row, bold }: { row: LeadSourceQualityRowView; bold?: boolean
       <td className={cell}>{formatCurrency(row.wonJobValue)}</td>
       <td className={cell}>{row.avgWonJobValue == null ? "—" : formatCurrency(row.avgWonJobValue)}</td>
       <td className={cell}>{formatCurrency(row.cashCollected)}</td>
+      <td className={cell}>{row.onHold ?? 0}</td>
+      <td className={cell}>{row.completed ?? 0}</td>
+      <td className={cell}>{row.archived ?? 0}</td>
+      <td className={cell}>{formatCurrency(row.initialEstimatedValue ?? 0)}</td>
+      <td className={cell}>{formatCurrency(row.pipelineExpectedValue ?? 0)}</td>
+      <td className={cell}>{formatCurrency(row.lostValue ?? 0)}</td>
+      <td className={cell}>{row.followUpsOverdue ?? 0}</td>
+      <td className={cell}>{row.avgDaysToProposal?.toFixed(1) ?? "—"}</td>
+      <td className={cell}>{row.avgDaysToOutcome?.toFixed(1) ?? "—"}</td>
+      <td className={cell}>{row.avgDaysToWon?.toFixed(1) ?? "—"}</td>
+      <td className={cell}>{row.avgDaysToLost?.toFixed(1) ?? "—"}</td>
     </>
   );
 }

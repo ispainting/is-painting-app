@@ -15,6 +15,7 @@
 import { jobCanonicalTotal } from "./job-total";
 import { normalizeLeadSourceForReport } from "./lead-source";
 import { isQualifiedLead, isSpamLead, isInvalidLead, isValidLead, isTerminalStage } from "./pipeline-sync";
+import { latestOpportunityProposal, opportunityValues } from "./opportunity-values";
 
 export type LeadSourceQualityOpportunity = {
   id: number;
@@ -24,6 +25,11 @@ export type LeadSourceQualityOpportunity = {
   leadReceivedAt?: Date | string | null;
   createdAt: Date | string;
   leadValue?: unknown;
+  lostValue?: unknown;
+  archivedAt?: Date | string | null;
+  outcomeAt?: Date | string | null;
+  followUpAt?: Date | string | null;
+  stageHistory?: Array<{ newStage: string; effectiveAt: Date | string }>;
   customer?: { leadSource?: string | null; source?: string | null } | null;
   proposals?: Array<{
     id: number;
@@ -31,8 +37,10 @@ export type LeadSourceQualityOpportunity = {
     totalAmount: unknown;
     createdAt: Date | string;
     sentAt?: Date | string | null;
+    approvedAt?: Date | string | null;
+    deletedAt?: Date | string | null;
   }>;
-  job?: { id: number; contractAmount: unknown; totalEstimate: unknown } | null;
+  job?: { id: number; contractAmount: unknown; totalEstimate: unknown; approvedAt?: Date | string | null } | null;
 };
 
 export type LeadSourceQualityPayment = {
@@ -61,6 +69,25 @@ export type LeadSourceQualityRow = {
   wonJobValue: number;
   avgWonJobValue: number | null;
   cashCollected: number;
+  onHold: number;
+  completed: number;
+  archived: number;
+  initialEstimatedValue: number;
+  pipelineExpectedValue: number;
+  lostValue: number;
+  followUpsOverdue: number;
+  avgDaysToProposal: number | null;
+  avgDaysToOutcome: number | null;
+  avgDaysToWon: number | null;
+  avgDaysToLost: number | null;
+  proposalDays: number;
+  proposalTimingCount: number;
+  outcomeDays: number;
+  outcomeTimingCount: number;
+  wonDays: number;
+  wonTimingCount: number;
+  lostDays: number;
+  lostTimingCount: number;
 };
 
 function toDate(value: Date | string | null | undefined): Date | null {
@@ -106,6 +133,11 @@ function emptyBucket(source: string): LeadSourceQualityRow {
     wonJobValue: 0,
     avgWonJobValue: null,
     cashCollected: 0,
+    onHold: 0, completed: 0, archived: 0, initialEstimatedValue: 0,
+    pipelineExpectedValue: 0, lostValue: 0, followUpsOverdue: 0,
+    avgDaysToProposal: null, avgDaysToOutcome: null, avgDaysToWon: null, avgDaysToLost: null,
+    proposalDays: 0, proposalTimingCount: 0, outcomeDays: 0, outcomeTimingCount: 0,
+    wonDays: 0, wonTimingCount: 0, lostDays: 0, lostTimingCount: 0,
   };
 }
 
@@ -114,6 +146,10 @@ function finalizeRates(row: LeadSourceQualityRow, wonWithJobs: number): LeadSour
   row.proposalRate = row.validLeads > 0 ? row.proposalsSent / row.validLeads : null;
   row.closeRate = row.qualifiedLeads > 0 ? row.won / row.qualifiedLeads : null;
   row.avgWonJobValue = wonWithJobs > 0 ? row.wonJobValue / wonWithJobs : null;
+  row.avgDaysToProposal = row.proposalTimingCount ? row.proposalDays / row.proposalTimingCount : null;
+  row.avgDaysToOutcome = row.outcomeTimingCount ? row.outcomeDays / row.outcomeTimingCount : null;
+  row.avgDaysToWon = row.wonTimingCount ? row.wonDays / row.wonTimingCount : null;
+  row.avgDaysToLost = row.lostTimingCount ? row.lostDays / row.lostTimingCount : null;
   return row;
 }
 
@@ -124,6 +160,7 @@ export function buildLeadSourceQualityReport(input: {
   cohortEnd: Date;
   cashStart: Date;
   cashEnd: Date;
+  now?: Date;
 }): { rows: LeadSourceQualityRow[]; totals: LeadSourceQualityRow } {
   const buckets = new Map<string, LeadSourceQualityRow>();
   const wonJobsBySource = new Map<string, number>();
@@ -147,26 +184,53 @@ export function buildLeadSourceQualityReport(input: {
     if (isValidLead(opportunity.stage)) row.validLeads += 1;
     if (opportunity.stage === "not_qualified") row.notQualified += 1;
     if (isQualifiedLead(opportunity.stage)) row.qualifiedLeads += 1;
-    if (opportunity.status === "open" && !isTerminalStage(opportunity.stage)) row.openOpportunities += 1;
+    if (opportunity.status === "open" && !isTerminalStage(opportunity.stage) && !opportunity.archivedAt) row.openOpportunities += 1;
     if (opportunity.stage === "lost") row.lostCancelled += 1;
+    if (opportunity.stage === "on_hold") row.onHold += 1;
+    if (opportunity.stage === "completed") row.completed += 1;
+    if (opportunity.archivedAt) row.archived += 1;
+    const values = opportunityValues(opportunity);
+    row.initialEstimatedValue += values.initial;
+    if (opportunity.status === "open" && !isTerminalStage(opportunity.stage)) row.pipelineExpectedValue += values.expected;
+    if (opportunity.stage === "lost") row.lostValue += values.lost;
+    const followUp = toDate(opportunity.followUpAt);
+    if (followUp && followUp < (input.now ?? new Date()) && !opportunity.archivedAt && opportunity.status === "open" && !isTerminalStage(opportunity.stage)) row.followUpsOverdue += 1;
 
     const proposals = opportunity.proposals ?? [];
     // One authoritative quoted value: the latest linked Proposal, never a sum
     // of revisions.
-    const latestProposal = proposals.length
-      ? [...proposals].sort((a, b) => toDate(b.createdAt)!.getTime() - toDate(a.createdAt)!.getTime())[0]
-      : null;
+    const latestProposal = latestOpportunityProposal(proposals);
     row.quotedValue += money(latestProposal?.totalAmount);
 
     if (proposals.some((proposal) => toDate(proposal.sentAt) != null)) row.proposalsSent += 1;
 
-    const won = proposals.some((proposal) => proposal.status === "converted") || opportunity.job != null;
+    const won = opportunity.stage === "completed" || (
+      !isTerminalStage(opportunity.stage) && (proposals.some((proposal) => proposal.status === "converted") || opportunity.job != null)
+    );
     if (won) row.won += 1;
-    if (opportunity.job) {
+    if (opportunity.job && won) {
       const value = jobCanonicalTotal(opportunity.job);
       row.wonJobValue += value;
       wonJobsBySource.set(row.source, (wonJobsBySource.get(row.source) ?? 0) + 1);
       jobIdToSource.set(opportunity.job.id, row.source);
+    }
+    const lead = toDate(opportunity.leadReceivedAt) ?? toDate(opportunity.createdAt);
+    const sentDates = [
+      ...proposals.map((p) => toDate(p.sentAt)),
+      ...(opportunity.stageHistory ?? []).filter((h) => h.newStage === "estimate_sent").map((h) => toDate(h.effectiveAt)),
+    ].filter((d): d is Date => !!d).sort((a, b) => a.getTime() - b.getTime());
+    const wonDate = toDate(opportunity.outcomeAt) ?? toDate(opportunity.job?.approvedAt) ??
+      toDate(proposals.find((p) => p.status === "converted")?.approvedAt);
+    const closedDate = won || opportunity.stage === "lost" ? toDate(opportunity.outcomeAt) ?? (won ? wonDate : null) : null;
+    if (lead && sentDates[0] && sentDates[0] >= lead) {
+      row.proposalDays += (sentDates[0].getTime() - lead.getTime()) / 86_400_000;
+      row.proposalTimingCount += 1;
+    }
+    if (lead && closedDate && closedDate >= lead) {
+      const days = (closedDate.getTime() - lead.getTime()) / 86_400_000;
+      row.outcomeDays += days; row.outcomeTimingCount += 1;
+      if (won) { row.wonDays += days; row.wonTimingCount += 1; }
+      if (opportunity.stage === "lost") { row.lostDays += days; row.lostTimingCount += 1; }
     }
   }
 
@@ -202,6 +266,10 @@ export function buildLeadSourceQualityReport(input: {
     totals.quotedValue += row.quotedValue;
     totals.wonJobValue += row.wonJobValue;
     totals.cashCollected += row.cashCollected;
+    for (const key of [
+      "onHold", "completed", "archived", "initialEstimatedValue", "pipelineExpectedValue", "lostValue", "followUpsOverdue",
+      "proposalDays", "proposalTimingCount", "outcomeDays", "outcomeTimingCount", "wonDays", "wonTimingCount", "lostDays", "lostTimingCount",
+    ] as const) totals[key] += row[key];
     totalWonWithJobs += wonJobsBySource.get(row.source) ?? 0;
   }
   finalizeRates(totals, totalWonWithJobs);

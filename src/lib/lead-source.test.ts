@@ -14,13 +14,16 @@ describe("lead source options", () => {
     expect([...LEAD_SOURCE_OPTIONS]).toEqual([
       "LSA",
       "Google Ads",
+      "Google Search",
       "Meta Ads",
+      "Angi Leads",
       "Website",
-      "Chat GPT",
+      "ChatGPT",
       "Builder",
       "Referral",
       "Repeated Customer",
       "Other",
+      "Unknown",
     ]);
   });
 
@@ -54,8 +57,10 @@ describe("legacy source normalization", () => {
     expect(normalizeLeadSourceForReport("Facebook")).toBe("Meta Ads");
     expect(normalizeLeadSourceForReport("Instagram")).toBe("Meta Ads");
     expect(normalizeLeadSourceForReport("Meta")).toBe("Meta Ads");
-    expect(normalizeLeadSourceForReport("ChatGPT")).toBe("Chat GPT");
-    expect(normalizeLeadSourceForReport("OpenAI")).toBe("Chat GPT");
+    expect(normalizeLeadSourceForReport("ChatGPT")).toBe("ChatGPT");
+    expect(normalizeLeadSourceForReport("OpenAI")).toBe("ChatGPT");
+    expect(normalizeLeadSourceForReport("Google Business")).toBe("Google Search");
+    expect(normalizeLeadSourceForReport("Angi")).toBe("Angi Leads");
     expect(normalizeLeadSourceForReport("Repeat Customer")).toBe("Repeated Customer");
     expect(normalizeLeadSourceForReport("Existing Customer")).toBe("Repeated Customer");
     expect(normalizeLeadSourceForReport("word of mouth referral")).toBe("Referral");
@@ -73,7 +78,7 @@ describe("pipeline stage options", () => {
     const values = PIPELINE_STAGE_OPTIONS.map((option) => option.value);
     for (const stage of [
       "new_lead", "onboarding", "not_answered", "follow_up",
-      "estimate_sent", "approval", "service_delivery", "review",
+      "estimate_sent", "approval", "on_hold", "service_delivery", "review", "completed",
       "not_qualified", "lost", "invalid_duplicate", "spam_fraud",
     ]) {
       expect(values).toContain(stage);
@@ -86,8 +91,8 @@ describe("pipeline stage options", () => {
     expect(labels).toContain("Spam / Fraud");
   });
 
-  it("treats lost, not_qualified, invalid_duplicate, and spam_fraud as terminal", () => {
-    expect(TERMINAL_PIPELINE_STAGES).toEqual(["lost", "not_qualified", "invalid_duplicate", "spam_fraud"]);
+  it("treats lost, not_qualified, invalid_duplicate, spam_fraud, and completed as terminal", () => {
+    expect(TERMINAL_PIPELINE_STAGES).toEqual(["lost", "not_qualified", "invalid_duplicate", "spam_fraud", "completed"]);
   });
 });
 

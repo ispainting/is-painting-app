@@ -12,8 +12,8 @@ export type LinkableOpportunity = {
   stage: string;
 };
 
-export function isOpenNonTerminalOpportunity(opportunity: { status: string; stage: string }): boolean {
-  return opportunity.status === "open" && !(TERMINAL_PIPELINE_STAGES as string[]).includes(opportunity.stage);
+export function isOpenNonTerminalOpportunity(opportunity: { status: string; stage: string; archivedAt?: Date | null }): boolean {
+  return !opportunity.archivedAt && opportunity.status === "open" && !(TERMINAL_PIPELINE_STAGES as string[]).includes(opportunity.stage);
 }
 
 export type OpportunityResolution<T extends LinkableOpportunity> =

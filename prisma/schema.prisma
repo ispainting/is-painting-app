@@ -54,6 +54,8 @@ enum OpportunityStage {
   not_qualified
   invalid_duplicate
   spam_fraud
+  on_hold
+  completed
 }
 
 enum OpportunityStatus {
@@ -415,6 +417,7 @@ model User {
   invoicesCreated            Invoice[]
   auditLogs                  AuditLog[]
   assignedOpportunities      Opportunity[]
+  opportunityStageChanges    OpportunityStageHistory[]
   jobAssignments             EmployeeJobAssignment[]
   ExpenseReceiptUpload       ExpenseReceiptUpload[]
 
@@ -779,17 +782,42 @@ model Opportunity {
   lastStageChangedAt DateTime?
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
+  serviceType        String?
+  referralSource     String?
+  followUpAt         DateTime?
+  archivedAt         DateTime?
+  outcomeAt          DateTime?
+  outcomeReason      String?             @db.Text
+  lostValue          Decimal?            @db.Decimal(12, 2)
 
-  customer       Customer        @relation(fields: [customerId], references: [id])
+  customer       Customer                  @relation(fields: [customerId], references: [id])
   job            Job?
   proposals      Proposal[]
-  assignedTo     User?           @relation(fields: [assignedToId], references: [id])
+  assignedTo     User?                     @relation(fields: [assignedToId], references: [id])
   automationRuns AutomationRun[]
+  stageHistory   OpportunityStageHistory[]
 
   @@index([customerId])
   @@index([pipeline, stage])
   @@index([stage])
   @@index([leadReceivedAt])
+  @@index([archivedAt])
+}
+
+model OpportunityStageHistory {
+  id            Int               @id @default(autoincrement())
+  opportunityId Int
+  previousStage OpportunityStage?
+  newStage      OpportunityStage
+  effectiveAt   DateTime
+  recordedAt    DateTime          @default(now())
+  changedById   Int?
+  reason        String?           @db.Text
+  note          String?           @db.Text
+  opportunity   Opportunity       @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  changedBy     User?             @relation(fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([opportunityId, effectiveAt])
 }
 
 model Proposal {

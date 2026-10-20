@@ -35,8 +35,8 @@ describe("event mappings", () => {
     expect(resolveJobStatusStage("sent")).toBe("estimate_sent");
     expect(resolveJobStatusStage("approved")).toBe("approval");
     expect(resolveJobStatusStage("active")).toBe("service_delivery");
-    expect(resolveJobStatusStage("completed")).toBe("review");
-    expect(resolveJobStatusStage("on_hold")).toBe("estimate_sent");
+    expect(resolveJobStatusStage("completed")).toBe("completed");
+    expect(resolveJobStatusStage("on_hold")).toBe("on_hold");
     expect(resolveJobStatusStage("cancelled")).toBe("lost");
   });
 });
@@ -86,7 +86,10 @@ describe("applyOpportunityTransition", () => {
     const result = await applyOpportunityTransition(prisma, 5, "approval");
     expect(result).toEqual({ applied: true, stage: "approval" });
     expect(prisma.opportunity.update).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 5 }, data: expect.objectContaining({ stage: "approval" }) })
+      expect.objectContaining({
+        where: expect.objectContaining({ id: 5 }),
+        data: expect.objectContaining({ stage: "approval", status: "open" }),
+      })
     );
   });
 

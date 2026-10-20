@@ -12,6 +12,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { toast } from "sonner";
 import { JobExpenseEntry } from "@/components/expenses/JobExpenseEntry";
 import { JobFinancials } from "@/components/jobs/JobFinancials";
+import { JobOpportunityLink } from "@/components/jobs/JobOpportunityLink";
 import { calculateJobTracking, calculateEntryMinutes, formatMinutesToHours } from "@/lib/job-tracking";
 
 const STATUSES = ["estimate", "sent", "approved", "active", "completed", "on_hold", "cancelled"] as const;
@@ -402,6 +403,7 @@ export default function JobDetailPage() {
         {jobData.travelPayEnabled ? <span className="badge bg-slate-100 text-slate-700">Travel Hours {Number(jobData.defaultTravelHours || 0).toFixed(2)}</span> : null}
       </div>
 
+      <JobOpportunityLink jobId={job.id} customerId={job.customerId} opportunityId={job.opportunityId} />
       <div className="card p-2 mb-4">
         <div className="flex flex-wrap gap-2">
           {WORKSPACE_TABS.map((tab) => (

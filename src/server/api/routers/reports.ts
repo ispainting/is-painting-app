@@ -1,12 +1,14 @@
 import { z } from "zod";
 import { router, adminProcedure } from "../trpc";
+import { LEAD_SOURCE_OPTIONS, normalizeLeadSourceForReport } from "@/lib/lead-source";
+import { businessRangeInMassachusetts } from "@/lib/employee-rate-resolver";
 
 const SURVIVAL_TARGET = 40_000;
 const PRODUCTION_GOAL = 65_000;
 const PROPOSAL_CLOSE_RATE_LOW = 0.35;
 const PROPOSAL_CLOSE_RATE_HIGH = 0.5;
 const PAY_PERIOD_ANCHOR = new Date("2026-01-05T00:00:00");
-const TRACKED_SOURCES = ["Google", "Meta", "Website", "Referral", "Property Manager", "Unknown"];
+const TRACKED_SOURCES: string[] = [...LEAD_SOURCE_OPTIONS];
 
 function startOfMonth(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), 1);
@@ -140,15 +142,7 @@ function calculateStatus(completedRevenue: number) {
 }
 
 function normalizeSource(source: string | null | undefined) {
-  const value = source?.trim();
-  if (!value) return "Unknown";
-  const lower = value.toLowerCase();
-  if (lower === "google") return "Google";
-  if (lower === "meta") return "Meta";
-  if (lower === "website") return "Website";
-  if (lower === "referral") return "Referral";
-  if (lower === "property manager" || lower === "property_manager") return "Property Manager";
-  return value;
+  return normalizeLeadSourceForReport(source);
 }
 
 type TrendSourceRow = {
@@ -178,6 +172,7 @@ type TrendSnapshot = {
 
 async function buildTrendSnapshot(prisma: any, year: number, month: number): Promise<TrendSnapshot> {
   const range = monthRangeFromParts(year, month);
+  const maRange = businessRangeInMassachusetts(new Date(Date.UTC(year, month - 1, 1, 12)), new Date(Date.UTC(year, month, 0, 12)));
   const [opportunities, proposals]: [
     Array<{ source: string | null; createdAt: Date }>,
     Array<{
@@ -191,7 +186,10 @@ async function buildTrendSnapshot(prisma: any, year: number, month: number): Pro
     }>,
   ] = await Promise.all([
     prisma.opportunity.findMany({
-      where: { createdAt: { gte: range.start, lt: range.end } },
+      where: { OR: [
+        { leadReceivedAt: { gte: maRange.start, lt: maRange.end } },
+        { leadReceivedAt: null, createdAt: { gte: maRange.start, lt: maRange.end } },
+      ] },
       select: { source: true, createdAt: true },
     }),
     prisma.proposal.findMany({

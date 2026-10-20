@@ -4,12 +4,10 @@ import { TRPCError } from "@trpc/server";
 import { adminProcedure, protectedProcedure, router } from "../trpc";
 import { isReferralSource } from "@/lib/lead-source";
 import { TERMINAL_PIPELINE_STAGES } from "@/lib/pipeline-stages";
+import { OpportunityStage } from "@prisma/client";
+import { opportunityStatusForStage, isTerminalStage } from "@/lib/pipeline-sync";
 
-const OpportunityStageZ = z.enum([
-  "new_lead", "onboarding", "not_answered", "follow_up",
-  "estimate_sent", "approval", "service_delivery", "review",
-  "no_reply", "lost", "not_qualified", "invalid_duplicate", "spam_fraud",
-]);
+const OpportunityStageZ = z.nativeEnum(OpportunityStage);
 
 const customerPhoneSchema = z.object({
   label: z.string().optional(),
@@ -823,6 +821,7 @@ export const customersRouter = router({
           where: {
             customerId: customer.id,
             status: "open",
+            archivedAt: null,
             stage: { notIn: TERMINAL_PIPELINE_STAGES },
           },
           select: { id: true },
@@ -835,6 +834,11 @@ export const customersRouter = router({
               customerId: customer.id,
               name: customer.name,
               stage: opportunityStage ?? "new_lead",
+              status: opportunityStatusForStage(opportunityStage ?? "new_lead"),
+              lastStageChangedAt: leadReceivedAt ?? new Date(),
+              outcomeAt: isTerminalStage(opportunityStage ?? "new_lead") ? leadReceivedAt ?? new Date() : null,
+              referralSource: isReferralSource(input.leadSource) ? input.referralSource : undefined,
+              stageHistory: { create: { newStage: opportunityStage ?? "new_lead", effectiveAt: leadReceivedAt ?? new Date(), changedById: ctx.session.userId } },
               source: input.leadSource?.trim() || undefined,
               leadReceivedAt: leadReceivedAt ?? undefined,
             },
@@ -926,7 +930,7 @@ export const customersRouter = router({
       // to real work.
       const opportunityRows = await ctx.prisma.opportunity.findMany({
         where: { customerId: input.id },
-        select: { id: true, job: { select: { id: true } }, _count: { select: { proposals: true, automationRuns: true } } },
+        select: { id: true, job: { select: { id: true } }, _count: { select: { proposals: true, automationRuns: true, stageHistory: true } } },
       });
       const linkedOpportunityCount = opportunityRows.filter(
         (opportunity) => opportunity.job !== null || opportunity._count.proposals > 0 || opportunity._count.automationRuns > 0
@@ -935,6 +939,7 @@ export const customersRouter = router({
       // Protected financial/work history ALWAYS blocks, even when test cleanup
       // is confirmed. Linked proposals/jobs are not by themselves protected.
       const blockers: string[] = [];
+      if (opportunityRows.some((opportunity) => opportunity._count.stageHistory > 0)) blockers.push("opportunity stage history");
       if (customer._count.invoices > 0) blockers.push(`${customer._count.invoices} invoice(s)`);
       if (jobPayments + invoicePayments > 0) blockers.push(`${jobPayments + invoicePayments} payment(s)`);
       if (expenseCount > 0) blockers.push(`${expenseCount} expense(s)`);
