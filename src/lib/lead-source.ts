@@ -26,6 +26,20 @@ export const REFERRAL_LEAD_SOURCE: LeadSource = "Referral";
 
 export const UNKNOWN_LEAD_SOURCE = "Unknown";
 
+export const SERVICE_TYPE_OPTIONS = [
+  "Interior",
+  "Exterior",
+  "Both",
+  "Commercial",
+  "Other",
+] as const;
+
+export function serviceTypeOptionsWithLegacy(current: string | null | undefined): string[] {
+  const value = (current ?? "").trim();
+  if (!value || (SERVICE_TYPE_OPTIONS as readonly string[]).includes(value)) return [...SERVICE_TYPE_OPTIONS];
+  return [value, ...SERVICE_TYPE_OPTIONS];
+}
+
 /** Legacy/historical aliases → canonical labels. Keys are lowercase. */
 const LEGACY_SOURCE_MAP: Record<string, LeadSource> = {
   lsa: "LSA",

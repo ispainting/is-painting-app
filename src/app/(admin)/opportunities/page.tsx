@@ -8,18 +8,19 @@ import { OpportunityEditor, type OpportunityCardData } from "@/components/Opport
 import { formatCurrency } from "@/lib/utils";
 import { opportunityStageLabel, isTerminalStage } from "@/lib/pipeline-sync";
 import { PIPELINE_STAGE_OPTIONS } from "@/lib/pipeline-stages";
-import { LEAD_SOURCE_OPTIONS, normalizeLeadSourceForReport } from "@/lib/lead-source";
-import { formatOpportunityDate, latestOpportunityProposal, opportunityDateInput, opportunityLeadDate, opportunityValues } from "@/lib/opportunity-values";
+import { LEAD_SOURCE_OPTIONS, normalizeLeadSourceForReport, SERVICE_TYPE_OPTIONS } from "@/lib/lead-source";
+import { formatOpportunityDate, latestOpportunityProposal, opportunityLeadDate, opportunityValues } from "@/lib/opportunity-values";
+import { filterOpportunityViews, OPPORTUNITY_BOARD_GROUPS, refreshOpportunityQueries, type OpportunityVisibility } from "@/lib/opportunity-board";
 import { todayDateInputValueInMassachusetts } from "@/lib/employee-rate-resolver";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { toast } from "sonner";
 
 export default function OpportunitiesPage() {
   const utils = api.useUtils();
-  const query = api.opportunities.list.useQuery();
+  const [visibility, setVisibility] = useState<OpportunityVisibility>("active");
+  const query = api.opportunities.list.useQuery({ visibility });
   const [editor, setEditor] = useState<OpportunityCardData | "new" | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<OpportunityCardData | null>(null);
-  const [showArchived, setShowArchived] = useState(false);
   const [search, setSearch] = useState("");
   const [source, setSource] = useState("");
   const [service, setService] = useState("");
@@ -40,30 +41,28 @@ export default function OpportunitiesPage() {
     setOpenedFromUrl(true);
   }, [query.data, openedFromUrl]);
   async function refresh() {
-    await Promise.all([
-      utils.opportunities.invalidate(), utils.proposals.invalidate(), utils.jobs.invalidate(),
-      utils.customers.invalidate(), utils.business.invalidate(), utils.reports.invalidate(),
-    ]);
+    await refreshOpportunityQueries({
+      opportunities: { invalidate: () => utils.opportunities.list.invalidate() },
+      proposals: { invalidate: () => utils.proposals.invalidate() },
+      jobs: { invalidate: () => utils.jobs.invalidate() },
+      customers: { invalidate: () => utils.customers.invalidate() },
+      business: { invalidate: () => utils.business.invalidate() },
+      reports: { invalidate: () => utils.reports.invalidate() },
+    });
   }
   const archive = api.opportunities.setArchived.useMutation({ onSuccess: refresh, onError: (e) => toast.error(e.message) });
   const remove = api.opportunities.remove.useMutation({ onSuccess: async () => { await refresh(); setDeleteTarget(null); toast.success("Opportunity deleted"); }, onError: (e) => toast.error(e.message) });
   const today = todayDateInputValueInMassachusetts();
-  const filtered = (query.data ?? []).filter((o) => {
-    const leadDate = opportunityDateInput(opportunityLeadDate(o));
-    const due = opportunityDateInput(o.followUpAt);
-    return (showArchived || !o.archivedAt) &&
-      (!search || `${o.name} ${o.customer.name} ${o.notes ?? ""}`.toLowerCase().includes(search.toLowerCase())) &&
-      (!source || normalizeLeadSourceForReport(o.source ?? o.customer.leadSource ?? o.customer.source) === source) &&
-      (!service || o.serviceType === service) && (!stage || o.stage === stage) &&
-      (!from || leadDate >= from) && (!to || leadDate <= to) &&
-      (!followUp || (!isTerminalStage(o.stage) && o.status === "open" && !!due && (followUp === "overdue" ? due < today : due <= today)));
+  const filteredViews = filterOpportunityViews(query.data ?? [], {
+    visibility, search, source, service, stage, from, to, followUp, today,
   });
-  const sources = Array.from(new Set([...LEAD_SOURCE_OPTIONS, ...(query.data ?? []).map((o) => normalizeLeadSourceForReport(o.source ?? o.customer.leadSource ?? o.customer.source))]));
-  const services = Array.from(new Set((query.data ?? []).map((o) => o.serviceType).filter((s): s is string => !!s)));
+  const filtered = filteredViews[view];
+  const sources = Array.from(new Set([...LEAD_SOURCE_OPTIONS, ...filtered.map((o) => normalizeLeadSourceForReport(o.source ?? o.customer.leadSource ?? o.customer.source))]));
+  const services = Array.from(new Set([...SERVICE_TYPE_OPTIONS, ...filtered.map((o) => o.serviceType).filter((s): s is string => !!s)]));
   function card(o: OpportunityCardData) {
     const values = opportunityValues(o);
     const proposal = latestOpportunityProposal(o.proposals);
-    const safeToDelete = !o.archivedAt && !o.outcomeAt && !o.job && !o.proposals.length && !o._count.stageHistory && !o._count.automationRuns;
+    const safeToDelete = !o.job && !o.proposals.length && !o._count.automationRuns;
     return <article key={o.id} className="card mb-2 p-3 text-sm">
       <div className="font-semibold">{o.name} {o.archivedAt && <span className="text-slate-500">(Archived)</span>}</div>
       <Link href={`/customers/${o.customerId}`} className="text-brand-700">{o.customer.name}</Link>
@@ -73,27 +72,43 @@ export default function OpportunitiesPage() {
       {isTerminalStage(o.stage) && <div className="text-xs">Outcome: {formatOpportunityDate(o.outcomeAt)} {o.outcomeReason}</div>}
       <dl className="my-2 text-xs">
         <div>Initial Estimated Value: {formatCurrency(values.initial)}</div>
-        <div>Latest Proposal Value: {proposal ? formatCurrency(values.quoted) : "Not linked"}</div>
-        <div>Job Contract Value: {o.job ? formatCurrency(values.won) : "Not linked"}</div>
+        {o.status === "open" && !isTerminalStage(o.stage) && <div>Expected: {formatCurrency(values.expected)}{proposal && values.expected === values.quoted ? " (latest Proposal)" : " (initial estimate)"}</div>}
+        <div>Contract: {o.job ? formatCurrency(values.contract) : "Not linked"}</div>
+        {(o.stage === "completed" || o.status === "won") && <div>Won: {formatCurrency(values.won)}</div>}
+        {o.stage === "lost" && <div>Lost: {formatCurrency(values.lost)}</div>}
       </dl>
       {proposal && <div className="text-xs">Current Proposal: {proposal.proposalNumber} <Link className="text-brand-700" href={`/proposals/${proposal.id}`}>Open Proposal</Link> ({o.proposals.length} revision(s))</div>}
       {o.job && <div className="text-xs"><Link className="text-brand-700" href={`/jobs/${o.job.id}`}>Open Job: {o.job.name}</Link></div>}
       <div className="mt-3 flex flex-wrap gap-3 text-xs">
         <button className="text-brand-700" onClick={() => setEditor(o)}>Edit</button>
         <Link className="text-brand-700" href={`/opportunities?open=${o.id}`} onClick={(e) => { e.preventDefault(); setEditor(o); }}>Open</Link>
-        <button disabled={archive.isPending} onClick={() => archive.mutate({ id: o.id, archived: !o.archivedAt })}>{o.archivedAt ? "Restore / Unarchive" : "Archive"}</button>
-        {safeToDelete && <button className="text-red-600" onClick={() => setDeleteTarget(o)}>Delete</button>}
+        <details className="relative">
+          <summary className="cursor-pointer text-slate-700">Actions</summary>
+          <div className="absolute right-0 z-10 mt-1 min-w-40 rounded border bg-white p-2 shadow">
+            <button className="block w-full p-2 text-left" disabled={archive.isPending} onClick={() => archive.mutate({ id: o.id, archived: !o.archivedAt })}>{o.archivedAt ? "Restore" : "Archive"}</button>
+            {safeToDelete && <button className="block w-full p-2 text-left text-red-600" onClick={() => setDeleteTarget(o)}>Delete</button>}
+          </div>
+        </details>
       </div>
     </article>;
   }
-  function columns(terminal: boolean) {
-    const options = [...PIPELINE_STAGE_OPTIONS, { value: "no_reply", label: "No Reply (legacy)" }].filter((s) => isTerminalStage(s.value) === terminal);
+  function columns(stages: readonly string[]) {
+    const options = [...PIPELINE_STAGE_OPTIONS, { value: "no_reply", label: "No Reply (legacy)" }].filter((s) => stages.includes(s.value));
     return <div className="flex gap-3 overflow-x-auto pb-4">{options.map((s) => {
       const items = filtered.filter((o) => o.stage === s.value);
+      const valueLabel = s.value === "completed" ? "Won" :
+        s.value === "lost" ? "Lost" :
+          ["service_delivery", "review"].includes(s.value) ? "Contract" :
+            isTerminalStage(s.value) ? null : "Expected";
+      const total = items.reduce((sum, o) => {
+        const value = opportunityValues(o);
+        return sum + (valueLabel === "Won" ? value.won : valueLabel === "Lost" ? value.lost :
+          valueLabel === "Contract" ? value.contract : valueLabel === "Expected" ? value.expected : 0);
+      }, 0);
       return <section key={s.value} className="w-72 min-w-72 rounded-lg bg-slate-100 p-3">
         <h3 className="mb-2 text-sm font-semibold">{s.label} ({items.length})</h3>
-        <div className="mb-2 text-xs">Expected: {formatCurrency(items.reduce((sum, o) => sum + opportunityValues(o).expected, 0))}</div>
-        <div className="max-h-[65vh] min-h-32 overflow-y-auto pr-1">{items.map(card)}</div>
+        {valueLabel && <div className="mb-2 text-xs">{valueLabel}: {formatCurrency(total)}</div>}
+        <div className="max-h-[65vh] min-h-32 overflow-y-auto pr-1">{items.length ? items.map(card) : <p className="p-3 text-xs text-slate-500">No {s.label.toLowerCase()} opportunities.</p>}</div>
       </section>;
     })}</div>;
   }
@@ -107,14 +122,25 @@ export default function OpportunitiesPage() {
       <label>Lead Received From<input type="date" className="input" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
       <label>Lead Received Through<input type="date" className="input" value={to} onChange={(e) => setTo(e.target.value)} /></label>
       <label>Follow-up<select className="input" value={followUp} onChange={(e) => setFollowUp(e.target.value)}><option value="">All</option><option value="due">Due today or overdue</option><option value="overdue">Overdue</option></select></label>
-      <div className="flex flex-col justify-center gap-2"><label><input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} /> Show Archived</label><button className="btn btn-secondary" onClick={() => setView(view === "kanban" ? "table" : "kanban")}>{view === "kanban" ? "Table view" : "Kanban view"}</button></div>
+      <label>Visibility<select aria-label="Visibility" className="input" value={visibility} onChange={(e) => setVisibility(e.target.value as OpportunityVisibility)}>
+        <option value="active">Active</option>
+        <option value="archived">Archived only</option>
+        <option value="all">All</option>
+      </select></label>
+      <div className="flex items-end"><button className="btn btn-secondary" onClick={() => setView(view === "kanban" ? "table" : "kanban")}>{view === "kanban" ? "Table view" : "Kanban view"}</button></div>
     </div>
     {query.error && <p role="alert" className="text-red-600">{query.error.message}</p>}
-    {query.isLoading ? <p>Loading...</p> : view === "table" ? <div className="max-h-[75vh] overflow-auto"><table className="w-full"><thead><tr><th>Opportunity</th><th>Stage</th></tr></thead><tbody>{filtered.map((o) => <tr key={o.id}><td>{card(o)}</td><td>{opportunityStageLabel(o.stage)}</td></tr>)}</tbody></table></div> : <>
-      {columns(false)}
-      <details className="mt-4" key={stage} open={stage && isTerminalStage(stage) ? true : undefined}><summary className="mb-3 cursor-pointer font-semibold">Closed / Terminal ({filtered.filter((o) => isTerminalStage(o.stage)).length})</summary>{columns(true)}</details>
+    {query.isLoading ? <p>Loading...</p> : !filtered.length ? <div className="card p-8 text-center text-slate-600">No Opportunities match the selected visibility and filters.</div> : view === "table" ? <div className="max-h-[75vh] overflow-auto"><table className="w-full"><thead><tr><th>Opportunity</th><th>Stage</th></tr></thead><tbody>{filteredViews.table.map((o) => <tr key={o.id}><td>{card(o)}</td><td>{opportunityStageLabel(o.stage)}</td></tr>)}</tbody></table></div> : <>
+      {OPPORTUNITY_BOARD_GROUPS.filter((group) => group.id !== "closed").map((group) => <section key={group.id} className="mb-5">
+        <h2 className="mb-2 text-base font-semibold">{group.label} ({filtered.filter((o) => (group.stages as readonly string[]).includes(o.stage)).length})</h2>
+        {columns(group.stages)}
+      </section>)}
+      <details className="mt-4">
+        <summary className="mb-3 cursor-pointer font-semibold">Closed ({filtered.filter((o) => (OPPORTUNITY_BOARD_GROUPS[3].stages as readonly string[]).includes(o.stage)).length})</summary>
+        {columns(OPPORTUNITY_BOARD_GROUPS[3].stages)}
+      </details>
     </>}
     {editor && <OpportunityEditor opportunity={editor === "new" ? undefined : editor} onClose={() => setEditor(null)} onSaved={refresh} />}
-    <ConfirmDialog open={!!deleteTarget} title="Delete disposable Opportunity" message="Only a record with no links or lifecycle history can be deleted. Archive historical records instead." confirmLabel="Delete" destructive isPending={remove.isPending} onCancel={() => setDeleteTarget(null)} onConfirm={() => deleteTarget && remove.mutate({ id: deleteTarget.id })} />
+    <ConfirmDialog open={!!deleteTarget} title="Delete disposable Opportunity" message="Only an Opportunity with no linked Proposals, Job, or protected automation data can be deleted. Its stage history will be removed with it. Archive historical records instead." confirmLabel="Delete" destructive isPending={remove.isPending} onCancel={() => setDeleteTarget(null)} onConfirm={() => deleteTarget && remove.mutate({ id: deleteTarget.id })} />
   </>;
 }

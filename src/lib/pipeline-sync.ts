@@ -163,7 +163,7 @@ export async function applyOpportunityTransition(
       lastStageChangedAt: effectiveAt,
       outcomeAt: terminal ? effectiveAt : null,
       outcomeReason: terminal ? options?.reason ?? "Job workflow" : null,
-      ...(targetStage === "lost" ? { lostValue: opportunityValues(current).expected } : {}),
+      ...(targetStage === "lost" ? { lostValue: opportunityValues(current).valueAtOutcome } : {}),
       stageHistory: { create: {
         previousStage: current.stage, newStage: targetStage, effectiveAt,
         changedById: options?.changedById, reason: options?.reason ?? "Workflow synchronization",

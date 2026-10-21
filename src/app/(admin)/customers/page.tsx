@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import { isReferralSource, leadSourceOptionsWithLegacy, resolveReferralName } from "@/lib/lead-source";
+import { isReferralSource, LEAD_SOURCE_OPTIONS, leadSourceOptionsWithLegacy, resolveReferralName } from "@/lib/lead-source";
 import { PIPELINE_STAGE_OPTIONS, type PipelineStageValue } from "@/lib/pipeline-stages";
 import { opportunityStageLabel } from "@/lib/pipeline-sync";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
@@ -314,7 +314,7 @@ export default function CustomersPage() {
             content={
               <select className="input" value={leadSourceFilter} onChange={(event) => setLeadSourceFilter(event.target.value)}>
                 <option value="">All sources</option>
-                {availableLeadSources.map((source) => (
+                {Array.from(new Set([...LEAD_SOURCE_OPTIONS, ...availableLeadSources])).map((source) => (
                   <option key={source} value={source || ""}>{source}</option>
                 ))}
               </select>

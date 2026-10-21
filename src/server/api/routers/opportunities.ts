@@ -67,7 +67,7 @@ async function editOpportunity(tx: Prisma.TransactionClient, id: number, input: 
         outcomeAt: terminal ? at : null,
         outcomeReason: terminal ? input.outcomeReason ?? current.outcomeReason : null,
         ...(stage === "lost" && (stageChanged || current.lostValue === null) ? {
-          lostValue: opportunityValues({ ...current, leadValue: input.leadValue === undefined ? current.leadValue : input.leadValue, proposals }).expected,
+          lostValue: opportunityValues({ ...current, leadValue: input.leadValue === undefined ? current.leadValue : input.leadValue, proposals }).valueAtOutcome,
         } : {}),
         stageHistory: { create: {
           previousStage: current.stage, newStage: stage, effectiveAt: at, changedById: userId,
@@ -88,8 +88,13 @@ async function editOpportunity(tx: Prisma.TransactionClient, id: number, input: 
 }
 
 export const opportunitiesRouter = router({
-  list: protectedProcedure.query(({ ctx }) =>
+  list: protectedProcedure
+    .input(z.object({ visibility: z.enum(["active", "archived", "all"]) }).optional())
+    .query(({ ctx, input }) =>
     ctx.prisma.opportunity.findMany({
+      where: !input?.visibility || input.visibility === "all"
+        ? undefined
+        : { archivedAt: input.visibility === "archived" ? { not: null } : null },
       include: {
         customer: true,
         assignedTo: true,
@@ -101,7 +106,7 @@ export const opportunitiesRouter = router({
       },
       orderBy: { createdAt: "desc" },
     })
-  ),
+    ),
 
   byId: protectedProcedure.input(z.object({ id: z.number() })).query(({ ctx, input }) =>
     ctx.prisma.opportunity.findUnique({

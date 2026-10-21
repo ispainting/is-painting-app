@@ -25,6 +25,18 @@ export function toDateInputValue(date: Date | string | null | undefined): string
   return value.toISOString().slice(0, 10);
 }
 
+export function formatLifecycleDate(date: Date | string | null | undefined): string {
+  if (!date) return "Not recorded";
+  const value = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(value.getTime())) return "Not recorded";
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  }).format(value);
+}
+
 export function parseLifecycleDateInput(dateOnly: string): Date | null {
   if (!dateOnly) return null;
   // Anchor to Massachusetts midnight so the saved day never shifts via UTC.

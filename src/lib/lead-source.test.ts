@@ -5,6 +5,8 @@ import {
   leadSourceOptionsWithLegacy,
   normalizeLeadSourceForReport,
   resolveReferralName,
+  SERVICE_TYPE_OPTIONS,
+  serviceTypeOptionsWithLegacy,
 } from "./lead-source";
 import { PIPELINE_STAGE_OPTIONS, TERMINAL_PIPELINE_STAGES } from "./pipeline-stages";
 import { startOfBusinessDayInMassachusetts, todayDateInputValueInMassachusetts } from "./employee-rate-resolver";
@@ -37,6 +39,22 @@ describe("lead source options", () => {
     expect(leadSourceOptionsWithLegacy("Google Ads")).toEqual([...LEAD_SOURCE_OPTIONS]);
     expect(leadSourceOptionsWithLegacy("")).toEqual([...LEAD_SOURCE_OPTIONS]);
     expect(leadSourceOptionsWithLegacy(null)).toEqual([...LEAD_SOURCE_OPTIONS]);
+  });
+
+  it("offers the complete canonical source list and preserves Google Ads/Search separately", () => {
+    expect([...LEAD_SOURCE_OPTIONS]).toEqual([
+      "LSA", "Google Ads", "Google Search", "Meta Ads", "Angi Leads", "Website",
+      "ChatGPT", "Builder", "Referral", "Repeated Customer", "Other", "Unknown",
+    ]);
+    expect(normalizeLeadSourceForReport("Google Ads")).toBe("Google Ads");
+    expect(normalizeLeadSourceForReport("Google Search")).toBe("Google Search");
+  });
+
+  it("offers all supported service types and retains a historical value", () => {
+    expect([...SERVICE_TYPE_OPTIONS]).toEqual(["Interior", "Exterior", "Both", "Commercial", "Other"]);
+    expect(serviceTypeOptionsWithLegacy("Cabinet Refinishing")).toEqual([
+      "Cabinet Refinishing", ...SERVICE_TYPE_OPTIONS,
+    ]);
   });
 
   it("keeps Referral Name only when Lead Source is Referral", () => {

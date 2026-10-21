@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { jobCanonicalTotal } from "@/lib/job-total";
 import { getLifecycleDate, toDateInputValue, parseLifecycleDateInput } from "@/lib/job-lifecycle";
+import { formatLifecycleDate } from "@/lib/job-lifecycle";
 import { invalidateExpenseQueries } from "@/lib/expense-invalidation";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { toast } from "sonner";
@@ -434,9 +435,9 @@ export default function JobDetailPage() {
               <Stat label="Zip Code" value={zipCode} />
               <Stat label="Status" value={job.status} />
               <Stat label="Contract" value={formatCurrency(contractOrTotalAmount)} />
-              <Stat label="Lead received" value={leadReceivedAt ? formatDateTime(leadReceivedAt).slice(0, 10) : "Not recorded"} />
-              <Stat label="Proposal sent" value={proposalSentAt ? formatDateTime(proposalSentAt).slice(0, 10) : "Not recorded"} />
-              <Stat label="Work started" value={workStartedAt ? formatDateTime(workStartedAt).slice(0, 10) : "Not recorded"} />
+              <Stat label="Lead received" value={formatLifecycleDate(leadReceivedAt)} />
+              <Stat label="Proposal sent" value={formatLifecycleDate(proposalSentAt)} />
+              <Stat label="Work started" value={formatLifecycleDate(workStartedAt)} />
               <Stat label="Estimated total cost" value={formatCurrency(estimatedTotalCost)} />
               <Stat label="Estimated margin" value={`${estimatedMarginPct.toFixed(1)}%`} />
               <Stat label="Actual total cost" value={formatCurrency(actualTotalCost)} />
