@@ -7,6 +7,7 @@ import { OpportunityStage, Prisma } from "@prisma/client";
 import { isTerminalStage, opportunityStatusForStage } from "@/lib/pipeline-sync";
 import { opportunityValues } from "@/lib/opportunity-values";
 import { linkJobOpportunity } from "@/lib/opportunity-links";
+import { synchronizeInitialOpportunityHistory } from "@/lib/opportunity-history";
 
 const PipelineZ = z.enum(["sales", "not_interested"]);
 const StageZ = z.nativeEnum(OpportunityStage);
@@ -76,6 +77,13 @@ async function editOpportunity(tx: Prisma.TransactionClient, id: number, input: 
       } : {}),
     },
   });
+  if (input.leadReceivedAt !== undefined && input.leadReceivedAt !== null) {
+    await synchronizeInitialOpportunityHistory(tx, {
+      opportunityId: id,
+      leadReceivedAt: input.leadReceivedAt,
+      changedById: userId,
+    });
+  }
   if (proposalIds !== undefined) {
     await tx.proposal.updateMany({ where: { opportunityId: id, id: { notIn: proposalIds } }, data: { opportunityId: null } });
     await tx.proposal.updateMany({ where: { id: { in: proposalIds } }, data: { opportunityId: id } });
@@ -157,7 +165,28 @@ export const opportunitiesRouter = router({
         }
 
         const { referralSource, effectiveAt, ...opportunityData } = input;
-        const at = effectiveAt ?? input.leadReceivedAt ?? new Date();
+        const initialEffectiveAt = input.leadReceivedAt ?? new Date();
+        const at = input.stage === "new_lead"
+          ? initialEffectiveAt
+          : effectiveAt ?? initialEffectiveAt;
+        const initialHistory = {
+          newStage: "new_lead" as const,
+          effectiveAt: initialEffectiveAt,
+          changedById: ctx.session.userId,
+          reason: "Initial lead received",
+        };
+        const stageHistory = input.stage === "new_lead"
+          ? [initialHistory]
+          : [
+              initialHistory,
+              {
+                previousStage: "new_lead" as const,
+                newStage: input.stage,
+                effectiveAt: at,
+                changedById: ctx.session.userId,
+                reason: input.outcomeReason ?? "Stage selected at creation",
+              },
+            ];
         const opportunity = await tx.opportunity.create({ data: {
           ...opportunityData,
           referralSource: isReferralSource(input.source) ? referralSource : undefined,
@@ -165,7 +194,7 @@ export const opportunitiesRouter = router({
           lastStageChangedAt: at,
           outcomeAt: isTerminalStage(input.stage) ? at : null,
           lostValue: input.stage === "lost" ? input.leadValue : undefined,
-          stageHistory: { create: { newStage: input.stage, effectiveAt: at, changedById: ctx.session.userId, reason: input.outcomeReason } },
+          stageHistory: { create: stageHistory },
         } });
 
         // Preserve referral attribution on the customer without overwriting.

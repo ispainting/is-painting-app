@@ -3,7 +3,8 @@
  * testable with synthetic fixtures.
  *
  * Rules:
- * - One Opportunity = one lead; cohort timeframe uses leadReceivedAt ?? createdAt.
+ * - One Opportunity = one lead; cohort timeframe uses leadReceivedAt, with a
+ *   legacy fallback to createdAt only when no business lead date exists.
  * - Invalid/Duplicate and Spam/Fraud are reported separately, never silently dropped.
  * - A lost opportunity remains a qualified lead.
  * - Won/converted = a linked converted Proposal OR a linked Job (not stage-based).
@@ -219,9 +220,7 @@ export function buildLeadSourceQualityReport(input: {
       ...proposals.map((p) => toDate(p.sentAt)),
       ...(opportunity.stageHistory ?? []).filter((h) => h.newStage === "estimate_sent").map((h) => toDate(h.effectiveAt)),
     ].filter((d): d is Date => !!d).sort((a, b) => a.getTime() - b.getTime());
-    const wonDate = toDate(opportunity.outcomeAt) ?? toDate(opportunity.job?.approvedAt) ??
-      toDate(proposals.find((p) => p.status === "converted")?.approvedAt);
-    const closedDate = won || opportunity.stage === "lost" ? toDate(opportunity.outcomeAt) ?? (won ? wonDate : null) : null;
+    const closedDate = won || opportunity.stage === "lost" ? toDate(opportunity.outcomeAt) : null;
     if (lead && sentDates[0] && sentDates[0] >= lead) {
       row.proposalDays += (sentDates[0].getTime() - lead.getTime()) / 86_400_000;
       row.proposalTimingCount += 1;

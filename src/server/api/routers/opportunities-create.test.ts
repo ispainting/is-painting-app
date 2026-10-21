@@ -38,15 +38,50 @@ describe("opportunities.create duplicate guard", () => {
     const { prisma, tx } = createMocks(null);
     await callerWith(prisma).create(input);
     expect(tx.opportunity.create).toHaveBeenCalledTimes(1);
-    expect(tx.opportunity.create.mock.calls[0]?.[0].data.stageHistory.create).toEqual(
+    expect(tx.opportunity.create.mock.calls[0]?.[0].data.stageHistory.create[0]).toEqual(
       expect.objectContaining({
         newStage: "new_lead",
         changedById: adminSession.userId,
       })
     );
+    expect(tx.opportunity.create.mock.calls[0]?.[0].data.stageHistory.create[0]).not.toHaveProperty("recordedAt");
     const where = tx.opportunity.findFirst.mock.calls[0]?.[0].where;
     expect(where.status).toBe("open");
     expect(where.stage.notIn).toEqual(["lost", "not_qualified", "invalid_duplicate", "spam_fraud", "completed"]);
+  });
+
+  it("uses the historical lead date for the initial event, not the entry/effective date", async () => {
+    const { prisma, tx } = createMocks(null);
+    const leadReceivedAt = new Date("2026-07-10T04:00:00.000Z");
+    await callerWith(prisma).create({
+      ...input,
+      leadReceivedAt,
+      effectiveAt: new Date("2026-10-21T04:00:00.000Z"),
+    });
+    const history = tx.opportunity.create.mock.calls[0]?.[0].data.stageHistory.create[0];
+    expect(history).toEqual(expect.objectContaining({ newStage: "new_lead", effectiveAt: leadReceivedAt }));
+    expect(history).not.toHaveProperty("recordedAt");
+    expect(tx.opportunity.create.mock.calls[0]?.[0].data.lastStageChangedAt).toEqual(leadReceivedAt);
+  });
+
+  it("records an explicitly selected historical transition separately from the initial lead date", async () => {
+    const { prisma, tx } = createMocks(null);
+    const leadReceivedAt = new Date("2026-07-10T04:00:00.000Z");
+    const effectiveAt = new Date("2026-07-18T04:00:00.000Z");
+    await callerWith(prisma).create({
+      ...input,
+      leadReceivedAt,
+      stage: "lost",
+      effectiveAt,
+    });
+    const history = tx.opportunity.create.mock.calls[0]?.[0].data.stageHistory.create;
+    expect(history).toHaveLength(2);
+    expect(history[0]).toEqual(expect.objectContaining({ newStage: "new_lead", effectiveAt: leadReceivedAt }));
+    expect(history[1]).toEqual(expect.objectContaining({
+      previousStage: "new_lead",
+      newStage: "lost",
+      effectiveAt,
+    }));
   });
 
   it("preserves referral attribution without overwriting existing customer values", async () => {

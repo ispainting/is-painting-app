@@ -158,6 +158,7 @@ export function OpportunityEditor({ opportunity, onClose, onSaved }: {
           </label>
         </>}
         {opportunity && tab === "history" && <>
+          <p className="col-span-2 text-sm text-slate-600">Effective date is when this happened. Recorded date is when it was entered into the system.</p>
           <label className="col-span-2">History Note for next stage or outcome change<textarea className="input" value={form.historyNote} onChange={(e) => patch("historyNote", e.target.value)} /></label>
           <section className="col-span-2"><h3 className="font-semibold">Stage History (never replaced)</h3>
             {history.error && <p className="text-red-600">{history.error.message}</p>}

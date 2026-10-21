@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { buildLeadSourceQualityReport, resolveOpportunityLeadSource } from "./lead-source-quality";
-import { businessRangeInMassachusetts } from "./employee-rate-resolver";
+import { businessRangeInMassachusetts, startOfBusinessDayInMassachusetts } from "./employee-rate-resolver";
+import { formatOpportunityDate, opportunityDateInput } from "./opportunity-values";
 
 const OCT_2026 = businessRangeInMassachusetts(new Date("2026-10-01T12:00:00Z"), new Date("2026-10-31T12:00:00Z"));
+const JUL_2026 = businessRangeInMassachusetts(new Date("2026-07-01T12:00:00Z"), new Date("2026-07-31T12:00:00Z"));
 
 function opp(overrides: Record<string, unknown>) {
   return {
@@ -19,14 +21,14 @@ function opp(overrides: Record<string, unknown>) {
   } as never;
 }
 
-function report(opportunities: never[], payments: never[] = []) {
+function report(opportunities: never[], payments: never[] = [], range = OCT_2026) {
   return buildLeadSourceQualityReport({
     opportunities,
     payments,
-    cohortStart: OCT_2026.start,
-    cohortEnd: OCT_2026.end,
-    cashStart: OCT_2026.start,
-    cashEnd: OCT_2026.end,
+    cohortStart: range.start,
+    cohortEnd: range.end,
+    cashStart: range.start,
+    cashEnd: range.end,
   });
 }
 
@@ -45,6 +47,25 @@ describe("cohort timeframe", () => {
     expect(inCohort.totals.totalLeads).toBe(1);
   });
 
+  it("reports an old lead in its received month, not its entry month", () => {
+    const oldLead = opp({
+      leadReceivedAt: new Date("2026-07-10T04:00:00.000Z"),
+      createdAt: new Date("2026-10-21T14:30:00.000Z"),
+      recordedAt: new Date("2026-10-21T14:30:00.000Z"),
+      stageHistory: [{
+        newStage: "estimate_sent",
+        effectiveAt: new Date("2026-07-18T04:00:00.000Z"),
+        recordedAt: new Date("2026-10-21T14:45:00.000Z"),
+      }],
+    }) as never;
+    const july = report([oldLead], [], JUL_2026);
+    const october = report([oldLead], [], OCT_2026);
+
+    expect(july.totals.totalLeads).toBe(1);
+    expect(july.totals.avgDaysToProposal).toBe(8);
+    expect(october.totals.totalLeads).toBe(0);
+  });
+
   it("falls back to createdAt when leadReceivedAt is null", () => {
     const inCohort = report([opp({ createdAt: new Date("2026-10-05T04:00:00Z") }) as never]);
     expect(inCohort.totals.totalLeads).toBe(1);
@@ -54,6 +75,13 @@ describe("cohort timeframe", () => {
     // 2026-10-31T23:30 EDT = 2026-11-01T03:30:00Z — UTC month says November, MA says October.
     const result = report([opp({ leadReceivedAt: new Date("2026-11-01T03:30:00Z") }) as never]);
     expect(result.totals.totalLeads).toBe(1);
+  });
+
+  it("round-trips a Massachusetts business date without shifting its calendar day", () => {
+    const receivedAt = startOfBusinessDayInMassachusetts("2026-07-10");
+    expect(receivedAt.toISOString()).toBe("2026-07-10T04:00:00.000Z");
+    expect(opportunityDateInput(receivedAt)).toBe("2026-07-10");
+    expect(formatOpportunityDate(receivedAt)).toBe("Jul 10, 2026");
   });
 
   it("excludes records after the MA month ends", () => {
