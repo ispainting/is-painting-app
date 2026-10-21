@@ -3,9 +3,20 @@ import { opportunitiesRouter } from "./opportunities";
 
 const adminSession = { userId: 1, role: "admin" as const, email: "admin@example.test", name: "Admin" };
 
-function updateMocks(initialEffectiveAt: Date) {
-  const initialEvent = { id: 11, effectiveAt: initialEffectiveAt };
-  const laterEvent = { id: 12, effectiveAt: new Date("2026-07-18T04:00:00.000Z") };
+function updateMocks(initialEffectiveAt: Date, leadReceivedAt = initialEffectiveAt) {
+  const initialEvent = {
+    id: 11,
+    effectiveAt: initialEffectiveAt,
+    recordedAt: new Date("2026-10-20T14:00:00.000Z"),
+    changedById: 9,
+  };
+  const laterEvent = {
+    id: 12,
+    previousStage: "new_lead",
+    newStage: "service_delivery",
+    effectiveAt: new Date("2026-10-15T04:00:00.000Z"),
+    recordedAt: new Date("2026-10-20T14:05:00.000Z"),
+  };
   const tx = {
     opportunity: {
       findUnique: vi.fn().mockResolvedValue({
@@ -13,7 +24,7 @@ function updateMocks(initialEffectiveAt: Date) {
         customerId: 10,
         stage: "new_lead",
         status: "open",
-        leadReceivedAt: initialEffectiveAt,
+        leadReceivedAt,
         lastStageChangedAt: initialEffectiveAt,
         outcomeReason: null,
         lostValue: null,
@@ -54,8 +65,35 @@ describe("opportunities.update business dates", () => {
       data: { effectiveAt: correctedDate },
     });
     expect(initialEvent.effectiveAt).toEqual(correctedDate);
-    expect(laterEvent.effectiveAt).toEqual(new Date("2026-07-18T04:00:00.000Z"));
+    expect(laterEvent.effectiveAt).toEqual(new Date("2026-10-15T04:00:00.000Z"));
     expect(tx.opportunityStageHistory.create).not.toHaveBeenCalled();
+  });
+
+  it("repairs a pre-existing incorrect initial date on an unrelated save, preserving entry and later history dates", async () => {
+    const leadReceivedAt = new Date("2026-09-15T04:00:00.000Z");
+    const incorrectInitialDate = new Date("2026-10-20T04:00:00.000Z");
+    const recordedAt = new Date("2026-10-20T14:00:00.000Z");
+    const { prisma, tx, initialEvent, laterEvent } = updateMocks(incorrectInitialDate, leadReceivedAt);
+    const caller = opportunitiesRouter.createCaller({ prisma: prisma as never, session: adminSession });
+
+    await caller.update({ id: 5, data: { name: "Unrelated edit" } });
+    await caller.update({ id: 5, data: { name: "Repeated unrelated edit" } });
+
+    expect(tx.opportunityStageHistory.findFirst).toHaveBeenCalledTimes(2);
+    expect(tx.opportunityStageHistory.update).toHaveBeenCalledExactlyOnceWith({
+      where: { id: 11 },
+      data: { effectiveAt: leadReceivedAt },
+    });
+    expect(initialEvent).toEqual(expect.objectContaining({
+      effectiveAt: leadReceivedAt,
+      recordedAt,
+      changedById: 9,
+    }));
+    expect(laterEvent.effectiveAt).toEqual(new Date("2026-10-15T04:00:00.000Z"));
+    expect(laterEvent.newStage).toBe("service_delivery");
+    expect(tx.opportunityStageHistory.create).not.toHaveBeenCalled();
+    expect(tx.opportunity.update).toHaveBeenCalledTimes(2);
+    expect(tx.opportunity.update.mock.calls.every(([args]) => !args.data.stageHistory)).toBe(true);
   });
 
   it("uses the explicitly selected effective date for a stage transition", async () => {

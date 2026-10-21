@@ -77,13 +77,11 @@ async function editOpportunity(tx: Prisma.TransactionClient, id: number, input: 
       } : {}),
     },
   });
-  if (input.leadReceivedAt !== undefined && input.leadReceivedAt !== null) {
-    await synchronizeInitialOpportunityHistory(tx, {
-      opportunityId: id,
-      leadReceivedAt: input.leadReceivedAt,
-      changedById: userId,
-    });
-  }
+  await synchronizeInitialOpportunityHistory(tx, {
+    opportunityId: id,
+    leadReceivedAt: input.leadReceivedAt === undefined ? current.leadReceivedAt : input.leadReceivedAt,
+    changedById: userId,
+  });
   if (proposalIds !== undefined) {
     await tx.proposal.updateMany({ where: { opportunityId: id, id: { notIn: proposalIds } }, data: { opportunityId: null } });
     await tx.proposal.updateMany({ where: { id: { in: proposalIds } }, data: { opportunityId: id } });
