@@ -24,18 +24,25 @@ describe("payments.create", () => {
       .mockResolvedValueOnce({ id: 10, total: 500, status: "sent", sentAt: new Date(), dueDate: null });
     const paymentAggregate = vi.fn()
       .mockResolvedValueOnce({ _sum: { amount: 100 } })
-      .mockResolvedValueOnce({ _sum: { amount: 100 } })
       .mockResolvedValueOnce({ _sum: { amount: 200 } });
     const paymentCreate = vi.fn().mockResolvedValue({ id: 20, amount: 100 });
     const invoiceUpdate = vi.fn().mockResolvedValue({ id: 10 });
     const tx = {
-      job: { findUnique: vi.fn().mockResolvedValue({ id: 4, contractAmount: 1000, totalEstimate: 900 }) },
+      job: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 4, contractAmount: 1000, totalEstimate: 900, status: "active", opportunityId: null,
+          completionSource: null, completionPreviousStatus: null, completedAt: null,
+        }),
+        update: vi.fn(),
+      },
       invoice: {
         findUnique: invoiceFindUnique,
         aggregate: vi.fn().mockResolvedValue({ _sum: { total: 500 } }),
         update: invoiceUpdate,
+        findMany: vi.fn().mockResolvedValue([{ total: 1000 }]),
       },
-      payment: { aggregate: paymentAggregate, create: paymentCreate },
+      payment: { aggregate: paymentAggregate, create: paymentCreate, findMany: vi.fn().mockResolvedValue([]) },
+      opportunity: { findUnique: vi.fn(), update: vi.fn() },
     };
     const { caller, transaction } = callerWithTransaction(tx);
 
@@ -91,11 +98,18 @@ describe("payments.remove", () => {
         findUnique: vi.fn().mockResolvedValue({ id: 20, invoiceId: 10 }),
         delete: vi.fn().mockResolvedValue({ id: 20 }),
         aggregate: vi.fn().mockResolvedValue({ _sum: { amount: 100 } }),
+        findMany: vi.fn().mockResolvedValue([{ amount: 100, dateReceived: new Date("2026-09-18T04:00:00Z") }]),
       },
       invoice: {
         findUnique: vi.fn().mockResolvedValue({ id: 10, total: 500, status: "paid", sentAt: new Date(), dueDate: null }),
         update: invoiceUpdate,
+        findMany: vi.fn().mockResolvedValue([{ total: 1000 }]),
       },
+      job: { findUnique: vi.fn().mockResolvedValue({
+        id: 4, status: "active", contractAmount: 1000, totalEstimate: 900, opportunityId: null,
+        completionSource: null, completionPreviousStatus: null, completedAt: null,
+      }), update: vi.fn() },
+      opportunity: { findUnique: vi.fn(), update: vi.fn() },
     };
     const { caller, transaction } = callerWithTransaction(tx);
 

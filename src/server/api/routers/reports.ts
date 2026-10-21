@@ -2,6 +2,7 @@ import { z } from "zod";
 import { router, adminProcedure } from "../trpc";
 import { LEAD_SOURCE_OPTIONS, normalizeLeadSourceForReport } from "@/lib/lead-source";
 import { businessRangeInMassachusetts } from "@/lib/employee-rate-resolver";
+import { averageJobCompletionDurations, isJobCompletedInRange, summarizeCompletedJobs } from "@/lib/job-completion";
 
 const SURVIVAL_TARGET = 40_000;
 const PRODUCTION_GOAL = 65_000;
@@ -305,6 +306,7 @@ export const reportsRouter = router({
     .query(async ({ ctx, input }) => {
       const now = new Date();
       const month = monthRange(now);
+      const completionRange = businessRangeInMassachusetts(month.start, new Date(month.end.getTime() - 1));
       const payPeriod = getBiweeklyPeriod(now);
       const trendMonth = input?.month ?? now.getMonth() + 1;
       const trendYear = input?.year ?? now.getFullYear();
@@ -321,9 +323,9 @@ export const reportsRouter = router({
               deletedAt: null,
               status: { in: ["approved", "active", "completed"] },
               OR: [
-                { updatedAt: { gte: month.start, lt: month.end } },
-                { startDate: { gte: month.start, lt: month.end } },
-                { endDate: { gte: month.start, lt: month.end } },
+                { status: "completed" },
+                { status: { in: ["approved", "active"] }, startDate: { gte: month.start, lt: month.end } },
+                { status: { in: ["approved", "active"] }, endDate: { gte: month.start, lt: month.end } },
               ],
             },
             select: {
@@ -332,7 +334,9 @@ export const reportsRouter = router({
               contractAmount: true,
               startDate: true,
               endDate: true,
-              updatedAt: true,
+              leadReceivedAt: true,
+              workStartedAt: true,
+              completedAt: true,
             },
           }),
           ctx.prisma.proposal.findMany({
@@ -376,8 +380,9 @@ export const reportsRouter = router({
         ]);
 
       const completedRevenueThisMonth = completedAndScheduledJobs
-        .filter((job) => job.status === "completed")
+        .filter((job) => isJobCompletedInRange(job, completionRange.start, completionRange.end))
         .reduce((sum, job) => sum + jobValue(job), 0);
+      const completionDurations = averageJobCompletionDurations(completedAndScheduledJobs, completionRange.start, completionRange.end);
 
       const scheduledRevenueThisMonth = completedAndScheduledJobs
         .filter((job) => job.status === "approved" || job.status === "active")
@@ -487,6 +492,8 @@ export const reportsRouter = router({
           completedRevenueThisMonth,
           scheduledRevenueThisMonth,
           totalProjectedProduction,
+          ...completionDurations,
+          ...summarizeCompletedJobs(completedAndScheduledJobs),
           target: PRODUCTION_GOAL,
           progressPercent: productionProgressPercent,
         },

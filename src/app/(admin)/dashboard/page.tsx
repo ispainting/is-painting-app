@@ -121,11 +121,17 @@ export default function DashboardPage() {
               <MetricGrid
                 metrics={[
                   ["Active jobs", formatCount(dashboard.operations.activeJobs)],
+                  ["Completed jobs (this month)", formatCount(dashboard.operations.completedJobs)],
+                  ["Completed jobs (all time)", formatCount(dashboard.operations.totalCompletedJobs)],
+                  ["Completed value (all time)", formatCurrency(dashboard.operations.totalCompletedValue)],
+                  ["Completion date missing (all time)", formatCount(dashboard.operations.completionDateMissingCount)],
+                  ["Completion date missing value (all time)", formatCurrency(dashboard.operations.completionDateMissingValue)],
                   ["Jobs starting this week", formatCount(dashboard.operations.jobsStartingThisWeek)],
                   ["Jobs ending this week", formatCount(dashboard.operations.jobsEndingThisWeek)],
                   ["Employees working today", formatCount(dashboard.operations.employeesWorkingToday)],
                 ]}
               />
+              <p className="mt-3 text-xs text-slate-500">Completion reporting uses Completed Date, or legacy End Date. Jobs missing both remain in all-time totals but are not assigned to a month.</p>
             </SectionCard>
 
             <SectionCard title="Alerts" icon={CircleAlert} subtitle="Only actionable issues that need attention now.">

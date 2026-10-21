@@ -180,6 +180,10 @@ export default function ReportsPage() {
             <SectionBlock title="Operations" icon={Sparkles}>
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                 <KpiCard label="Completed jobs" value={formatCount(data.dashboard.operations.completedJobs)} />
+                <KpiCard label="Completed jobs (all time)" value={formatCount(data.jobCompletions.totalCompletedJobs)} />
+                <KpiCard label="Completed value (all time)" value={formatCurrency(data.jobCompletions.totalCompletedValue)} />
+                <KpiCard label="Completion date missing (all time)" value={formatCount(data.jobCompletions.completionDateMissingCount)} />
+                <KpiCard label="Completion date missing value (all time)" value={formatCurrency(data.jobCompletions.completionDateMissingValue)} />
                 <KpiCard label="Open jobs" value={formatCount(data.dashboard.operations.openJobs)} />
                 <KpiCard label="Active jobs" value={formatCount(data.dashboard.operations.activeJobs)} />
                 <KpiCard label="Employee hours" value={formatCount(data.dashboard.operations.employeeHours)} />
@@ -188,7 +192,10 @@ export default function ReportsPage() {
                 <KpiCard label="Jobs starting this week" value={formatCount(data.dashboard.operations.jobsStartingThisWeek)} />
                 <KpiCard label="Jobs ending this week" value={formatCount(data.dashboard.operations.jobsEndingThisWeek)} />
                 <KpiCard label="Employees working today" value={formatCount(data.dashboard.operations.employeesWorkingToday)} />
+                <KpiCard label="Avg. job duration (days)" value={formatCount(data.dashboard.operations.averageJobDurationDays)} />
+                <KpiCard label="Avg. lead to completion (days)" value={formatCount(data.dashboard.operations.averageLeadToCompletionDays)} />
               </div>
+              <p className="mt-3 text-xs text-slate-500">Completion reporting uses Completed Date, or legacy End Date. Jobs missing both remain in all-time totals but are excluded from dated charts and durations.</p>
             </SectionBlock>
 
             <div className="grid gap-4 xl:grid-cols-2">
@@ -212,6 +219,17 @@ export default function ReportsPage() {
                     <Tooltip formatter={(value: any) => formatCurrency(Number(value))} />
                     <Area type="monotone" dataKey="value" stroke="#166534" fill="#22c55e" fillOpacity={0.22} />
                   </AreaChart>
+                </ResponsiveContainer>
+              </ReportChartCard>
+              <ReportChartCard title="Jobs completed by completion date">
+                <ResponsiveContainer width="100%" height={280}>
+                  <BarChart data={data.jobCompletions.series}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
+                    <Tooltip formatter={(value: any) => formatCount(Number(value))} />
+                    <Bar dataKey="completedJobs" name="Completed jobs" fill="#0f766e" radius={[4, 4, 0, 0]} />
+                  </BarChart>
                 </ResponsiveContainer>
               </ReportChartCard>
             </div>

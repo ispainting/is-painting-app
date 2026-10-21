@@ -343,6 +343,13 @@ export default function CustomerProfilePage() {
         <StatCard label="Active Jobs" value={String(payload.stats.activeJobs)} />
       </div>
 
+      {payload.stats.completionDateMissingCount > 0 && (
+        <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          Completion date missing: {payload.stats.completionDateMissingCount} completed Jobs ({formatCurrency(payload.stats.completionDateMissingValue)}).
+          {" "}Included in Jobs Completed totals, but not dated completion history. Enter the real completion date on each Job.
+        </div>
+      )}
+
       <div className="card p-3">
         <div className="flex gap-2 overflow-x-auto pb-1">
           {TABS.map((tab) => (

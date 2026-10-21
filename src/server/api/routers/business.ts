@@ -7,6 +7,7 @@ import { buildLeadSourceQualityReport } from "@/lib/lead-source-quality";
 import { businessRangeInMassachusetts } from "@/lib/employee-rate-resolver";
 import { selectOpenProposals } from "@/lib/open-pipeline";
 import { LEAD_SOURCE_OPTIONS, normalizeLeadSourceForReport } from "@/lib/lead-source";
+import { averageJobCompletionDurations, isJobCompletedInRange, summarizeCompletedJobs } from "@/lib/job-completion";
 
 const SURVIVAL_TARGET = 40_000;
 const MONTHLY_GOAL = 65_000;
@@ -224,8 +225,9 @@ async function loadBusinessHistory(prisma: any, start: Date, end: Date) {
       where: {
         deletedAt: null,
         OR: [
+          { status: "completed" },
           { createdAt: { gte: start, lte: end } },
-          { updatedAt: { gte: start, lte: end } },
+          { completedAt: { gte: start, lte: end } },
           { startDate: { gte: start, lte: end } },
           { endDate: { gte: start, lte: end } },
           { approvedAt: { gte: start, lte: end } },
@@ -239,8 +241,10 @@ async function loadBusinessHistory(prisma: any, start: Date, end: Date) {
         totalEstimate: true,
         startDate: true,
         endDate: true,
+        leadReceivedAt: true,
+        workStartedAt: true,
+        completedAt: true,
         createdAt: true,
-        updatedAt: true,
         customer: { select: { id: true, name: true, source: true } },
       },
     }),
@@ -414,11 +418,12 @@ function buildQuarterSeries(payments: any[], start: Date, end: Date) {
 
 function currentPeriodMetrics(range: { start: Date; end: Date }, history: Awaited<ReturnType<typeof loadBusinessHistory>>) {
   const opportunityRange = businessRangeInMassachusetts(range.start, range.end);
+  const completionRange = businessRangeInMassachusetts(range.start, range.end);
   const payments = history.payments.filter((item: any) => isInRange(item.dateReceived, range.start, range.end));
   const expenses = history.expenses.filter((item: any) => isInRange(item.expenseDate, range.start, range.end));
   const proposals = history.proposals.filter((item: any) => isInRange(item.createdAt, range.start, range.end) || isInRange(item.sentAt, range.start, range.end) || isInRange(item.updatedAt, range.start, range.end));
   const opportunities = history.opportunities.filter((item: any) => isInRange(item.leadReceivedAt ?? item.createdAt, opportunityRange.start, opportunityRange.end));
-  const jobs = history.jobs.filter((item: any) => isInRange(getLifecycleDate(item, "leadReceivedAt") ?? item.createdAt, range.start, range.end) || isInRange(getLifecycleDate(item, "workStartedAt"), range.start, range.end) || isInRange(item.startDate, range.start, range.end) || isInRange(item.endDate, range.start, range.end));
+  const jobs = history.jobs.filter((item: any) => isInRange(getLifecycleDate(item, "leadReceivedAt") ?? item.createdAt, range.start, range.end) || isInRange(getLifecycleDate(item, "workStartedAt"), range.start, range.end) || isInRange(item.startDate, range.start, range.end) || isInRange(item.endDate, range.start, range.end) || isInRange(item.completedAt, range.start, range.end));
   const timeEntries = history.timeEntries.filter((item: any) => isInRange(item.clockIn, range.start, range.end));
 
   const revenue = payments.reduce((sum: number, payment: any) => sum + money(payment.amount), 0);
@@ -447,7 +452,8 @@ function currentPeriodMetrics(range: { start: Date; end: Date }, history: Awaite
   const cashExpected = moneyCollected + outstandingInvoices;
 
   const activeJobs = history.jobs.filter((job: any) => ["approved", "active"].includes(job.status)).length;
-  const completedJobs = jobs.filter((job: any) => job.status === "completed").length;
+  const completedJobs = history.jobs.filter((job: any) => isJobCompletedInRange(job, completionRange.start, completionRange.end)).length;
+  const completionDurations = averageJobCompletionDurations(history.jobs, completionRange.start, completionRange.end);
   const openJobs = jobs.filter((job: any) => ["estimate", "sent", "approved", "active"].includes(job.status)).length;
   const weekStart = new Date(range.end);
   weekStart.setDate(weekStart.getDate() - weekStart.getDay());
@@ -466,7 +472,7 @@ function currentPeriodMetrics(range: { start: Date; end: Date }, history: Awaite
     pipeline: { openProposals, openProposalValue, expectedRevenue, conversionRate },
     cashFlow: { moneyCollected, outstandingInvoices, overdueInvoices: overdueInvoices.length, cashExpected },
     profit: { revenue, expenses: expensesTotal, payroll, estimatedNetProfit: netProfit, profitMargin },
-    operations: { activeJobs, completedJobs, openJobs, jobsStartingThisWeek, jobsEndingThisWeek, employeesWorkingToday, employeeHours },
+    operations: { activeJobs, completedJobs, openJobs, jobsStartingThisWeek, jobsEndingThisWeek, employeesWorkingToday, employeeHours, ...completionDurations, ...summarizeCompletedJobs(history.jobs) },
     proposalPerformance: {
       leadsReceived: opportunities.length,
       estimatesCreated: proposals.filter((proposal: any) => isInRange(proposal.createdAt, range.start, range.end)).length,
@@ -582,7 +588,7 @@ function buildCustomerAnalytics(range: { start: Date; end: Date }, history: Awai
   }
 
   for (const job of history.jobs) {
-    if (!isInRange(getLifecycleDate(job, "leadReceivedAt") ?? job.createdAt, range.start, range.end) && !isInRange(getLifecycleDate(job, "workStartedAt"), range.start, range.end) && !isInRange(job.startDate, range.start, range.end) && !isInRange(job.endDate, range.start, range.end)) continue;
+    if (!isInRange(getLifecycleDate(job, "leadReceivedAt") ?? job.createdAt, range.start, range.end) && !isInRange(getLifecycleDate(job, "workStartedAt"), range.start, range.end) && !isInRange(job.startDate, range.start, range.end) && !isInRange(job.endDate, range.start, range.end) && !isInRange(job.completedAt, range.start, range.end)) continue;
     const revenue = revenueByJob.get(job.id) ?? 0;
     const expenses = expenseByJob.get(job.id) ?? 0;
     const payroll = payrollByJob.get(job.id) ?? 0;
@@ -603,7 +609,7 @@ function buildCustomerAnalytics(range: { start: Date; end: Date }, history: Awai
 
   const repeatCustomers = topCustomers.filter((customer) => customer.jobs > 1).length;
   const largestJobs = history.jobs
-    .filter((job: any) => isInRange(getLifecycleDate(job, "leadReceivedAt") ?? job.createdAt, range.start, range.end) || isInRange(getLifecycleDate(job, "workStartedAt"), range.start, range.end) || isInRange(job.startDate, range.start, range.end) || isInRange(job.endDate, range.start, range.end))
+    .filter((job: any) => isInRange(getLifecycleDate(job, "leadReceivedAt") ?? job.createdAt, range.start, range.end) || isInRange(getLifecycleDate(job, "workStartedAt"), range.start, range.end) || isInRange(job.startDate, range.start, range.end) || isInRange(job.endDate, range.start, range.end) || isInRange(job.completedAt, range.start, range.end))
     .map((job: any) => ({ name: job.name, customer: job.customer.name, value: jobValue(job) }))
     .sort((a: any, b: any) => b.value - a.value)
     .slice(0, 10);
@@ -741,6 +747,17 @@ export const businessRouter = router({
         revenueWon: monthProposals.filter((proposal: any) => ["approved", "converted"].includes(proposal.status)).reduce((sum: number, proposal: any) => sum + money(proposal.totalAmount), 0),
       };
     });
+    const jobCompletionSeries = monthlyRevenue.map((point) => {
+      const monthDate = new Date(`${point.key}-01T00:00:00`);
+      const completionMonth = businessRangeInMassachusetts(startOfMonth(monthDate), endOfMonth(monthDate));
+      const jobs = history.jobs.filter((job: any) => isJobCompletedInRange(job, completionMonth.start, completionMonth.end));
+      return {
+        key: point.key,
+        label: point.label,
+        completedJobs: jobs.length,
+        completedValue: jobs.reduce((sum: number, job: any) => sum + jobValue(job), 0),
+      };
+    });
 
     const leadSourceAnalytics = buildLeadSourceRows(range, history);
     const customerAnalytics = buildCustomerAnalytics(range, history);
@@ -780,6 +797,7 @@ export const businessRouter = router({
         revenueLost: current.proposalPerformance.revenueLost,
         series: proposalSeries,
       },
+      jobCompletions: { series: jobCompletionSeries, ...summarizeCompletedJobs(history.jobs) },
       leadSources: leadSourceAnalytics,
       leadSourceQuality,
       customers: customerAnalytics,

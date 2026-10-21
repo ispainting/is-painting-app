@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatLifecycleDate, getLifecycleDate, getMonthKey, parseLifecycleDateInput, toDateInputValue } from "./job-lifecycle";
+import { businessDateSchema, formatLifecycleDate, getLifecycleDate, getMonthKey, parseLifecycleDateInput, toDateInputValue } from "./job-lifecycle";
 
 describe("job lifecycle dates", () => {
   it("returns null for a legacy job with no business dates", () => {
@@ -62,5 +62,9 @@ describe("edit job lifecycle date inputs", () => {
 
   it("formats lifecycle dates with a four-digit year in America/New_York", () => {
     expect(formatLifecycleDate(new Date("2026-10-21T04:00:00.000Z"))).toBe("Oct 21, 2026");
+  });
+
+  it("coerces a date-only API value to Massachusetts midnight", () => {
+    expect(businessDateSchema.parse("2026-09-18").toISOString()).toBe("2026-09-18T04:00:00.000Z");
   });
 });

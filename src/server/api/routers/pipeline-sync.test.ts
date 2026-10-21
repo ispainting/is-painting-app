@@ -60,15 +60,24 @@ describe("proposals.setStatus → opportunity sync", () => {
 
 describe("jobs.setStatus → opportunity sync", () => {
   function mocks(stage: string) {
-    return {
+    const tx = {
       job: {
-        findUnique: vi.fn().mockResolvedValue({ opportunityId: 5, workStartedAt: null, totalEstimate: 1000 }),
+        findUnique: vi
+          .fn()
+          .mockResolvedValueOnce({ opportunityId: 5, workStartedAt: null, totalEstimate: 1000, completedAt: null })
+          .mockResolvedValue({ id: 1, status: "approved", contractAmount: 1000, totalEstimate: 1000, opportunityId: 5, completionSource: null, completionPreviousStatus: null, completedAt: null }),
         update: vi.fn().mockResolvedValue({ id: 1 }),
       },
+      invoice: { findMany: vi.fn().mockResolvedValue([]) },
+      payment: { findMany: vi.fn().mockResolvedValue([]) },
       opportunity: {
         findUnique: vi.fn().mockResolvedValue({ id: 5, stage, status: "open" }),
         update: vi.fn().mockResolvedValue({}),
       },
+    };
+    return {
+      ...tx,
+      $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
     };
   }
 
@@ -102,12 +111,16 @@ describe("jobs.setStatus → opportunity sync", () => {
 
 describe("jobs.updateLifecycleDates → opportunity sync", () => {
   it("setting workStartedAt advances to service_delivery", async () => {
-    const prisma = {
+    const tx = {
       job: { update: vi.fn().mockResolvedValue({ id: 1, opportunityId: 5 }) },
       opportunity: {
         findUnique: vi.fn().mockResolvedValue({ id: 5, stage: "approval", status: "open" }),
         update: vi.fn().mockResolvedValue({}),
       },
+    };
+    const prisma = {
+      ...tx,
+      $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
     };
     await jobsRouter
       .createCaller({ prisma: prisma as never, session: adminSession })
@@ -118,9 +131,13 @@ describe("jobs.updateLifecycleDates → opportunity sync", () => {
   });
 
   it("lead/proposal date edits alone do not move the stage", async () => {
-    const prisma = {
+    const tx = {
       job: { update: vi.fn().mockResolvedValue({ id: 1, opportunityId: 5 }) },
       opportunity: { findUnique: vi.fn(), update: vi.fn() },
+    };
+    const prisma = {
+      ...tx,
+      $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
     };
     await jobsRouter
       .createCaller({ prisma: prisma as never, session: adminSession })

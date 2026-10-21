@@ -21,14 +21,24 @@ function adminCaller(tx: Record<string, unknown>) {
 
 function deletionTransaction(deletedPayments: number) {
   return {
+    job: {
+      findUnique: vi.fn().mockResolvedValue({
+        id: 4, status: "active", contractAmount: 1000, totalEstimate: 900, opportunityId: null,
+        completionSource: null, completionPreviousStatus: null, completedAt: null,
+      }),
+      update: vi.fn(),
+    },
     invoice: {
       findUnique: vi.fn().mockResolvedValue({ id: 10, jobId: 4 }),
       delete: vi.fn().mockResolvedValue({ id: 10 }),
+      findMany: vi.fn().mockResolvedValue([{ total: 1000 }]),
     },
     payment: {
       deleteMany: vi.fn().mockResolvedValue({ count: deletedPayments }),
       count: vi.fn().mockResolvedValue(0),
+      findMany: vi.fn().mockResolvedValue([]),
     },
+    opportunity: { findUnique: vi.fn(), update: vi.fn() },
   };
 }
 

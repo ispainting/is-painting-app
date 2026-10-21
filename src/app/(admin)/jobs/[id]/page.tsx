@@ -8,6 +8,7 @@ import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { jobCanonicalTotal } from "@/lib/job-total";
 import { getLifecycleDate, toDateInputValue, parseLifecycleDateInput } from "@/lib/job-lifecycle";
 import { formatLifecycleDate } from "@/lib/job-lifecycle";
+import { todayDateInputValueInMassachusetts } from "@/lib/employee-rate-resolver";
 import { invalidateExpenseQueries } from "@/lib/expense-invalidation";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { toast } from "sonner";
@@ -37,6 +38,7 @@ export default function JobDetailPage() {
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustomerResults, setShowCustomerResults] = useState(false);
+  const [completionDate, setCompletionDate] = useState("");
   const customers = api.customers.list.useQuery(
     { search: customerSearch.trim() || undefined },
     { enabled: isEditOpen }
@@ -84,13 +86,12 @@ export default function JobDetailPage() {
   });
 
   const updateJob = api.jobs.update.useMutation({
-    onSuccess: () => {
-      utils.jobs.byId.invalidate({ id });
-      utils.jobs.list.invalidate();
-      utils.jobs.statusCounts.invalidate();
-      utils.jobs.clockable.invalidate();
-      utils.business.analytics.invalidate();
-      utils.reports.dashboard.invalidate();
+    onSuccess: async () => {
+      await Promise.all([
+        utils.jobs.byId.invalidate({ id }), utils.jobs.list.invalidate(), utils.jobs.statusCounts.invalidate(),
+        utils.jobs.clockable.invalidate(), utils.business.analytics.invalidate(), utils.reports.dashboard.invalidate(),
+        utils.invoices.invalidate(), utils.customers.invalidate(), utils.opportunities.invalidate(),
+      ]);
       toast.success("Job updated");
       setIsEditOpen(false);
     },
@@ -98,14 +99,24 @@ export default function JobDetailPage() {
   });
 
   const setStatus = api.jobs.setStatus.useMutation({
-    onSuccess: () => {
-      utils.jobs.byId.invalidate({ id });
-      utils.jobs.list.invalidate();
-      utils.jobs.statusCounts.invalidate();
-      utils.jobs.clockable.invalidate();
-      utils.business.analytics.invalidate();
-      utils.reports.dashboard.invalidate();
+    onSuccess: async () => {
+      await Promise.all([
+        utils.jobs.byId.invalidate({ id }), utils.jobs.list.invalidate(), utils.jobs.statusCounts.invalidate(),
+        utils.jobs.clockable.invalidate(), utils.business.analytics.invalidate(), utils.reports.dashboard.invalidate(),
+        utils.invoices.invalidate(), utils.customers.invalidate(), utils.opportunities.invalidate(),
+      ]);
       toast.success("Status updated");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const updateCompletionDate = api.jobs.setCompletionDate.useMutation({
+    onSuccess: async () => {
+      await Promise.all([
+        utils.jobs.byId.invalidate({ id }), utils.jobs.list.invalidate(), utils.business.analytics.invalidate(),
+        utils.reports.dashboard.invalidate(), utils.customers.invalidate(), utils.opportunities.invalidate(),
+      ]);
+      toast.success("Completed date saved as manual");
     },
     onError: (e) => toast.error(e.message),
   });
@@ -273,7 +284,13 @@ export default function JobDetailPage() {
     });
 
     if (editForm.status !== job.status) {
-      await setStatus.mutateAsync({ id, status: editForm.status });
+      await setStatus.mutateAsync({
+        id,
+        status: editForm.status,
+        ...(editForm.status === "completed"
+          ? { completedAt: parseLifecycleDateInput(completionDate || toDateInputValue(job.completedAt) || todayDateInputValueInMassachusetts())! }
+          : {}),
+      });
     }
   };
 
@@ -281,6 +298,23 @@ export default function JobDetailPage() {
   const leadReceivedAt = getLifecycleDate(job, "leadReceivedAt");
   const proposalSentAt = getLifecycleDate(job, "proposalSentAt");
   const workStartedAt = getLifecycleDate(job, "workStartedAt");
+  const changeJobStatus = (status: (typeof STATUSES)[number]) => {
+    if (status === "completed" && job.completionSource === "payment" &&
+        !window.confirm("This Job has a final-payment completion date. Marking it manually will replace that date and disable automatic payment-date updates. Continue?")) return;
+    setStatus.mutate({
+      id,
+      status,
+      ...(status === "completed"
+        ? { completedAt: parseLifecycleDateInput(completionDate || toDateInputValue(job.completedAt) || todayDateInputValueInMassachusetts())! }
+        : {}),
+    });
+  };
+  const saveManualCompletionDate = () => {
+    if (!completionDate) return toast.error("Select a completion date.");
+    if (job.completionSource === "payment" &&
+        !window.confirm("Replacing the final-payment completion date with a manual date will disable automatic payment-date updates. Continue?")) return;
+    updateCompletionDate.mutate({ id, completedAt: parseLifecycleDateInput(completionDate)! });
+  };
   const estimatedMaterials = Number(job.materialsBudget);
   const estimatedLabor = Number(job.laborBudget);
   const estimatedSubcontractor = Number(job.subcontractorBudget || 0);
@@ -363,7 +397,7 @@ export default function JobDetailPage() {
             <select
               className="input w-auto"
               value={job.status}
-              onChange={(e) => setStatus.mutate({ id, status: e.target.value as any })}
+              onChange={(e) => changeJobStatus(e.target.value as (typeof STATUSES)[number])}
             >
               {STATUSES.map((s) => (
                 <option key={s} value={s}>{s}</option>
@@ -405,6 +439,13 @@ export default function JobDetailPage() {
       </div>
 
       <JobOpportunityLink jobId={job.id} customerId={job.customerId} opportunityId={job.opportunityId} />
+      {job.status === "completed" && !job.completedAt && !job.endDate && (
+        <div role="alert" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <strong>Completion date missing.</strong> This Job remains in all-time completed totals but cannot be assigned to a reporting month.
+          {" "}Enter the actual completion date in Lifecycle Dates on the Overview tab.
+          <button type="button" className="btn btn-secondary ml-2" onClick={() => setActiveTab("overview")}>Open Overview</button>
+        </div>
+      )}
       <div className="card p-2 mb-4">
         <div className="flex flex-wrap gap-2">
           {WORKSPACE_TABS.map((tab) => (
@@ -438,6 +479,7 @@ export default function JobDetailPage() {
               <Stat label="Lead received" value={formatLifecycleDate(leadReceivedAt)} />
               <Stat label="Proposal sent" value={formatLifecycleDate(proposalSentAt)} />
               <Stat label="Work started" value={formatLifecycleDate(workStartedAt)} />
+              <Stat label={job.status === "completed" && !job.completedAt && job.endDate ? "Completed (legacy End Date)" : "Completed"} value={formatLifecycleDate(job.completedAt ?? (job.status === "completed" ? job.endDate : null))} />
               <Stat label="Estimated total cost" value={formatCurrency(estimatedTotalCost)} />
               <Stat label="Estimated margin" value={`${estimatedMarginPct.toFixed(1)}%`} />
               <Stat label="Actual total cost" value={formatCurrency(actualTotalCost)} />
@@ -485,10 +527,13 @@ export default function JobDetailPage() {
                 {jobData.assignments.map((a) => (
                   <li key={a.id}>{a.user.name}</li>
                 ))}
+              </ul>
+            )}
+          </div>
 
           <div className="card p-5 md:col-span-3">
             <h2 className="text-base font-semibold mb-3">Lifecycle Dates</h2>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div>
                 <label className="label">Lead received</label>
                 <input type="date" className="input" defaultValue={toDateInputValue(leadReceivedAt)} onChange={(event) => updateLifecycleDates.mutate({ id, leadReceivedAt: parseLifecycleDateInput(event.target.value) })} />
@@ -501,13 +546,26 @@ export default function JobDetailPage() {
                 <label className="label">Work started</label>
                 <input type="date" className="input" defaultValue={toDateInputValue(workStartedAt)} onChange={(event) => updateLifecycleDates.mutate({ id, workStartedAt: parseLifecycleDateInput(event.target.value) })} />
               </div>
+              <div>
+                <label className="label">Completed date</label>
+                <input
+                  type="date"
+                  className="input"
+                  value={completionDate || toDateInputValue(job.completedAt)}
+                  onChange={(event) => setCompletionDate(event.target.value)}
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  {job.completionSource === "payment" ? "Final Payment" : job.completionSource === "manual" ? "Manual" : job.completedAt ? "Existing date; source not recorded" : job.status === "completed" && job.endDate ? `Reporting uses legacy End Date: ${formatLifecycleDate(job.endDate)}` : "No completion date recorded"}
+                </p>
+                {job.status === "completed" && completionDate !== toDateInputValue(job.completedAt) && (
+                  <button type="button" className="btn btn-secondary mt-2" disabled={updateCompletionDate.isPending} onClick={saveManualCompletionDate}>
+                    Save manual date
+                  </button>
+                )}
+              </div>
             </div>
-            <p className="mt-3 text-xs text-slate-500">Dates are displayed in the business timezone and feed monthly reporting.</p>
+            <p className="mt-3 text-xs text-slate-500">Dates use America/New_York. Completion reporting uses Completed Date, then legacy End Date, never the last edit date. Missing dates are reported separately.</p>
           </div>
-              </ul>
-            )}
-          </div>
-
           <div className="card p-5">
             <h2 className="text-base font-semibold mb-2">Quick Actions</h2>
             <div className="space-y-2">
@@ -517,7 +575,7 @@ export default function JobDetailPage() {
                 <select
                   className="input"
                   value={job.status}
-                  onChange={(e) => setStatus.mutate({ id, status: e.target.value as any })}
+                  onChange={(e) => changeJobStatus(e.target.value as (typeof STATUSES)[number])}
                 >
                   {STATUSES.map((s) => (
                     <option key={s} value={s}>{s}</option>

@@ -6,6 +6,8 @@ import { calculateJobTracking } from "@/lib/job-tracking";
 import { buildJobsListWhere, employeeAssignmentFilter, JOB_STATUS_VALUES, type JobStatusValue } from "@/lib/job-filters";
 import { applyOpportunityTransition, resolveJobStatusStage } from "@/lib/pipeline-sync";
 import { linkJobOpportunity, validateOpportunityCustomer } from "@/lib/opportunity-links";
+import { synchronizeJobCompletion } from "@/lib/job-completion";
+import { businessDateSchema } from "@/lib/job-lifecycle";
 import { Prisma } from "@prisma/client";
 
 const JobStatusZ = z.enum([
@@ -249,17 +251,21 @@ export const jobsRouter = router({
       };
 
       const shouldRecomputeTotal = !existing.budgetLocked && input.data.totalEstimate === undefined;
-      const updated = await ctx.prisma.job.update({
-        where: { id: input.id },
-        data: shouldRecomputeTotal
-          ? { ...normalizedData, subtotalBeforeMarkup: calc.subtotalBeforeMarkup, totalEstimate: calc.totalEstimate }
-          : normalizedData,
-      });
-      // Setting workStartedAt through the edit form also advances the pipeline.
-      if (input.data.workStartedAt != null) {
-        await applyOpportunityTransition(ctx.prisma, existing.opportunityId, "service_delivery", { effectiveAt: input.data.workStartedAt, changedById: ctx.session.userId });
-      }
-      return updated;
+      return ctx.prisma.$transaction(async (tx) => {
+        const updated = await tx.job.update({
+          where: { id: input.id },
+          data: shouldRecomputeTotal
+            ? { ...normalizedData, subtotalBeforeMarkup: calc.subtotalBeforeMarkup, totalEstimate: calc.totalEstimate }
+            : normalizedData,
+        });
+        if (input.data.workStartedAt != null) {
+          await applyOpportunityTransition(tx, existing.opportunityId, "service_delivery", { effectiveAt: input.data.workStartedAt, changedById: ctx.session.userId });
+        }
+        if (input.data.contractAmount !== undefined || input.data.totalEstimate !== undefined || shouldRecomputeTotal) {
+          await synchronizeJobCompletion(tx, input.id, ctx.session.userId);
+        }
+        return updated;
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     }),
 
   updateLifecycleDates: adminProcedure
@@ -270,47 +276,70 @@ export const jobsRouter = router({
       workStartedAt: z.coerce.date().nullable().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
-      const updated = await ctx.prisma.job.update({
-        where: { id: input.id },
-        data: {
-          leadReceivedAt: input.leadReceivedAt,
-          proposalSentAt: input.proposalSentAt,
-          workStartedAt: input.workStartedAt,
-        },
-      });
-      // Setting workStartedAt advances the linked opportunity to service_delivery.
-      if (input.workStartedAt != null) {
-        await applyOpportunityTransition(ctx.prisma, updated.opportunityId, "service_delivery", { effectiveAt: input.workStartedAt, changedById: ctx.session.userId });
-      }
-      return updated;
+      return ctx.prisma.$transaction(async (tx) => {
+        const updated = await tx.job.update({
+          where: { id: input.id },
+          data: {
+            leadReceivedAt: input.leadReceivedAt,
+            proposalSentAt: input.proposalSentAt,
+            workStartedAt: input.workStartedAt,
+          },
+        });
+        if (input.workStartedAt != null) {
+          await applyOpportunityTransition(tx, updated.opportunityId, "service_delivery", { effectiveAt: input.workStartedAt, changedById: ctx.session.userId });
+        }
+        return updated;
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     }),
 
   setStatus: adminProcedure
-    .input(z.object({ id: z.number(), status: JobStatusZ, workStartedAt: z.coerce.date().optional() }))
+    .input(z.object({ id: z.number(), status: JobStatusZ, workStartedAt: z.coerce.date().optional(), completedAt: businessDateSchema.optional() }))
     .mutation(async ({ ctx, input }) => {
-      const existing = await ctx.prisma.job.findUnique({
-        where: { id: input.id },
-        select: { opportunityId: true, workStartedAt: true, totalEstimate: true },
-      });
-      const data: any = { status: input.status };
-      if (input.status === "sent") data.sentAt = new Date();
-      if (input.status === "approved" && existing) {
-        data.approvedAt = new Date();
-        data.contractAmount = existing.totalEstimate;
-        data.budgetLocked = true;
-      }
-      if (input.status === "active" && existing && !existing.workStartedAt && input.workStartedAt) {
-        data.workStartedAt = input.workStartedAt;
-      }
-      const updated = await ctx.prisma.job.update({ where: { id: input.id }, data });
-      // Pipeline sync: job status drives the linked opportunity stage.
-      await applyOpportunityTransition(ctx.prisma, existing?.opportunityId, resolveJobStatusStage(input.status), {
-        allowBackward: input.status === "on_hold",
-        changedById: ctx.session.userId,
-        effectiveAt: input.status === "active" ? input.workStartedAt : undefined,
-      });
-      return updated;
+      return ctx.prisma.$transaction(async (tx) => {
+        const existing = await tx.job.findUnique({
+          where: { id: input.id },
+          select: { opportunityId: true, workStartedAt: true, totalEstimate: true, completedAt: true },
+        });
+        if (!existing) throw new TRPCError({ code: "NOT_FOUND" });
+        const data: Prisma.JobUpdateInput = { status: input.status };
+        if (input.status === "sent") data.sentAt = new Date();
+        if (input.status === "approved") {
+          data.approvedAt = new Date();
+          data.contractAmount = existing.totalEstimate;
+          data.budgetLocked = true;
+        }
+        if (input.status === "active" && !existing.workStartedAt && input.workStartedAt) data.workStartedAt = input.workStartedAt;
+        if (input.status === "completed") {
+          data.completedAt = input.completedAt ?? existing.completedAt ?? new Date();
+          data.completionSource = "manual";
+          data.completionPreviousStatus = null;
+        } else {
+          data.completedAt = null;
+          data.completionSource = null;
+          data.completionPreviousStatus = null;
+        }
+        const updated = await tx.job.update({ where: { id: input.id }, data });
+        await applyOpportunityTransition(tx, existing.opportunityId, resolveJobStatusStage(input.status), {
+          allowBackward: input.status === "on_hold",
+          changedById: ctx.session.userId,
+          effectiveAt: input.status === "active" ? input.workStartedAt : input.status === "completed" ? updated.completedAt ?? undefined : undefined,
+        });
+        if (input.status === "approved") await synchronizeJobCompletion(tx, input.id, ctx.session.userId);
+        return updated;
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     }),
+
+  setCompletionDate: adminProcedure
+    .input(z.object({ id: z.number(), completedAt: businessDateSchema }))
+    .mutation(({ ctx, input }) => ctx.prisma.$transaction(async (tx) => {
+      const job = await tx.job.findUnique({ where: { id: input.id }, select: { status: true } });
+      if (!job) throw new TRPCError({ code: "NOT_FOUND" });
+      if (job.status !== "completed") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Only a completed Job can have its completion date edited." });
+      return tx.job.update({
+        where: { id: input.id },
+        data: { completedAt: input.completedAt, completionSource: "manual", completionPreviousStatus: null },
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })),
 
   assignEmployee: adminProcedure
     .input(z.object({ jobId: z.number(), userId: z.number() }))

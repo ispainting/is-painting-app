@@ -9,6 +9,7 @@ import {
   unpaidInvoiceStatus,
   type InvoiceStatusValue,
 } from "@/lib/invoice-calculations";
+import { synchronizeJobCompletion } from "@/lib/job-completion";
 
 const StatusZ = z.enum(["draft", "sent", "partial", "paid", "overdue", "cancelled"]);
 
@@ -72,7 +73,7 @@ export const invoicesRouter = router({
         return await ctx.prisma.$transaction(async (tx) => {
           const job = await tx.job.findUnique({ where: { id: input.jobId }, include: { customer: { select: { id: true } } } });
           if (!job?.customer) throw new TRPCError({ code: "NOT_FOUND", message: "Job or customer not found." });
-          return tx.invoice.create({
+          const invoice = await tx.invoice.create({
             data: {
               customerId: job.customerId,
               jobId: input.jobId,
@@ -89,6 +90,8 @@ export const invoicesRouter = router({
             },
             include: { lineItems: true, payments: true },
           });
+          await synchronizeJobCompletion(tx, input.jobId, ctx.session!.userId);
+          return invoice;
         }, { isolationLevel: "Serializable" });
       } catch (error) {
         if (error instanceof TRPCError) throw error;
@@ -104,7 +107,7 @@ export const invoicesRouter = router({
         return await ctx.prisma.$transaction(async (tx) => {
           const invoice = await tx.invoice.findUnique({
             where: { id: input.id },
-            include: { payments: { select: { amount: true } } },
+            include: { payments: { where: { status: { not: "bounced" } }, select: { amount: true } } },
           });
           if (!invoice) throw new TRPCError({ code: "NOT_FOUND", message: "Invoice not found." });
           const paid = invoice.payments.reduce((sum, payment) => sum + Number(payment.amount), 0);
@@ -115,7 +118,7 @@ export const invoicesRouter = router({
           );
 
           await tx.invoiceLineItem.deleteMany({ where: { invoiceId: input.id } });
-          return tx.invoice.update({
+          const updated = await tx.invoice.update({
             where: { id: input.id },
             data: {
               title: input.title,
@@ -130,6 +133,8 @@ export const invoicesRouter = router({
             },
             include: { lineItems: { orderBy: { sortOrder: "asc" } }, payments: true },
           });
+          await synchronizeJobCompletion(tx, invoice.jobId, ctx.session!.userId);
+          return updated;
         }, { isolationLevel: "Serializable" });
       } catch (error) {
         if (error instanceof TRPCError) throw error;
@@ -143,15 +148,20 @@ export const invoicesRouter = router({
       if (input.status === "paid" || input.status === "partial") {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Payment status is calculated from recorded payments." });
       }
-      const invoice = await ctx.prisma.invoice.findUnique({ where: { id: input.id }, select: { amountPaid: true } });
-      if (!invoice) throw new TRPCError({ code: "NOT_FOUND", message: "Invoice not found." });
-      if (Number(invoice.amountPaid) > 0) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "Invoices with payments keep their calculated payment status." });
-      }
-      const data: any = { status: input.status };
-      if (input.status === "sent") data.sentAt = new Date();
-      if (input.status === "draft") data.sentAt = null;
-      return ctx.prisma.invoice.update({ where: { id: input.id }, data });
+      const status = input.status;
+      return ctx.prisma.$transaction(async (tx) => {
+        const invoice = await tx.invoice.findUnique({ where: { id: input.id }, select: { amountPaid: true, jobId: true } });
+        if (!invoice) throw new TRPCError({ code: "NOT_FOUND", message: "Invoice not found." });
+        if (Number(invoice.amountPaid) > 0) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Invoices with payments keep their calculated payment status." });
+        }
+        const data: { status: typeof status; sentAt?: Date | null } = { status };
+        if (status === "sent") data.sentAt = new Date();
+        if (status === "draft") data.sentAt = null;
+        const updated = await tx.invoice.update({ where: { id: input.id }, data });
+        await synchronizeJobCompletion(tx, invoice.jobId, ctx.session!.userId);
+        return updated;
+      }, { isolationLevel: "Serializable" });
     }),
 
   remove: adminProcedure
@@ -174,6 +184,7 @@ export const invoicesRouter = router({
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Linked invoice payments were not fully removed." });
         }
 
+        await synchronizeJobCompletion(tx, invoice.jobId, ctx.session!.userId);
         return { id: invoice.id, deletedPayments: deletedPayments.count };
       }, { isolationLevel: "Serializable" });
     }),

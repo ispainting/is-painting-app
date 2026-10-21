@@ -8,6 +8,8 @@ import {
   validatePaymentTarget,
   type InvoiceStatusValue,
 } from "@/lib/invoice-calculations";
+import { synchronizeJobCompletion } from "@/lib/job-completion";
+import { businessDateSchema } from "@/lib/job-lifecycle";
 
 const MethodZ = z.enum(["check", "cash", "credit_card", "bank_transfer", "other"]);
 
@@ -50,7 +52,7 @@ export const paymentsRouter = router({
       jobId: z.number(),
       invoiceId: z.number().optional(),
       amount: z.number().positive(),
-      dateReceived: z.coerce.date(),
+      dateReceived: businessDateSchema,
       method: MethodZ.default("check"),
       checkNumber: z.string().optional(),
       bank: z.string().optional(),
@@ -76,20 +78,11 @@ export const paymentsRouter = router({
             calculateInvoicePaymentState(Number(invoice.total), Number(existing._sum.amount ?? 0) + input.amount, "sent");
           }
 
-          if (job) {
-            const [existing, invoiced] = await Promise.all([
-              tx.payment.aggregate({ where: { jobId: input.jobId, status: { not: "bounced" } }, _sum: { amount: true } }),
-              tx.invoice.aggregate({ where: { jobId: input.jobId, status: { not: "cancelled" } }, _sum: { total: true } }),
-            ]);
-            const projectTotal = Number(job.contractAmount) > 0 ? Number(job.contractAmount) : Number(job.totalEstimate);
-            const collectibleTotal = Math.max(projectTotal, Number(invoiced._sum.total ?? 0));
-            calculateInvoicePaymentState(collectibleTotal, Number(existing._sum.amount ?? 0) + input.amount, "sent");
-          }
-
           const payment = await tx.payment.create({
             data: { ...input, recordedById: ctx.session!.userId },
           });
           if (input.invoiceId) await recomputeInvoice(tx, input.invoiceId);
+          await synchronizeJobCompletion(tx, input.jobId, ctx.session!.userId);
           return payment;
         }, { isolationLevel: "Serializable" });
       } catch (error) {
@@ -103,7 +96,7 @@ export const paymentsRouter = router({
       id: z.number(),
       invoiceId: z.number().nullable().optional(),
       amount: z.number().positive(),
-      dateReceived: z.coerce.date(),
+      dateReceived: businessDateSchema,
       method: MethodZ,
       checkNumber: z.string().optional(),
       bank: z.string().optional(),
@@ -144,16 +137,18 @@ export const paymentsRouter = router({
 
         if (previousInvoiceId) await recomputeInvoice(tx, previousInvoiceId);
         if (nextInvoiceId && nextInvoiceId !== previousInvoiceId) await recomputeInvoice(tx, nextInvoiceId);
+        await synchronizeJobCompletion(tx, existing.jobId, ctx.session!.userId);
         return payment;
       }, { isolationLevel: "Serializable" });
     }),
 
   remove: adminProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
     return ctx.prisma.$transaction(async (tx) => {
-      const payment = await tx.payment.findUnique({ where: { id: input.id }, select: { id: true, invoiceId: true } });
+      const payment = await tx.payment.findUnique({ where: { id: input.id }, select: { id: true, jobId: true, invoiceId: true } });
       if (!payment) throw new TRPCError({ code: "NOT_FOUND", message: "Payment not found." });
       const removed = await tx.payment.delete({ where: { id: input.id } });
       if (payment.invoiceId) await recomputeInvoice(tx, payment.invoiceId);
+      await synchronizeJobCompletion(tx, payment.jobId, ctx.session!.userId);
       return removed;
     }, { isolationLevel: "Serializable" });
   }),

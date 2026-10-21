@@ -6,6 +6,8 @@ import { toast } from "sonner";
 import { api } from "@/trpc/react";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatLifecycleDate, parseLifecycleDateInput, toDateInputValue } from "@/lib/job-lifecycle";
+import { todayDateInputValueInMassachusetts } from "@/lib/employee-rate-resolver";
 import {
   calculateInvoiceTotals,
   createInvoiceSchedule,
@@ -45,7 +47,7 @@ type Props = {
   marginPercent: number;
 };
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => todayDateInputValueInMassachusetts();
 const blankLine = (): InvoiceLineInput => ({ description: "Project payment", quantity: 1, unitPrice: 0 });
 
 export function JobFinancials({ jobId, jobName, contractAmount, totalEstimate, actualCosts, grossProfit, marginPercent }: Props) {
@@ -66,6 +68,11 @@ export function JobFinancials({ jobId, jobName, contractAmount, totalEstimate, a
       utils.invoices.byJob.invalidate({ jobId }),
       utils.invoices.list.invalidate(),
       utils.payments.list.invalidate({ jobId }),
+      utils.jobs.list.invalidate(),
+      utils.jobs.statusCounts.invalidate(),
+      utils.jobs.clockable.invalidate(),
+      utils.opportunities.invalidate(),
+      utils.customers.invalidate(),
       utils.business.analytics.invalidate(),
       utils.reports.dashboard.invalidate(),
     ]);
@@ -120,7 +127,7 @@ export function JobFinancials({ jobId, jobName, contractAmount, totalEstimate, a
       id: payment.id,
       invoiceId: payment.invoiceId ?? null,
       amount: Number(payment.amount),
-      dateReceived: new Date(payment.dateReceived).toISOString().slice(0, 10),
+      dateReceived: toDateInputValue(payment.dateReceived),
       method: payment.method as PaymentMethodValue,
       checkNumber: payment.checkNumber ?? "",
       bank: payment.bank ?? "",
@@ -259,7 +266,7 @@ export function JobFinancials({ jobId, jobName, contractAmount, totalEstimate, a
           <p className="text-sm text-slate-500">No payments recorded yet.</p>
         ) : (
           <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="text-left text-slate-500"><tr><th className="py-2">Received</th><th>Invoice</th><th>Method</th><th>Reference</th><th className="text-right">Amount</th><th /></tr></thead><tbody className="divide-y divide-slate-100">{payments.data?.map((payment) => (
-            <tr key={payment.id}><td className="py-3">{formatDate(payment.dateReceived)}</td><td>{payment.invoice?.invoiceNumber || "Unapplied"}</td><td className="capitalize">{payment.method.replaceAll("_", " ")}</td><td>{payment.checkNumber || payment.memo || "—"}</td><td className="text-right font-medium">{formatCurrency(Number(payment.amount))}</td><td className="text-right"><div className="inline-flex gap-2"><button type="button" className="btn btn-secondary text-xs" onClick={() => openEditPayment(payment)}>Edit</button><button type="button" className="p-2 text-rose-600" title="Remove payment" onClick={() => { if (window.confirm("Remove this payment?")) removePayment.mutate({ id: payment.id }); }}><Trash2 className="h-4 w-4" /></button></div></td></tr>
+            <tr key={payment.id}><td className="py-3">{formatLifecycleDate(payment.dateReceived)}</td><td>{payment.invoice?.invoiceNumber || "Unapplied"}</td><td className="capitalize">{payment.method.replaceAll("_", " ")}</td><td>{payment.checkNumber || payment.memo || "—"}</td><td className="text-right font-medium">{formatCurrency(Number(payment.amount))}</td><td className="text-right"><div className="inline-flex gap-2"><button type="button" className="btn btn-secondary text-xs" onClick={() => openEditPayment(payment)}>Edit</button><button type="button" className="p-2 text-rose-600" title="Remove payment" onClick={() => { if (window.confirm("Remove this payment?")) removePayment.mutate({ id: payment.id }); }}><Trash2 className="h-4 w-4" /></button></div></td></tr>
           ))}</tbody></table></div>
         )}
       </section>
@@ -287,7 +294,7 @@ export function JobFinancials({ jobId, jobName, contractAmount, totalEstimate, a
           <div className="sm:col-span-2"><label className="label">Invoice</label><select className="input" value={paymentEdit.invoiceId ?? ""} onChange={(event) => { const invoiceId = event.target.value ? Number(event.target.value) : null; const invoice = invoices.data?.find((item) => item.id === invoiceId); setPaymentEdit((form) => ({ ...form!, invoiceId, amount: invoice ? Math.max(0, Number(invoice.amountRemaining)) : form!.amount })); }}><option value="">Unapplied to invoice</option>{invoices.data?.map((invoice) => <option key={invoice.id} value={invoice.id}>{invoice.invoiceNumber} · {invoice.title} · {formatCurrency(Math.max(0, Number(invoice.amountRemaining)))} remaining</option>)}</select></div>
           <div><label className="label">Amount</label><input className="input" type="number" min="0.01" step="0.01" value={paymentEdit.amount} onChange={(event) => setPaymentEdit((form) => ({ ...form!, amount: Number(event.target.value) }))} /></div><div><label className="label">Date received</label><input className="input" type="date" value={paymentEdit.dateReceived} onChange={(event) => setPaymentEdit((form) => ({ ...form!, dateReceived: event.target.value }))} /></div>
           <div><label className="label">Method</label><select className="input" value={paymentEdit.method} onChange={(event) => setPaymentEdit((form) => ({ ...form!, method: event.target.value as PaymentMethodValue }))}>{PAYMENT_METHODS.map((method) => <option key={method} value={method}>{method.replaceAll("_", " ")}</option>)}</select></div><div><label className="label">Check number</label><input className="input" value={paymentEdit.checkNumber} onChange={(event) => setPaymentEdit((form) => ({ ...form!, checkNumber: event.target.value }))} /></div><div><label className="label">Bank</label><input className="input" value={paymentEdit.bank} onChange={(event) => setPaymentEdit((form) => ({ ...form!, bank: event.target.value }))} /></div><div><label className="label">Memo</label><input className="input" value={paymentEdit.memo} onChange={(event) => setPaymentEdit((form) => ({ ...form!, memo: event.target.value }))} /></div><div className="sm:col-span-2"><label className="label">Notes</label><textarea className="input min-h-20" value={paymentEdit.notes} onChange={(event) => setPaymentEdit((form) => ({ ...form!, notes: event.target.value }))} /></div>
-        </div><div className="flex justify-end gap-2 border-t px-6 py-4"><button type="button" className="btn btn-secondary" onClick={() => setPaymentEdit(null)}>Cancel</button><button type="button" className="btn btn-primary" disabled={paymentEdit.amount <= 0 || updatePayment.isPending} onClick={() => updatePayment.mutate({ id: paymentEdit.id, invoiceId: paymentEdit.invoiceId ?? undefined, amount: paymentEdit.amount, dateReceived: new Date(`${paymentEdit.dateReceived}T12:00:00`), method: paymentEdit.method, checkNumber: paymentEdit.checkNumber || undefined, bank: paymentEdit.bank || undefined, memo: paymentEdit.memo || undefined, notes: paymentEdit.notes || undefined })}>Save Payment</button></div></div></div>
+        </div><div className="flex justify-end gap-2 border-t px-6 py-4"><button type="button" className="btn btn-secondary" onClick={() => setPaymentEdit(null)}>Cancel</button><button type="button" className="btn btn-primary" disabled={paymentEdit.amount <= 0 || updatePayment.isPending} onClick={() => updatePayment.mutate({ id: paymentEdit.id, invoiceId: paymentEdit.invoiceId ?? undefined, amount: paymentEdit.amount,         dateReceived: parseLifecycleDateInput(paymentEdit.dateReceived)!, method: paymentEdit.method, checkNumber: paymentEdit.checkNumber || undefined, bank: paymentEdit.bank || undefined, memo: paymentEdit.memo || undefined, notes: paymentEdit.notes || undefined })}>Save Payment</button></div></div></div>
       )}
 
       {paymentOpen && (
@@ -295,7 +302,7 @@ export function JobFinancials({ jobId, jobName, contractAmount, totalEstimate, a
           <div className="sm:col-span-2"><label className="label">Invoice</label><select className="input" value={paymentForm.invoiceId ?? ""} onChange={(event) => { const invoiceId = event.target.value ? Number(event.target.value) : null; const invoice = invoices.data?.find((item) => item.id === invoiceId); setPaymentForm((form) => ({ ...form, invoiceId, amount: invoice ? Math.max(0, Number(invoice.amountRemaining)) : form.amount })); }}><option value="">Unapplied to invoice</option>{invoices.data?.map((invoice) => <option key={invoice.id} value={invoice.id}>{invoice.invoiceNumber} · {invoice.title} · {formatCurrency(Math.max(0, Number(invoice.amountRemaining)))} remaining</option>)}</select></div>
           <div><label className="label">Amount</label><input className="input" type="number" min="0.01" step="0.01" value={paymentForm.amount} onChange={(event) => setPaymentForm((form) => ({ ...form, amount: Number(event.target.value) }))} /></div><div><label className="label">Date received</label><input className="input" type="date" value={paymentForm.dateReceived} onChange={(event) => setPaymentForm((form) => ({ ...form, dateReceived: event.target.value }))} /></div>
           <div><label className="label">Method</label><select className="input" value={paymentForm.method} onChange={(event) => setPaymentForm((form) => ({ ...form, method: event.target.value as PaymentMethodValue }))}>{PAYMENT_METHODS.map((method) => <option key={method} value={method}>{method.replaceAll("_", " ")}</option>)}</select></div><div><label className="label">Check number</label><input className="input" value={paymentForm.checkNumber} onChange={(event) => setPaymentForm((form) => ({ ...form, checkNumber: event.target.value }))} /></div><div><label className="label">Bank</label><input className="input" value={paymentForm.bank} onChange={(event) => setPaymentForm((form) => ({ ...form, bank: event.target.value }))} /></div><div><label className="label">Memo</label><input className="input" value={paymentForm.memo} onChange={(event) => setPaymentForm((form) => ({ ...form, memo: event.target.value }))} /></div><div className="sm:col-span-2"><label className="label">Notes</label><textarea className="input min-h-20" value={paymentForm.notes} onChange={(event) => setPaymentForm((form) => ({ ...form, notes: event.target.value }))} /></div>
-        </div><div className="flex justify-end gap-2 border-t px-6 py-4"><button type="button" className="btn btn-secondary" onClick={() => setPaymentOpen(false)}>Cancel</button><button type="button" className="btn btn-primary" disabled={paymentForm.amount <= 0 || recordPayment.isPending} onClick={() => recordPayment.mutate({ jobId, invoiceId: paymentForm.invoiceId ?? undefined, amount: paymentForm.amount, dateReceived: new Date(`${paymentForm.dateReceived}T12:00:00`), method: paymentForm.method, checkNumber: paymentForm.checkNumber || undefined, bank: paymentForm.bank || undefined, memo: paymentForm.memo || undefined, notes: paymentForm.notes || undefined })}>Record Payment</button></div></div></div>
+        </div><div className="flex justify-end gap-2 border-t px-6 py-4"><button type="button" className="btn btn-secondary" onClick={() => setPaymentOpen(false)}>Cancel</button><button type="button" className="btn btn-primary" disabled={paymentForm.amount <= 0 || recordPayment.isPending} onClick={() => recordPayment.mutate({ jobId, invoiceId: paymentForm.invoiceId ?? undefined, amount: paymentForm.amount,         dateReceived: parseLifecycleDateInput(paymentForm.dateReceived)!, method: paymentForm.method, checkNumber: paymentForm.checkNumber || undefined, bank: paymentForm.bank || undefined, memo: paymentForm.memo || undefined, notes: paymentForm.notes || undefined })}>Record Payment</button></div></div></div>
       )}
 
       <ConfirmDialog

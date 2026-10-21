@@ -1,4 +1,12 @@
-import { startOfBusinessDayInMassachusetts } from "./employee-rate-resolver";
+import { startOfBusinessDayInMassachusetts, todayDateInputValueInMassachusetts } from "./employee-rate-resolver";
+import { z } from "zod";
+
+export const businessDateSchema = z.preprocess((value) => {
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return startOfBusinessDayInMassachusetts(value);
+  }
+  return value;
+}, z.coerce.date());
 
 export type LifecycleDateSource = {
   leadReceivedAt?: Date | string | null;
@@ -22,7 +30,7 @@ export function toDateInputValue(date: Date | string | null | undefined): string
   if (!date) return "";
   const value = date instanceof Date ? date : new Date(date);
   if (Number.isNaN(value.getTime())) return "";
-  return value.toISOString().slice(0, 10);
+  return todayDateInputValueInMassachusetts(value);
 }
 
 export function formatLifecycleDate(date: Date | string | null | undefined): string {

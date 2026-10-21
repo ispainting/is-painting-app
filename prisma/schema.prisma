@@ -27,6 +27,11 @@ enum JobStatus {
   cancelled
 }
 
+enum JobCompletionSource {
+  manual
+  payment
+}
+
 enum JobType {
   interior
   exterior
@@ -633,17 +638,22 @@ model Job {
 
   priceBreakdownJson Json?
 
-  sentAt         DateTime?
-  approvedAt     DateTime?
-  startDate      DateTime?
-  endDate        DateTime?
-  leadReceivedAt DateTime?
-  proposalSentAt DateTime?
-  workStartedAt  DateTime?
-  deletedAt      DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-  externalId     String?   @db.VarChar(100)
+  sentAt                   DateTime?
+  approvedAt               DateTime?
+  completedAt              DateTime?
+  /// Null is retained for legacy completed Jobs whose completion source is unknown.
+  completionSource         JobCompletionSource?
+  /// Set only for payment-generated completion so reversals restore the prior status safely.
+  completionPreviousStatus JobStatus?
+  startDate                DateTime?
+  endDate                  DateTime?
+  leadReceivedAt           DateTime?
+  proposalSentAt           DateTime?
+  workStartedAt            DateTime?
+  deletedAt                DateTime?
+  createdAt                DateTime             @default(now())
+  updatedAt                DateTime             @updatedAt
+  externalId               String?              @db.VarChar(100)
 
   customer    Customer                @relation(fields: [customerId], references: [id])
   opportunity Opportunity?            @relation(fields: [opportunityId], references: [id])

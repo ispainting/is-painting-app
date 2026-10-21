@@ -6,6 +6,7 @@ import { isReferralSource } from "@/lib/lead-source";
 import { TERMINAL_PIPELINE_STAGES } from "@/lib/pipeline-stages";
 import { OpportunityStage } from "@prisma/client";
 import { opportunityStatusForStage, isTerminalStage } from "@/lib/pipeline-sync";
+import { jobCompletionReportingDate, summarizeCompletedJobs } from "@/lib/job-completion";
 
 const OpportunityStageZ = z.nativeEnum(OpportunityStage);
 
@@ -490,7 +491,7 @@ export const customersRouter = router({
             createdAt: true,
             startDate: true,
             endDate: true,
-            updatedAt: true,
+            completedAt: true,
           },
           orderBy: { createdAt: "desc" },
         },
@@ -664,9 +665,10 @@ export const customersRouter = router({
       if (job.startDate) {
         timeline.push({ at: job.startDate, type: "job_started", title: "Job started", description: job.name });
       }
-      if (job.endDate || job.status === "completed") {
+      const completionDate = jobCompletionReportingDate(job);
+      if (job.status === "completed" && completionDate) {
         timeline.push({
-          at: job.endDate || job.updatedAt,
+          at: completionDate,
           type: "job_completed",
           title: "Job completed",
           description: job.name,
@@ -774,6 +776,7 @@ export const customersRouter = router({
         totalProfit,
         averageJobSize,
         jobsCompleted,
+        ...summarizeCompletedJobs(customer.jobs),
         winRate: percentage(convertedProposals, totalProposals),
         averagePaymentTime: average(paymentTimes),
         totalJobs,

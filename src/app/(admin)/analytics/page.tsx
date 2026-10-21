@@ -122,6 +122,16 @@ export default function BusinessAnalyticsPage() {
           </SectionCard>
         ) : null}
 
+        <SectionCard title="Job Completions" icon={Briefcase} subtitle="Completed Date takes priority over legacy End Date. Missing dates are not assigned to a month.">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <KpiCard label="Completed jobs (selected period)" value={formatCount(data?.dashboard.operations.completedJobs)} />
+            <KpiCard label="Completed jobs (all time)" value={formatCount(data?.jobCompletions.totalCompletedJobs)} />
+            <KpiCard label="Completed value (all time)" value={formatCurrency(data?.jobCompletions.totalCompletedValue)} />
+            <KpiCard label="Completion date missing (all time)" value={formatCount(data?.jobCompletions.completionDateMissingCount)} />
+            <KpiCard label="Completion date missing value (all time)" value={formatCurrency(data?.jobCompletions.completionDateMissingValue)} />
+          </div>
+        </SectionCard>
+
         <div className="grid gap-4 xl:grid-cols-2">
           <SectionCard title="Revenue Analytics" icon={DollarSign} subtitle="Revenue by month and year, plus growth context.">
             <div className="grid gap-4 lg:grid-cols-2">
