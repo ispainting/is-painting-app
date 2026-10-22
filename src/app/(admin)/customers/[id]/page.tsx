@@ -1,11 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Timeline } from "@/components/ui/Timeline";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils";
+import { isReferralSource, leadSourceOptionsWithLegacy } from "@/lib/lead-source";
+import { opportunityStageLabel, isTerminalStage } from "@/lib/pipeline-sync";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { api } from "@/trpc/react";
 import {
   BellRing,
@@ -192,6 +195,21 @@ export default function CustomerProfilePage() {
 
   const payload = profile.data as any;
   const customer = payload?.customer as any;
+  const router = useRouter();
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [confirmTestCleanup, setConfirmTestCleanup] = useState(false);
+  const removeCustomer = api.customers.remove.useMutation({
+    onSuccess: () => {
+      toast.success("Customer deleted");
+      utils.customers.list.invalidate();
+      utils.opportunities.list.invalidate();
+      utils.jobs.list.invalidate();
+      utils.business.analytics.invalidate();
+      utils.reports.dashboard.invalidate();
+      router.push("/customers");
+    },
+    onError: (error) => toast.error(error.message),
+  });
 
   useEffect(() => {
     if (!customer) return;
@@ -325,6 +343,13 @@ export default function CustomerProfilePage() {
         <StatCard label="Active Jobs" value={String(payload.stats.activeJobs)} />
       </div>
 
+      {payload.stats.completionDateMissingCount > 0 && (
+        <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          Completion date missing: {payload.stats.completionDateMissingCount} completed Jobs ({formatCurrency(payload.stats.completionDateMissingValue)}).
+          {" "}Included in Jobs Completed totals, but not dated completion history. Enter the real completion date on each Job.
+        </div>
+      )}
+
       <div className="card p-3">
         <div className="flex gap-2 overflow-x-auto pb-1">
           {TABS.map((tab) => (
@@ -350,7 +375,7 @@ export default function CustomerProfilePage() {
                 <Info label="Preferred Communication" value={customer.preferredCommunication || "Not set"} />
                 <Info label="Lead Source" value={customer.leadSource || customer.source || "Not set"} />
                 <Info label="Referral Source" value={customer.referralSource || "Not set"} />
-                <Info label="Status" value={customer.status || "Not set"} />
+                <Info label="Pipeline Stage" value={pipelineStageForCustomer(customer)} />
                 <Info label="Last Contact" value={formatDate(payload.stats.lastContactAt)} />
                 <Info label="Next Follow-up" value={formatDate(payload.stats.nextFollowUpAt)} />
                 <Info label="Primary Address" value={formatAddress(customer)} />
@@ -426,9 +451,22 @@ export default function CustomerProfilePage() {
               <Input label="Primary Contact" value={profileDraft.contactName} onChange={(value) => setProfileDraft({ ...profileDraft, contactName: value })} />
               <Input label="Primary Email" value={profileDraft.email} onChange={(value) => setProfileDraft({ ...profileDraft, email: value })} />
               <Input label="Primary Phone" value={profileDraft.phone} onChange={(value) => setProfileDraft({ ...profileDraft, phone: value })} />
-              <Input label="Status" value={profileDraft.status} onChange={(value) => setProfileDraft({ ...profileDraft, status: value })} />
-              <Input label="Lead Source" value={profileDraft.leadSource} onChange={(value) => setProfileDraft({ ...profileDraft, leadSource: value })} />
-              <Input label="Referral Source" value={profileDraft.referralSource} onChange={(value) => setProfileDraft({ ...profileDraft, referralSource: value })} />
+              <div>
+                <label className="label">Lead Source</label>
+                <select
+                  className="input"
+                  value={profileDraft.leadSource}
+                  onChange={(event) => setProfileDraft({ ...profileDraft, leadSource: event.target.value })}
+                >
+                  <option value="">Not set</option>
+                  {leadSourceOptionsWithLegacy(profileDraft.leadSource).map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </div>
+              {isReferralSource(profileDraft.leadSource) ? (
+                <Input label="Referral Name" value={profileDraft.referralSource} onChange={(value) => setProfileDraft({ ...profileDraft, referralSource: value })} />
+              ) : null}
               <Input label="Preferred Communication" value={profileDraft.preferredCommunication} onChange={(value) => setProfileDraft({ ...profileDraft, preferredCommunication: value })} />
               <Input label="Last Contact" type="date" value={profileDraft.lastContactAt} onChange={(value) => setProfileDraft({ ...profileDraft, lastContactAt: value })} />
               <Input label="Next Follow-up" type="date" value={profileDraft.nextFollowUpAt} onChange={(value) => setProfileDraft({ ...profileDraft, nextFollowUpAt: value })} />
@@ -779,8 +817,42 @@ export default function CustomerProfilePage() {
           </div>
         </SectionCard>
       ) : null}
+
+      <ConfirmDialog
+        open={deleteOpen}
+        title="Delete Customer"
+        destructive
+        confirmLabel={confirmTestCleanup ? "Delete test customer and related test records" : "Delete Customer"}
+        isPending={removeCustomer.isPending}
+        onCancel={() => {
+          setDeleteOpen(false);
+          setConfirmTestCleanup(false);
+        }}
+        onConfirm={() => removeCustomer.mutate({ id, confirmTestGraphCleanup: confirmTestCleanup })}
+        message={
+          <div className="space-y-2">
+            <p>
+              Delete <span className="font-semibold">{customer.name}</span>?
+            </p>
+            <p>
+              Linked records: {(customer.opportunities || []).length} opportunity(ies), {(customer.proposals || []).length} proposal(s),{" "}
+              {(customer.jobs || []).length} job(s), {(customer.invoices || []).length} invoice(s).
+            </p>
+            <p>Protected financial/work records (invoices, payments, expenses, time entries, attachments, automation history) block deletion.</p>
+            <label className="flex items-center gap-2 text-sm font-medium text-rose-700">
+              <input type="checkbox" checked={confirmTestCleanup} onChange={(event) => setConfirmTestCleanup(event.target.checked)} />
+              Delete test customer and related test records
+            </label>
+          </div>
+        }
+      />
     </div>
   );
+}
+
+function pipelineStageForCustomer(customer: any): string {
+  const open = (customer?.opportunities || []).find((o: any) => o.status === "open" && !isTerminalStage(o.stage));
+  return open ? opportunityStageLabel(open.stage) : "No open opportunity";
 }
 
 function buildProfileDraft(customer: any, stats: any): ProfileDraft {
@@ -1017,15 +1089,39 @@ function PaymentTable({ payments }: { payments: any[] }) {
 }
 
 function PipelineCards({ opportunities }: { opportunities: any[] }) {
+  const utils = api.useUtils();
+  const updateOpportunity = api.opportunities.update.useMutation({
+    onSuccess: async () => {
+      await Promise.all([
+        utils.customers.profile.invalidate(),
+        utils.opportunities.list.invalidate(),
+        utils.business.analytics.invalidate(),
+        utils.reports.dashboard.invalidate(),
+      ]);
+      toast.success("Lead received date updated");
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   return (
     <SectionCard title="Opportunities">
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
         {opportunities.length ? opportunities.map((opportunity) => (
           <div key={opportunity.id} className="rounded-xl border border-slate-200 p-4">
             <div className="font-semibold text-slate-900">{opportunity.name}</div>
-            <div className="mt-1 text-sm text-slate-500">{opportunity.stage.replace(/_/g, " ")} • {opportunity.status}</div>
+            <div className="mt-1 text-sm text-slate-500">{opportunityStageLabel(opportunity.stage)} • {opportunity.status}</div>
             <div className="mt-3 text-sm text-slate-600">Lead value: {formatCurrency(opportunity.leadValue)}</div>
             <div className="text-sm text-slate-600">Assigned to: {opportunity.assignedTo?.name || "Unassigned"}</div>
+            <div className="mt-2">
+              <label className="label">Lead received</label>
+              <input
+                type="date"
+                className="input"
+                value={opportunity.leadReceivedAt ? new Date(opportunity.leadReceivedAt).toISOString().slice(0, 10) : ""}
+                onChange={(event) => updateOpportunity.mutate({ id: opportunity.id, data: { leadReceivedAt: event.target.value ? new Date(event.target.value) : null } })}
+                disabled={updateOpportunity.isPending}
+              />
+            </div>
             <div className="mt-2 text-xs text-slate-500">Created {formatDate(opportunity.createdAt)}</div>
           </div>
         )) : <EmptyState text="No opportunities linked to this customer yet." />}

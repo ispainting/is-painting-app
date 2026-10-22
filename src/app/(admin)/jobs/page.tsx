@@ -6,15 +6,32 @@ import { useState } from "react";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { jobCanonicalTotal } from "@/lib/job-total";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
+import { buildJobsListInputForPageFilter, type JobsPageFilter } from "@/lib/job-filters";
+import { ExportPdfButton } from "@/components/ExportPdfButton";
+import { jobsPdf } from "@/lib/pdf-export-data";
+
+const JOB_FILTERS: Array<{ key: JobsPageFilter; label: string }> = [
+  { key: "active", label: "Active" },
+  { key: "estimate", label: "Estimates" },
+  { key: "sent", label: "Sent" },
+  { key: "approved", label: "Approved" },
+  { key: "on_hold", label: "On Hold" },
+  { key: "completed", label: "Completed" },
+  { key: "cancelled", label: "Cancelled" },
+  { key: "archived", label: "Archived" },
+  { key: "all", label: "All" },
+];
 
 export default function JobsPage() {
   const router = useRouter();
   const utils = api.useUtils();
-  const [visibility, setVisibility] = useState<"active" | "archived" | "all">("active");
-  const { data, isLoading } = api.jobs.list.useQuery({ visibility });
+  const [filter, setFilter] = useState<JobsPageFilter>("active");
+  const { data, isLoading, isFetching, isError } = api.jobs.list.useQuery(buildJobsListInputForPageFilter(filter));
+  const counts = api.jobs.statusCounts.useQuery();
   const [open, setOpen] = useState(false);
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustomerResults, setShowCustomerResults] = useState(false);
@@ -28,8 +45,36 @@ export default function JobsPage() {
     onSuccess: () => {
       toast.success("Job archived");
       utils.jobs.list.invalidate();
+      utils.jobs.statusCounts.invalidate();
+      utils.jobs.clockable.invalidate();
+      utils.business.analytics.invalidate();
+      utils.reports.dashboard.invalidate();
       setConfirmDeleteOpen(false);
       setSelectedJob(null);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const restoreJob = api.jobs.restore.useMutation({
+    onSuccess: () => {
+      toast.success("Job restored");
+      utils.jobs.list.invalidate();
+      utils.jobs.statusCounts.invalidate();
+      utils.jobs.clockable.invalidate();
+      utils.business.analytics.invalidate();
+      utils.reports.dashboard.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const [permanentTarget, setPermanentTarget] = useState<{ id: number; name: string } | null>(null);
+  const removeJob = api.jobs.remove.useMutation({
+    onSuccess: () => {
+      toast.success("Job permanently deleted");
+      utils.jobs.list.invalidate();
+      utils.jobs.statusCounts.invalidate();
+      utils.jobs.clockable.invalidate();
+      utils.business.analytics.invalidate();
+      utils.reports.dashboard.invalidate();
+      setPermanentTarget(null);
     },
     onError: (e) => toast.error(e.message),
   });
@@ -37,6 +82,10 @@ export default function JobsPage() {
     onSuccess: () => {
       toast.success("Job created");
       utils.jobs.list.invalidate();
+      utils.jobs.statusCounts.invalidate();
+      utils.jobs.clockable.invalidate();
+      utils.business.analytics.invalidate();
+      utils.reports.dashboard.invalidate();
       setOpen(false);
     },
     onError: (e) => toast.error(e.message),
@@ -85,6 +134,10 @@ export default function JobsPage() {
     setShowCustomerResults(false);
   };
 
+  const activeFilter = JOB_FILTERS.find((option) => option.key === filter)!;
+  const emptyStateLabel =
+    filter === "all" ? "No jobs yet." : filter === "archived" ? "No archived jobs." : `No ${activeFilter.label.toLowerCase()} jobs.`;
+
   return (
     <>
       <PageHeader
@@ -92,17 +145,35 @@ export default function JobsPage() {
         description="Estimates and active jobs"
         actions={
           <div className="flex items-center gap-2">
-            <select className="input w-auto" value={visibility} onChange={(e) => setVisibility(e.target.value as typeof visibility)}>
-              <option value="active">Active</option>
-              <option value="archived">Archived</option>
-              <option value="all">All</option>
-            </select>
+            <ExportPdfButton disabled={isFetching || isError || !data} build={() => jobsPdf(data ?? [], { filters: [["Status / Visibility", activeFilter.label]] })} />
             <button onClick={() => { setOpen(true); setShowCustomerResults(false); }} className="btn btn-primary">
               <Plus className="w-4 h-4 mr-1" /> New job
             </button>
           </div>
         }
       />
+
+      <div className="mb-4 flex gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible" role="tablist" aria-label="Filter jobs by status">
+        {JOB_FILTERS.map(({ key, label }) => {
+          const count = counts.data?.[key];
+          const isSelected = filter === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={isSelected}
+              onClick={() => setFilter(key)}
+              className={`btn shrink-0 whitespace-nowrap ${isSelected ? "btn-primary" : "btn-secondary"}`}
+            >
+              {label}
+              <span className={`ml-1.5 rounded-full px-1.5 text-xs ${isSelected ? "bg-white/20" : "bg-slate-200 text-slate-600"}`}>
+                {count ?? "…"}
+              </span>
+            </button>
+          );
+        })}
+      </div>
 
       <div className="card overflow-hidden">
         <table className="w-full text-sm">
@@ -121,7 +192,7 @@ export default function JobsPage() {
             {isLoading ? (
               <tr><td colSpan={7} className="px-4 py-6 text-slate-500">Loading…</td></tr>
             ) : data?.length === 0 ? (
-              <tr><td colSpan={7} className="px-4 py-6 text-slate-500">No jobs yet.</td></tr>
+              <tr><td colSpan={7} className="px-4 py-6 text-slate-500">{emptyStateLabel}</td></tr>
             ) : (
               data?.map((j) => (
                 <tr
@@ -152,7 +223,7 @@ export default function JobsPage() {
                   <td className="px-4 py-2">
                     <span className="badge bg-slate-100 text-slate-700 capitalize">{j.status}</span>
                   </td>
-                  <td className="px-4 py-2 text-right">{formatCurrency(Number(j.totalEstimate))}</td>
+                  <td className="px-4 py-2 text-right">{formatCurrency(jobCanonicalTotal(j))}</td>
                   <td className="px-4 py-2 text-slate-500">{formatDate(j.createdAt)}</td>
                   <td className="px-4 py-2 text-right">
                     <div className="inline-flex items-center gap-2">
@@ -166,17 +237,42 @@ export default function JobsPage() {
                       >
                         Edit
                       </button>
-                      <button
-                        type="button"
-                        className="btn bg-rose-600 text-white hover:bg-rose-700"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setSelectedJob({ id: j.id, name: j.name });
-                          setConfirmDeleteOpen(true);
-                        }}
-                      >
-                        Delete
-                      </button>
+                      {j.deletedAt ? (
+                        <>
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              restoreJob.mutate({ id: j.id });
+                            }}
+                          >
+                            Restore
+                          </button>
+                          <button
+                            type="button"
+                            className="btn bg-rose-600 text-white hover:bg-rose-700"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setPermanentTarget({ id: j.id, name: j.name });
+                            }}
+                          >
+                            Delete Permanently
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn bg-rose-600 text-white hover:bg-rose-700"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedJob({ id: j.id, name: j.name });
+                            setConfirmDeleteOpen(true);
+                          }}
+                        >
+                          Archive
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -293,9 +389,9 @@ export default function JobsPage() {
 
       <ConfirmDialog
         open={confirmDeleteOpen}
-        title="Delete Job"
-        message={`Are you sure you want to delete this job? This cannot be undone.`}
-        confirmLabel="Delete Job"
+        title="Archive Job"
+        message={`Archive "${selectedJob?.name}"? It moves to Archived and can be restored anytime.`}
+        confirmLabel="Archive Job"
         destructive
         isPending={deleteJob.isPending}
         onCancel={() => {
@@ -305,6 +401,20 @@ export default function JobsPage() {
         onConfirm={() => {
           if (!selectedJob) return;
           deleteJob.mutate({ id: selectedJob.id });
+        }}
+      />
+
+      <ConfirmDialog
+        open={permanentTarget !== null}
+        title="Delete Job Permanently"
+        message={`Permanently delete "${permanentTarget?.name}"? Only zero-history jobs can be deleted; jobs with invoices, payments, expenses, or time entries are protected. This cannot be undone.`}
+        confirmLabel="Delete Permanently"
+        destructive
+        isPending={removeJob.isPending}
+        onCancel={() => setPermanentTarget(null)}
+        onConfirm={() => {
+          if (!permanentTarget) return;
+          removeJob.mutate({ id: permanentTarget.id });
         }}
       />
     </>

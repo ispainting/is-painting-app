@@ -2,6 +2,13 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, adminProcedure } from "../trpc";
 import { computeEstimate, nextNumber } from "@/lib/utils";
+import { calculateJobTracking } from "@/lib/job-tracking";
+import { buildJobsListWhere, employeeAssignmentFilter, JOB_STATUS_VALUES, type JobStatusValue } from "@/lib/job-filters";
+import { applyOpportunityTransition, resolveJobStatusStage } from "@/lib/pipeline-sync";
+import { linkJobOpportunity, validateOpportunityCustomer } from "@/lib/opportunity-links";
+import { synchronizeJobCompletion } from "@/lib/job-completion";
+import { businessDateSchema } from "@/lib/job-lifecycle";
+import { Prisma } from "@prisma/client";
 
 const JobStatusZ = z.enum([
   "estimate", "sent", "approved", "active", "completed", "on_hold", "cancelled",
@@ -39,6 +46,9 @@ const jobInput = z.object({
 const jobUpdateInput = jobInput.partial().extend({
   contractAmount: z.number().min(0).optional(),
   totalEstimate: z.number().min(0).optional(),
+  leadReceivedAt: z.coerce.date().nullable().optional(),
+  proposalSentAt: z.coerce.date().nullable().optional(),
+  workStartedAt: z.coerce.date().nullable().optional(),
 });
 
 const paintColorInput = z.object({
@@ -54,29 +64,54 @@ export const jobsRouter = router({
   list: protectedProcedure
     .input(z.object({ status: JobStatusZ.optional(), visibility: JobVisibilityZ.optional() }).optional())
     .query(async ({ ctx, input }) => {
-      // Employees only see assigned jobs
-      const where: any = {};
-      if (input?.status) where.status = input.status;
-      const visibility = input?.visibility ?? "active";
-      if (visibility === "active") where.deletedAt = null;
-      if (visibility === "archived") where.deletedAt = { not: null };
-      if (ctx.session?.role === "employee") {
-        where.assignments = { some: { userId: ctx.session.userId } };
-      }
+      const where = buildJobsListWhere(input, {
+        isEmployee: ctx.session?.role === "employee",
+        employeeUserId: ctx.session?.userId,
+      });
       return ctx.prisma.job.findMany({
         where,
-        include: { customer: true },
+        include: {
+          customer: true,
+          invoices: { select: { status: true, total: true } },
+          payments: { select: { status: true, amount: true } },
+        },
         orderBy: { createdAt: "desc" },
         take: 200,
       });
     }),
 
+  // Exact counts per status chip on the Jobs page; uses count/groupBy instead
+  // of loading every job so counts stay cheap regardless of table size.
+  statusCounts: protectedProcedure.query(async ({ ctx }) => {
+    const accessCtx = { isEmployee: ctx.session?.role === "employee", employeeUserId: ctx.session?.userId };
+    const restriction = employeeAssignmentFilter(accessCtx);
+
+    const [all, archived, statusGroups] = await Promise.all([
+      ctx.prisma.job.count({ where: { ...restriction, deletedAt: null } }),
+      ctx.prisma.job.count({ where: { ...restriction, deletedAt: { not: null } } }),
+      ctx.prisma.job.groupBy({
+        by: ["status"],
+        where: { ...restriction, deletedAt: null },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const counts = Object.fromEntries(JOB_STATUS_VALUES.map((status) => [status, 0])) as Record<JobStatusValue, number>;
+    for (const group of statusGroups) counts[group.status as JobStatusValue] = group._count._all;
+
+    return { all, archived, ...counts };
+  }),
+
   clockable: protectedProcedure.query(async ({ ctx }) => {
+    // Exactly the Jobs → Active tab definition (status active, not archived),
+    // intentionally WITHOUT the employee-assignment restriction: every active
+    // employee sees every active job. The two screens can never disagree.
+    const where = buildJobsListWhere(
+      { status: "active", visibility: "active" },
+      { isEmployee: false }
+    );
     return ctx.prisma.job.findMany({
-      where: {
-        deletedAt: null,
-        status: { in: ["estimate", "sent", "approved", "active"] },
-      },
+      where: where as never,
       orderBy: [{ status: "asc" }, { name: "asc" }],
       select: {
         id: true,
@@ -109,8 +144,14 @@ export const jobsRouter = router({
         labor: true,
         paintColors: { orderBy: { createdAt: "asc" } },
         assignments: { include: { user: true } },
-        invoices: true,
-        payments: true,
+        invoices: {
+          include: {
+            lineItems: { orderBy: { sortOrder: "asc" } },
+            payments: { orderBy: { dateReceived: "desc" } },
+          },
+          orderBy: { createdAt: "desc" },
+        },
+        payments: { include: { invoice: { select: { invoiceNumber: true } } }, orderBy: { dateReceived: "desc" } },
         expenses: {
           include: {
             attachments: {
@@ -120,7 +161,7 @@ export const jobsRouter = router({
           },
           orderBy: { expenseDate: "desc" },
         },
-        timeEntries: { include: { user: true }, orderBy: { clockIn: "desc" }, take: 50 },
+        timeEntries: { include: { user: true }, orderBy: { clockIn: "desc" } },
       },
     });
     if (!job) throw new TRPCError({ code: "NOT_FOUND" });
@@ -130,7 +171,11 @@ export const jobsRouter = router({
     ) {
       throw new TRPCError({ code: "FORBIDDEN" });
     }
-    return job;
+    const trackingSummary = calculateJobTracking(job.timeEntries, job.id);
+    return {
+      ...job,
+      trackingSummary,
+    };
   }),
 
   create: adminProcedure.input(jobInput).mutation(async ({ ctx, input }) => {
@@ -173,6 +218,9 @@ export const jobsRouter = router({
     .mutation(async ({ ctx, input }) => {
       const existing = await ctx.prisma.job.findUnique({ where: { id: input.id } });
       if (!existing) throw new TRPCError({ code: "NOT_FOUND" });
+      if (existing.opportunityId && input.data.customerId !== undefined) {
+        await validateOpportunityCustomer(ctx.prisma, existing.opportunityId, input.data.customerId);
+      }
 
       const merged = { ...existing, ...input.data };
       const calc = computeEstimate({
@@ -207,29 +255,95 @@ export const jobsRouter = router({
       };
 
       const shouldRecomputeTotal = !existing.budgetLocked && input.data.totalEstimate === undefined;
-      return ctx.prisma.job.update({
-        where: { id: input.id },
-        data: shouldRecomputeTotal
-          ? { ...normalizedData, subtotalBeforeMarkup: calc.subtotalBeforeMarkup, totalEstimate: calc.totalEstimate }
-          : normalizedData,
-      });
+      return ctx.prisma.$transaction(async (tx) => {
+        const updated = await tx.job.update({
+          where: { id: input.id },
+          data: shouldRecomputeTotal
+            ? { ...normalizedData, subtotalBeforeMarkup: calc.subtotalBeforeMarkup, totalEstimate: calc.totalEstimate }
+            : normalizedData,
+        });
+        if (input.data.workStartedAt != null) {
+          await applyOpportunityTransition(tx, existing.opportunityId, "service_delivery", { effectiveAt: input.data.workStartedAt, changedById: ctx.session.userId });
+        }
+        if (input.data.contractAmount !== undefined || input.data.totalEstimate !== undefined || shouldRecomputeTotal) {
+          await synchronizeJobCompletion(tx, input.id, ctx.session.userId);
+        }
+        return updated;
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    }),
+
+  updateLifecycleDates: adminProcedure
+    .input(z.object({
+      id: z.number(),
+      leadReceivedAt: z.coerce.date().nullable().optional(),
+      proposalSentAt: z.coerce.date().nullable().optional(),
+      workStartedAt: z.coerce.date().nullable().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return ctx.prisma.$transaction(async (tx) => {
+        const updated = await tx.job.update({
+          where: { id: input.id },
+          data: {
+            leadReceivedAt: input.leadReceivedAt,
+            proposalSentAt: input.proposalSentAt,
+            workStartedAt: input.workStartedAt,
+          },
+        });
+        if (input.workStartedAt != null) {
+          await applyOpportunityTransition(tx, updated.opportunityId, "service_delivery", { effectiveAt: input.workStartedAt, changedById: ctx.session.userId });
+        }
+        return updated;
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     }),
 
   setStatus: adminProcedure
-    .input(z.object({ id: z.number(), status: JobStatusZ }))
+    .input(z.object({ id: z.number(), status: JobStatusZ, workStartedAt: z.coerce.date().optional(), completedAt: businessDateSchema.optional() }))
     .mutation(async ({ ctx, input }) => {
-      const data: any = { status: input.status };
-      if (input.status === "sent") data.sentAt = new Date();
-      if (input.status === "approved") {
-        const j = await ctx.prisma.job.findUnique({ where: { id: input.id } });
-        if (j) {
+      return ctx.prisma.$transaction(async (tx) => {
+        const existing = await tx.job.findUnique({
+          where: { id: input.id },
+          select: { opportunityId: true, workStartedAt: true, totalEstimate: true, completedAt: true },
+        });
+        if (!existing) throw new TRPCError({ code: "NOT_FOUND" });
+        const data: Prisma.JobUpdateInput = { status: input.status };
+        if (input.status === "sent") data.sentAt = new Date();
+        if (input.status === "approved") {
           data.approvedAt = new Date();
-          data.contractAmount = j.totalEstimate;
+          data.contractAmount = existing.totalEstimate;
           data.budgetLocked = true;
         }
-      }
-      return ctx.prisma.job.update({ where: { id: input.id }, data });
+        if (input.status === "active" && !existing.workStartedAt && input.workStartedAt) data.workStartedAt = input.workStartedAt;
+        if (input.status === "completed") {
+          data.completedAt = input.completedAt ?? existing.completedAt ?? new Date();
+          data.completionSource = "manual";
+          data.completionPreviousStatus = null;
+        } else {
+          data.completedAt = null;
+          data.completionSource = null;
+          data.completionPreviousStatus = null;
+        }
+        const updated = await tx.job.update({ where: { id: input.id }, data });
+        await applyOpportunityTransition(tx, existing.opportunityId, resolveJobStatusStage(input.status), {
+          allowBackward: input.status === "on_hold",
+          changedById: ctx.session.userId,
+          effectiveAt: input.status === "active" ? input.workStartedAt : input.status === "completed" ? updated.completedAt ?? undefined : undefined,
+        });
+        if (input.status === "approved") await synchronizeJobCompletion(tx, input.id, ctx.session.userId);
+        return updated;
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     }),
+
+  setCompletionDate: adminProcedure
+    .input(z.object({ id: z.number(), completedAt: businessDateSchema }))
+    .mutation(({ ctx, input }) => ctx.prisma.$transaction(async (tx) => {
+      const job = await tx.job.findUnique({ where: { id: input.id }, select: { status: true } });
+      if (!job) throw new TRPCError({ code: "NOT_FOUND" });
+      if (job.status !== "completed") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Only a completed Job can have its completion date edited." });
+      return tx.job.update({
+        where: { id: input.id },
+        data: { completedAt: input.completedAt, completionSource: "manual", completionPreviousStatus: null },
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })),
 
   assignEmployee: adminProcedure
     .input(z.object({ jobId: z.number(), userId: z.number() }))
@@ -240,6 +354,13 @@ export const jobsRouter = router({
         create: { userId: input.userId, jobId: input.jobId },
       })
     ),
+
+  setOpportunity: adminProcedure
+    .input(z.object({ id: z.number(), opportunityId: z.number().int().positive().nullable() }))
+    .mutation(({ ctx, input }) => ctx.prisma.$transaction(
+      (tx) => linkJobOpportunity(tx, input.id, input.opportunityId),
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+    )),
 
   unassignEmployee: adminProcedure
     .input(z.object({ jobId: z.number(), userId: z.number() }))
@@ -345,4 +466,46 @@ export const jobsRouter = router({
   archive: adminProcedure.input(z.object({ id: z.number() })).mutation(({ ctx, input }) =>
     ctx.prisma.job.update({ where: { id: input.id }, data: { deletedAt: new Date() } })
   ),
+
+  restore: adminProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
+    const job = await ctx.prisma.job.findUnique({ where: { id: input.id }, select: { id: true, deletedAt: true } });
+    if (!job) throw new TRPCError({ code: "NOT_FOUND", message: "Job not found." });
+    return ctx.prisma.job.update({ where: { id: input.id }, data: { deletedAt: null } });
+  }),
+
+  /**
+   * Permanent deletion, admin-only, for archived zero-history jobs only.
+   * Blocked when the job has invoices, payments, expenses, or time entries.
+   * Child operational records (materials, labor, paint colors, assignments)
+   * cascade via schema onDelete: Cascade. Repeating deletion returns NOT_FOUND.
+   */
+  remove: adminProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
+    const job = await ctx.prisma.job.findUnique({
+      where: { id: input.id },
+      select: {
+        id: true,
+        name: true,
+        deletedAt: true,
+        _count: { select: { invoices: true, payments: true, expenses: true, timeEntries: true } },
+      },
+    });
+    if (!job) throw new TRPCError({ code: "NOT_FOUND", message: "Job not found." });
+
+    const blockers: string[] = [];
+    if (job._count.invoices > 0) blockers.push(`${job._count.invoices} invoice(s)`);
+    if (job._count.payments > 0) blockers.push(`${job._count.payments} payment(s)`);
+    if (job._count.expenses > 0) blockers.push(`${job._count.expenses} expense(s)`);
+    if (job._count.timeEntries > 0) blockers.push(`${job._count.timeEntries} time entrie(s)/payroll record(s)`);
+    if (blockers.length > 0) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: `Cannot permanently delete this job: it has ${blockers.join(", ")}. Accounting and work history is protected.`,
+      });
+    }
+
+    // Safe zero-history job: materials, labor, paint colors, and assignments
+    // cascade with the job row per the schema.
+    await ctx.prisma.job.delete({ where: { id: input.id } });
+    return { ok: true };
+  }),
 });

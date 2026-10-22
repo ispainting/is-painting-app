@@ -1,12 +1,19 @@
 import { endOfMonth, endOfQuarter, endOfYear, format, startOfMonth, startOfQuarter, startOfYear, subMonths, subYears } from "date-fns";
 import { z } from "zod";
 import { router, adminProcedure } from "../trpc";
+import { getLifecycleDate } from "@/lib/job-lifecycle";
+import { jobCanonicalTotal } from "@/lib/job-total";
+import { buildLeadSourceQualityReport } from "@/lib/lead-source-quality";
+import { businessRangeInMassachusetts } from "@/lib/employee-rate-resolver";
+import { selectOpenProposals } from "@/lib/open-pipeline";
+import { LEAD_SOURCE_OPTIONS, normalizeLeadSourceForReport } from "@/lib/lead-source";
+import { averageJobCompletionDurations, isJobCompletedInRange, summarizeCompletedJobs } from "@/lib/job-completion";
 
 const SURVIVAL_TARGET = 40_000;
 const MONTHLY_GOAL = 65_000;
 const CLOSE_RATE_BASELINE = 0.4;
 const DIRECT_EXPENSE_CATEGORIES = new Set(["materials", "labor", "subcontractor", "travel", "equipment"]);
-const SOURCE_BUCKETS = ["Google", "Google Business", "Facebook", "Instagram", "Website", "Referral", "Builder", "Repeat Customer", "Other", "Unknown"];
+const SOURCE_BUCKETS = [...LEAD_SOURCE_OPTIONS];
 
 const analyticsInput = z.object({
   periodType: z.enum(["month", "quarter", "year", "custom"]).default("month"),
@@ -47,18 +54,7 @@ function endOfQuarterFromMonth(year: number, quarter: number) {
 }
 
 function normalizeSource(source: string | null | undefined) {
-  const value = (source ?? "").trim();
-  if (!value) return "Unknown";
-  const lower = value.toLowerCase();
-  if (lower === "google") return "Google";
-  if (lower === "google business") return "Google Business";
-  if (lower === "facebook" || lower === "meta") return "Facebook";
-  if (lower === "instagram") return "Instagram";
-  if (lower === "website") return "Website";
-  if (lower === "referral") return "Referral";
-  if (lower === "builder") return "Builder";
-  if (lower === "repeat customer" || lower === "repeat_customer") return "Repeat Customer";
-  return SOURCE_BUCKETS.includes(value) ? value : "Other";
+  return normalizeLeadSourceForReport(source);
 }
 
 function isInRange(date: Date | null | undefined, start: Date, end: Date) {
@@ -87,7 +83,7 @@ function totalHours(entry: { paidHours: unknown; grossHours: unknown; hoursWorke
   return money(entry.paidHours ?? entry.grossHours ?? entry.hoursWorked ?? 0);
 }
 
-function payrollForEntries(entries: Array<{ user: { hourlyRate: unknown }; specialPayEnabled: boolean; isIslandJob: boolean; hourlyRateAdjustment: unknown; job: { specialPayEnabled: boolean; isIslandJob: boolean; hourlyRateAdjustment: unknown; travelPayEnabled: boolean; defaultTravelHours: unknown; travelRateType: string | null; customTravelRate: unknown } | null; paidHours: unknown; grossHours: unknown; hoursWorked: unknown; travelHours: unknown; userId: number; jobId: number | null; clockIn: Date }>) {
+function payrollForEntries(entries: Array<{ user: { hourlyRate: unknown }; hourlyRateSnapshot: unknown; specialPayEnabled: boolean; isIslandJob: boolean; hourlyRateAdjustment: unknown; job: { specialPayEnabled: boolean; isIslandJob: boolean; hourlyRateAdjustment: unknown; travelPayEnabled: boolean; defaultTravelHours: unknown; travelRateType: string | null; customTravelRate: unknown } | null; paidHours: unknown; grossHours: unknown; hoursWorked: unknown; travelHours: unknown; userId: number; jobId: number | null; clockIn: Date }>) {
   const grouped = new Map<string, typeof entries>();
   for (const entry of entries) {
     const key = `${entry.userId}:${entry.jobId ?? 0}:${entry.clockIn.toISOString().slice(0, 10)}`;
@@ -99,7 +95,7 @@ function payrollForEntries(entries: Array<{ user: { hourlyRate: unknown }; speci
   let total = 0;
   for (const group of grouped.values()) {
     const anchor = group[0];
-    const baseRate = money(anchor.user.hourlyRate);
+    const baseRate = money(anchor.hourlyRateSnapshot ?? anchor.user.hourlyRate);
     const specialPayEnabled = anchor.specialPayEnabled || anchor.isIslandJob || anchor.job?.specialPayEnabled || anchor.job?.isIslandJob;
     const adjustment = specialPayEnabled ? money(anchor.hourlyRateAdjustment ?? anchor.job?.hourlyRateAdjustment ?? 0) || ((anchor.isIslandJob || anchor.job?.isIslandJob) ? 2 : 0) : 0;
     const effectiveRate = baseRate + adjustment;
@@ -114,8 +110,7 @@ function payrollForEntries(entries: Array<{ user: { hourlyRate: unknown }; speci
 }
 
 function jobValue(job: { contractAmount: unknown; totalEstimate: unknown }) {
-  const contract = money(job.contractAmount);
-  return contract > 0 ? contract : money(job.totalEstimate);
+  return jobCanonicalTotal(job);
 }
 
 function calcRange(periodType: "month" | "quarter" | "year" | "custom", input: z.infer<typeof analyticsInput>, now: Date) {
@@ -230,8 +225,9 @@ async function loadBusinessHistory(prisma: any, start: Date, end: Date) {
       where: {
         deletedAt: null,
         OR: [
+          { status: "completed" },
           { createdAt: { gte: start, lte: end } },
-          { updatedAt: { gte: start, lte: end } },
+          { completedAt: { gte: start, lte: end } },
           { startDate: { gte: start, lte: end } },
           { endDate: { gte: start, lte: end } },
           { approvedAt: { gte: start, lte: end } },
@@ -245,23 +241,38 @@ async function loadBusinessHistory(prisma: any, start: Date, end: Date) {
         totalEstimate: true,
         startDate: true,
         endDate: true,
+        leadReceivedAt: true,
+        workStartedAt: true,
+        completedAt: true,
         createdAt: true,
-        updatedAt: true,
         customer: { select: { id: true, name: true, source: true } },
       },
     }),
     prisma.opportunity.findMany({
-      where: { createdAt: { gte: start, lte: end } },
+      where: { OR: [
+        { leadReceivedAt: { gte: start, lte: end } },
+        { leadReceivedAt: null, createdAt: { gte: start, lte: end } },
+        { outcomeAt: { gte: start, lte: end } },
+        { stageHistory: { some: { effectiveAt: { gte: start, lte: end } } } },
+      ] },
       select: {
         id: true,
         source: true,
         stage: true,
         status: true,
         leadValue: true,
+        lostValue: true,
+        archivedAt: true,
+        outcomeAt: true,
+        followUpAt: true,
+        stageHistory: { select: { newStage: true, effectiveAt: true } },
+        leadReceivedAt: true,
         createdAt: true,
-        updatedAt: true,
-        customer: { select: { id: true, name: true, source: true } },
-        job: { select: { id: true, name: true } },
+        customer: { select: { id: true, name: true, source: true, leadSource: true } },
+        job: { select: { id: true, name: true, contractAmount: true, totalEstimate: true, approvedAt: true } },
+        proposals: {
+          select: { id: true, status: true, totalAmount: true, createdAt: true, sentAt: true, approvedAt: true, deletedAt: true },
+        },
       },
     }),
     prisma.proposal.findMany({
@@ -281,6 +292,9 @@ async function loadBusinessHistory(prisma: any, start: Date, end: Date) {
         sentAt: true,
         approvedAt: true,
         updatedAt: true,
+        deletedAt: true,
+        opportunityId: true,
+        opportunity: { select: { job: { select: { id: true } } } },
         customer: { select: { id: true, name: true, source: true } },
       },
     }),
@@ -338,6 +352,7 @@ async function loadBusinessHistory(prisma: any, start: Date, end: Date) {
         specialPayEnabled: true,
         isIslandJob: true,
         hourlyRateAdjustment: true,
+        hourlyRateSnapshot: true,
         user: { select: { id: true, name: true, hourlyRate: true } },
         job: { select: { id: true, name: true, customer: { select: { id: true, name: true, source: true } }, contractAmount: true, totalEstimate: true } },
       },
@@ -402,11 +417,13 @@ function buildQuarterSeries(payments: any[], start: Date, end: Date) {
 }
 
 function currentPeriodMetrics(range: { start: Date; end: Date }, history: Awaited<ReturnType<typeof loadBusinessHistory>>) {
+  const opportunityRange = businessRangeInMassachusetts(range.start, range.end);
+  const completionRange = businessRangeInMassachusetts(range.start, range.end);
   const payments = history.payments.filter((item: any) => isInRange(item.dateReceived, range.start, range.end));
   const expenses = history.expenses.filter((item: any) => isInRange(item.expenseDate, range.start, range.end));
   const proposals = history.proposals.filter((item: any) => isInRange(item.createdAt, range.start, range.end) || isInRange(item.sentAt, range.start, range.end) || isInRange(item.updatedAt, range.start, range.end));
-  const opportunities = history.opportunities.filter((item: any) => isInRange(item.createdAt, range.start, range.end));
-  const jobs = history.jobs.filter((item: any) => isInRange(item.createdAt, range.start, range.end) || isInRange(item.startDate, range.start, range.end) || isInRange(item.endDate, range.start, range.end));
+  const opportunities = history.opportunities.filter((item: any) => isInRange(item.leadReceivedAt ?? item.createdAt, opportunityRange.start, opportunityRange.end));
+  const jobs = history.jobs.filter((item: any) => isInRange(getLifecycleDate(item, "leadReceivedAt") ?? item.createdAt, range.start, range.end) || isInRange(getLifecycleDate(item, "workStartedAt"), range.start, range.end) || isInRange(item.startDate, range.start, range.end) || isInRange(item.endDate, range.start, range.end) || isInRange(item.completedAt, range.start, range.end));
   const timeEntries = history.timeEntries.filter((item: any) => isInRange(item.clockIn, range.start, range.end));
 
   const revenue = payments.reduce((sum: number, payment: any) => sum + money(payment.amount), 0);
@@ -420,8 +437,9 @@ function currentPeriodMetrics(range: { start: Date; end: Date }, history: Awaite
   const netProfit = grossProfit - overheadExpenses;
   const profitMargin = revenue > 0 ? netProfit / revenue : null;
 
-  const openProposals = history.proposals.filter((proposal: any) => !["approved", "declined", "converted"].includes(proposal.status)).length;
-  const openProposalValue = history.proposals.filter((proposal: any) => !["approved", "declined", "converted"].includes(proposal.status)).reduce((sum: number, proposal: any) => sum + money(proposal.totalAmount), 0);
+  const openPipeline = selectOpenProposals(history.proposals);
+  const openProposals = openPipeline.length;
+  const openProposalValue = openPipeline.reduce((sum: number, proposal: any) => sum + money(proposal.totalAmount), 0);
   const wonProposals = history.proposals.filter((proposal: any) => ["approved", "converted"].includes(proposal.status));
   const lostProposals = history.proposals.filter((proposal: any) => proposal.status === "declined");
   const proposalsSent = proposals.filter((proposal: any) => isInRange(proposal.sentAt, range.start, range.end)).length;
@@ -434,7 +452,8 @@ function currentPeriodMetrics(range: { start: Date; end: Date }, history: Awaite
   const cashExpected = moneyCollected + outstandingInvoices;
 
   const activeJobs = history.jobs.filter((job: any) => ["approved", "active"].includes(job.status)).length;
-  const completedJobs = jobs.filter((job: any) => job.status === "completed").length;
+  const completedJobs = history.jobs.filter((job: any) => isJobCompletedInRange(job, completionRange.start, completionRange.end)).length;
+  const completionDurations = averageJobCompletionDurations(history.jobs, completionRange.start, completionRange.end);
   const openJobs = jobs.filter((job: any) => ["estimate", "sent", "approved", "active"].includes(job.status)).length;
   const weekStart = new Date(range.end);
   weekStart.setDate(weekStart.getDate() - weekStart.getDay());
@@ -453,7 +472,7 @@ function currentPeriodMetrics(range: { start: Date; end: Date }, history: Awaite
     pipeline: { openProposals, openProposalValue, expectedRevenue, conversionRate },
     cashFlow: { moneyCollected, outstandingInvoices, overdueInvoices: overdueInvoices.length, cashExpected },
     profit: { revenue, expenses: expensesTotal, payroll, estimatedNetProfit: netProfit, profitMargin },
-    operations: { activeJobs, completedJobs, openJobs, jobsStartingThisWeek, jobsEndingThisWeek, employeesWorkingToday, employeeHours },
+    operations: { activeJobs, completedJobs, openJobs, jobsStartingThisWeek, jobsEndingThisWeek, employeesWorkingToday, employeeHours, ...completionDurations, ...summarizeCompletedJobs(history.jobs) },
     proposalPerformance: {
       leadsReceived: opportunities.length,
       estimatesCreated: proposals.filter((proposal: any) => isInRange(proposal.createdAt, range.start, range.end)).length,
@@ -470,6 +489,7 @@ function currentPeriodMetrics(range: { start: Date; end: Date }, history: Awaite
 }
 
 function buildLeadSourceRows(range: { start: Date; end: Date }, history: Awaited<ReturnType<typeof loadBusinessHistory>>) {
+  const opportunityRange = businessRangeInMassachusetts(range.start, range.end);
   const sourceMap = new Map<string, { leads: number; estimates: number; proposals: number; won: number; proposalValue: number; revenue: number; jobValue: number; }>();
   for (const source of SOURCE_BUCKETS) sourceMap.set(source, { leads: 0, estimates: 0, proposals: 0, won: 0, proposalValue: 0, revenue: 0, jobValue: 0 });
 
@@ -479,10 +499,15 @@ function buildLeadSourceRows(range: { start: Date; end: Date }, history: Awaited
   };
 
   for (const opportunity of history.opportunities) {
-    if (!isInRange(opportunity.createdAt, range.start, range.end)) continue;
     const bucket = ensure(normalizeSource(opportunity.source ?? opportunity.customer?.source));
-    bucket.leads += 1;
-    if (opportunity.stage === "estimate_sent") bucket.estimates += 1;
+    if (isInRange(opportunity.leadReceivedAt ?? opportunity.createdAt, opportunityRange.start, opportunityRange.end)) {
+      bucket.leads += 1;
+    }
+    for (const historyEvent of opportunity.stageHistory) {
+      if (historyEvent.newStage === "estimate_sent" && isInRange(historyEvent.effectiveAt, opportunityRange.start, opportunityRange.end)) {
+        bucket.estimates += 1;
+      }
+    }
   }
 
   for (const proposal of history.proposals) {
@@ -553,7 +578,7 @@ function buildCustomerAnalytics(range: { start: Date; end: Date }, history: Awai
     const jobTotalHours = hoursByJob.get(entry.jobId) ?? 0;
     const jobRevenue = revenueByJob.get(entry.jobId) ?? 0;
     const allocatedRevenue = jobTotalHours > 0 ? jobRevenue * (hours / jobTotalHours) : 0;
-    payrollByJob.set(entry.jobId, (payrollByJob.get(entry.jobId) ?? 0) + (money(entry.user.hourlyRate) * hours));
+    payrollByJob.set(entry.jobId, (payrollByJob.get(entry.jobId) ?? 0) + (money(entry.hourlyRateSnapshot ?? entry.user.hourlyRate) * hours));
     const customerId = entry.job?.customer?.id;
     if (!customerId) continue;
     const existing = revenueByCustomer.get(customerId) ?? { name: entry.job.customer.name, revenue: 0, jobs: 0, source: entry.job.customer.source ?? null };
@@ -563,7 +588,7 @@ function buildCustomerAnalytics(range: { start: Date; end: Date }, history: Awai
   }
 
   for (const job of history.jobs) {
-    if (!isInRange(job.createdAt, range.start, range.end) && !isInRange(job.startDate, range.start, range.end) && !isInRange(job.endDate, range.start, range.end)) continue;
+    if (!isInRange(getLifecycleDate(job, "leadReceivedAt") ?? job.createdAt, range.start, range.end) && !isInRange(getLifecycleDate(job, "workStartedAt"), range.start, range.end) && !isInRange(job.startDate, range.start, range.end) && !isInRange(job.endDate, range.start, range.end) && !isInRange(job.completedAt, range.start, range.end)) continue;
     const revenue = revenueByJob.get(job.id) ?? 0;
     const expenses = expenseByJob.get(job.id) ?? 0;
     const payroll = payrollByJob.get(job.id) ?? 0;
@@ -584,7 +609,7 @@ function buildCustomerAnalytics(range: { start: Date; end: Date }, history: Awai
 
   const repeatCustomers = topCustomers.filter((customer) => customer.jobs > 1).length;
   const largestJobs = history.jobs
-    .filter((job: any) => isInRange(job.createdAt, range.start, range.end) || isInRange(job.startDate, range.start, range.end) || isInRange(job.endDate, range.start, range.end))
+    .filter((job: any) => isInRange(getLifecycleDate(job, "leadReceivedAt") ?? job.createdAt, range.start, range.end) || isInRange(getLifecycleDate(job, "workStartedAt"), range.start, range.end) || isInRange(job.startDate, range.start, range.end) || isInRange(job.endDate, range.start, range.end) || isInRange(job.completedAt, range.start, range.end))
     .map((job: any) => ({ name: job.name, customer: job.customer.name, value: jobValue(job) }))
     .sort((a: any, b: any) => b.value - a.value)
     .slice(0, 10);
@@ -613,7 +638,7 @@ function buildEmployeeAnalytics(range: { start: Date; end: Date }, history: Awai
     const jobHours = hoursByJob.get(entry.jobId) ?? 0;
     const jobRevenue = revenueByJob.get(entry.jobId) ?? 0;
     const revenueShare = jobHours > 0 ? jobRevenue * (hours / jobHours) : 0;
-    const payrollShare = money(entry.user.hourlyRate) * hours;
+    const payrollShare = money(entry.hourlyRateSnapshot ?? entry.user.hourlyRate) * hours;
     const existing = employeeMap.get(entry.userId) ?? { name: entry.user.name, hours: 0, payroll: 0, revenue: 0 };
     existing.hours += hours;
     existing.payroll += payrollShare;
@@ -695,18 +720,42 @@ export const businessRouter = router({
     const compare = compareRange ? currentPeriodMetrics(compareRange, history) : null;
     const comparisons = compareMetrics(current, compare);
 
+    // Lead Source Quality: cohort by MA business-day lead dates; cash stays
+    // grouped by payment dateReceived inside the same MA-bounded period.
+    const maRange = businessRangeInMassachusetts(range.start, range.end);
+    const leadSourceQuality = buildLeadSourceQualityReport({
+      opportunities: history.opportunities,
+      payments: history.payments,
+      cohortStart: maRange.start,
+      cohortEnd: maRange.end,
+      cashStart: maRange.start,
+      cashEnd: maRange.end,
+    });
+
     const proposalSeries = monthlyRevenue.map((point) => {
       const monthDate = new Date(point.key + "-01T00:00:00");
+      const monthBusinessRange = businessRangeInMassachusetts(startOfMonth(monthDate), endOfMonth(monthDate));
       const monthProposals = history.proposals.filter((proposal: any) => isInRange(proposal.createdAt, startOfMonth(monthDate), endOfMonth(monthDate)));
       return {
         key: point.key,
         label: point.label,
-        leadsReceived: history.opportunities.filter((opportunity: any) => isInRange(opportunity.createdAt, startOfMonth(monthDate), endOfMonth(monthDate))).length,
+        leadsReceived: history.opportunities.filter((opportunity: any) => isInRange(opportunity.leadReceivedAt ?? opportunity.createdAt, monthBusinessRange.start, monthBusinessRange.end)).length,
         estimatesCreated: monthProposals.filter((proposal: any) => isInRange(proposal.createdAt, startOfMonth(monthDate), endOfMonth(monthDate))).length,
         proposalsSent: monthProposals.filter((proposal: any) => isInRange(proposal.sentAt, startOfMonth(monthDate), endOfMonth(monthDate))).length,
         proposalsWon: monthProposals.filter((proposal: any) => ["approved", "converted"].includes(proposal.status) && isInRange(proposal.approvedAt ?? proposal.updatedAt, startOfMonth(monthDate), endOfMonth(monthDate))).length,
         proposalsLost: monthProposals.filter((proposal: any) => proposal.status === "declined").length,
         revenueWon: monthProposals.filter((proposal: any) => ["approved", "converted"].includes(proposal.status)).reduce((sum: number, proposal: any) => sum + money(proposal.totalAmount), 0),
+      };
+    });
+    const jobCompletionSeries = monthlyRevenue.map((point) => {
+      const monthDate = new Date(`${point.key}-01T00:00:00`);
+      const completionMonth = businessRangeInMassachusetts(startOfMonth(monthDate), endOfMonth(monthDate));
+      const jobs = history.jobs.filter((job: any) => isJobCompletedInRange(job, completionMonth.start, completionMonth.end));
+      return {
+        key: point.key,
+        label: point.label,
+        completedJobs: jobs.length,
+        completedValue: jobs.reduce((sum: number, job: any) => sum + jobValue(job), 0),
       };
     });
 
@@ -748,7 +797,9 @@ export const businessRouter = router({
         revenueLost: current.proposalPerformance.revenueLost,
         series: proposalSeries,
       },
+      jobCompletions: { series: jobCompletionSeries, ...summarizeCompletedJobs(history.jobs) },
       leadSources: leadSourceAnalytics,
+      leadSourceQuality,
       customers: customerAnalytics,
       employees: employeeAnalytics,
       seasonal: seasonalTrends,

@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { cookies } from "next/headers";
 import type { UserRole } from "@prisma/client";
 import { prisma } from "./db";
+import { phonePinMatches } from "./employee-login";
 
 const SECRET = process.env.JWT_SECRET || "dev-only-secret-change-me";
 const COOKIE = "is_session";
@@ -75,8 +76,12 @@ export async function authenticate(email: string, password: string) {
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user || !user.isActive) return null;
   const ok = await verifyPassword(password, user.password);
-  if (!ok) return null;
-  return user;
+  if (ok) return user;
+  // Employee-only fallback: the PIN is the employee's phone number, digits
+  // only. Administrators must always use their bcrypt password. Nothing about
+  // the phone or entered PIN is logged or returned.
+  if (user.role === "employee" && phonePinMatches(password, user.phone)) return user;
+  return null;
 }
 
 export const COOKIE_NAME = COOKIE;
