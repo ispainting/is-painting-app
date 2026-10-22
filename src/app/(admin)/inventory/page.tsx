@@ -5,12 +5,14 @@ import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
+import { ExportPdfButton } from "@/components/ExportPdfButton";
+import { inventoryPdf } from "@/lib/pdf-export-data";
 
 const CATEGORIES = ["paint", "primer", "caulk", "tape", "tools", "supplies", "other"] as const;
 
 export default function InventoryPage() {
   const utils = api.useUtils();
-  const { data, isLoading } = api.inventory.list.useQuery();
+  const { data, isLoading, isFetching, isError } = api.inventory.list.useQuery();
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState({
@@ -85,9 +87,12 @@ export default function InventoryPage() {
         title="Material Catalog"
         description="Reusable materials used for inventory tracking and Proposal material estimating"
         actions={
+          <div className="flex flex-wrap gap-2">
+          <ExportPdfButton disabled={isFetching || isError || !data} build={() => inventoryPdf(data ?? [], { filters: [["Visibility", "Active materials"]] })} />
           <button className="btn btn-primary" onClick={() => openEditor()}>
             Add Material
           </button>
+          </div>
         }
       />
       <div className="card overflow-hidden">

@@ -19,7 +19,9 @@ import {
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency } from "@/lib/utils";
-import { CalendarDays, FileSpreadsheet, FileText, Printer, Sparkles } from "lucide-react";
+import { CalendarDays, FileSpreadsheet, FileText, Sparkles } from "lucide-react";
+import { ExportPdfButton } from "@/components/ExportPdfButton";
+import { reportsPdf } from "@/lib/pdf-export-data";
 
 const PERIOD_LABELS = {
   month: "Monthly Report",
@@ -70,7 +72,7 @@ export default function ReportsPage() {
     return input;
   }, [periodType, month, quarter, year, startDate, endDate]);
 
-  const { data, isLoading } = api.business.analytics.useQuery(query);
+  const { data, isLoading, isFetching, isError } = api.business.analytics.useQuery(query);
   const reportLabel = data?.period?.label ?? "Selected period";
   const aiReview = data?.aiReview;
 
@@ -96,10 +98,6 @@ export default function ReportsPage() {
     XLSX.writeFile(workbook, `${PERIOD_LABELS[periodType].replace(/\s+/g, "-").toLowerCase()}.xlsx`);
   };
 
-  const printPdf = () => {
-    window.print();
-  };
-
   return (
     <>
       <PageHeader title="Reports" description="Professional business reports for banks, investors, accountants, and partners." />
@@ -117,7 +115,16 @@ export default function ReportsPage() {
               <ActionButton icon={CalendarDays} label="Quarterly Report" onClick={() => setPeriodType("quarter")} active={periodType === "quarter"} />
               <ActionButton icon={CalendarDays} label="Annual Report" onClick={() => setPeriodType("year")} active={periodType === "year"} />
               <ActionButton icon={CalendarDays} label="Custom Report" onClick={() => setPeriodType("custom")} active={periodType === "custom"} />
-              <ActionButton icon={Printer} label="Export PDF" onClick={printPdf} />
+              <ExportPdfButton disabled={isFetching || isError || !data} build={() => {
+                if (!data) throw new Error("Report is not loaded.");
+                return reportsPdf(data, { filters: [
+                  ["Report", PERIOD_LABELS[periodType]], ["Period", reportLabel],
+                  ["Previous month comparison", query.comparePreviousMonth ? "Yes" : "No"],
+                  ["Same month last year comparison", query.compareSameMonthLastYear ? "Yes" : "No"],
+                  ["Previous year comparison", query.comparePreviousYear ? "Yes" : "No"],
+                  ["Custom comparison", query.compareCustomPeriods ? "Yes" : "No"],
+                ] });
+              }} />
               <ActionButton icon={FileSpreadsheet} label="Export Excel" onClick={exportExcel} />
             </div>
           </div>

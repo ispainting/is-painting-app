@@ -8,6 +8,9 @@ import { isWithinLiveShiftWindow } from "@/lib/clock";
 import { formatDateTime } from "@/lib/utils";
 import { Clock3, Copy, Pencil, Plus, Printer, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { buildPayrollSummaries } from "@/lib/payroll-preview";
+import { ExportPdfButton } from "@/components/ExportPdfButton";
+import { payrollPdf } from "@/lib/pdf-export-data";
 
 type TabId = "payroll" | "overview" | "log";
 type ReviewStatus = "pending" | "approved" | "rejected";
@@ -86,64 +89,8 @@ function entryHours(entry: TimeEntryRecord) {
   return toNumber(entry.paidHours ?? entry.hoursWorked ?? entry.grossHours ?? 0);
 }
 
-function travelEntryHours(entry: TimeEntryRecord) {
-  return toNumber(entry.travelHours ?? entry.job?.defaultTravelHours ?? 0);
-}
-
 function hasSpecialPay(entry: TimeEntryRecord) {
   return Boolean(entry.specialPayEnabled || entry.isIslandJob || entry.job?.specialPayEnabled || entry.job?.isIslandJob);
-}
-
-function getRates(entry: TimeEntryRecord, fallbackRate: number) {
-  const regularRate = toNumber(entry.user?.hourlyRate ?? fallbackRate);
-  const rawAdjustment = hasSpecialPay(entry)
-    ? toNumber(entry.hourlyRateAdjustment ?? entry.job?.hourlyRateAdjustment ?? 0)
-    : 0;
-  const legacyIslandSpecial = Boolean(entry.isIslandJob || entry.job?.isIslandJob);
-  const adjustment = rawAdjustment > 0 ? rawAdjustment : (legacyIslandSpecial ? 2 : 0);
-  const effectiveRate = regularRate + adjustment;
-  const overtimeRate = effectiveRate * 1.5;
-  return { regularRate, adjustment, effectiveRate, overtimeRate };
-}
-
-function getRateType(entry: TimeEntryRecord) {
-  if (entry.rateType === "travel" || entry.workType === "travel") return "travel";
-  if (entry.rateType === "overtime") return "overtime";
-  if (entry.rateType === "island") return "special";
-  if (entry.rateType === "special") return "special";
-  if (hasSpecialPay(entry)) return "special";
-  if (entry.workType === "travel" || entry.job?.travelPayEnabled) return "travel";
-  return "regular";
-}
-
-function getPayableHours(entry: TimeEntryRecord) {
-  const rateType = getRateType(entry);
-  if (rateType === "travel") {
-    const travelHours = travelEntryHours(entry);
-    return travelHours > 0 ? travelHours : entryHours(entry);
-  }
-  return entryHours(entry);
-}
-
-function getTravelRate(entry: TimeEntryRecord, fallbackRate: number) {
-  const { regularRate, effectiveRate } = getRates(entry, fallbackRate);
-  const travelRateType = entry.job?.travelRateType || "regular";
-  if (travelRateType === "island") return effectiveRate;
-  if (travelRateType === "special") return effectiveRate;
-  if (travelRateType === "custom") return toNumber(entry.job?.customTravelRate ?? regularRate);
-  return regularRate;
-}
-
-function rateLabelForType(rateType: TimeEntryRecord["rateType"], rates: { regularRate: number; effectiveRate: number; overtimeRate: number }) {
-  if (rateType === "special") return `Special $${rates.effectiveRate.toFixed(2)}`;
-  if (rateType === "overtime") return `Overtime ${rates.overtimeRate.toFixed(2)}`;
-  if (rateType === "travel") return `Travel`;
-  return `Regular $${rates.regularRate.toFixed(2)}`;
-}
-
-function weekKey(date: Date) {
-  const start = startOfWeek(date);
-  return toDateInput(start);
 }
 
 function buildEditor(entry?: TimeEntryRecord | null): EntryEditorState {
@@ -258,128 +205,7 @@ export default function TimePage() {
   });
 
   const employeeSummaries = useMemo(() => {
-    const byEmployee = new Map<number, TimeEntryRecord[]>();
-    for (const entry of rows) {
-      const list = byEmployee.get(entry.userId) || [];
-      list.push(entry);
-      byEmployee.set(entry.userId, list);
-    }
-
-    return Array.from(byEmployee.entries())
-      .map(([id, entries]) => {
-        const sorted = [...entries].sort((a, b) => new Date(a.clockIn).getTime() - new Date(b.clockIn).getTime());
-        const name = sorted[0]?.user?.name || employeeRows.find((e) => e.id === id)?.name || "Employee";
-        const hourlyRate = toNumber(sorted[0]?.user?.hourlyRate ?? employeeRows.find((e) => e.id === id)?.hourlyRate ?? 0);
-
-        // Travel pay is applied once per employee + job + date.
-        const travelAllocations = new Map<string, { anchorEntryId: number; travelHours: number; travelRate: number }>();
-        const travelGroups = new Map<string, TimeEntryRecord[]>();
-        for (const entry of sorted) {
-          const groupKey = `${entry.job?.id ?? 0}:${toDateInput(new Date(entry.clockIn))}`;
-          const list = travelGroups.get(groupKey) || [];
-          list.push(entry);
-          travelGroups.set(groupKey, list);
-        }
-        for (const groupEntries of travelGroups.values()) {
-          const explicitOverride = groupEntries.find((entry) => entry.travelHours !== null && entry.travelHours !== undefined);
-          if (explicitOverride) {
-            travelAllocations.set(`${explicitOverride.job?.id ?? 0}:${toDateInput(new Date(explicitOverride.clockIn))}`, {
-              anchorEntryId: explicitOverride.id,
-              travelHours: toNumber(explicitOverride.travelHours),
-              travelRate: getTravelRate(explicitOverride, hourlyRate),
-            });
-            continue;
-          }
-
-          const defaultSource = groupEntries.find((entry) => Boolean(entry.job?.travelPayEnabled));
-          if (defaultSource) {
-            travelAllocations.set(`${defaultSource.job?.id ?? 0}:${toDateInput(new Date(defaultSource.clockIn))}`, {
-              anchorEntryId: groupEntries[0].id,
-              travelHours: toNumber(defaultSource.job?.defaultTravelHours ?? 0),
-              travelRate: getTravelRate(defaultSource, hourlyRate),
-            });
-          }
-        }
-
-        let regularHours = 0;
-        let overtimeHours = 0;
-        let specialHours = 0;
-        let travelHours = 0;
-        let totalHours = 0;
-        let regularPay = 0;
-        let travelPay = 0;
-        let overtimePay = 0;
-        let estimatedCheck = 0;
-
-        const weekTotals = new Map<string, number>();
-        const details = sorted.map((entry) => {
-          const workHours = entryHours(entry);
-          const travelGroupKey = `${entry.job?.id ?? 0}:${toDateInput(new Date(entry.clockIn))}`;
-          const travelAllocation = travelAllocations.get(travelGroupKey);
-          const travelPayHours = travelAllocation && travelAllocation.anchorEntryId === entry.id ? travelAllocation.travelHours : 0;
-          const wk = weekKey(new Date(entry.clockIn));
-          const prior = weekTotals.get(wk) || 0;
-          const rateType = getRateType(entry);
-          const rates = getRates(entry, hourlyRate);
-          const travelRate = travelAllocation?.travelRate ?? getTravelRate(entry, hourlyRate);
-          const overtimePart = Math.max(0, prior + workHours - 40);
-          const boundedOvertime = rateType === "overtime" ? workHours : Math.min(workHours, overtimePart);
-          const baseHours = Math.max(0, workHours - boundedOvertime);
-          const specialEligible = rateType === "special" || hasSpecialPay(entry);
-          const specialPart = specialEligible ? baseHours : 0;
-          const regularPart = specialEligible ? 0 : baseHours;
-          weekTotals.set(wk, prior + workHours);
-
-          const travelPart = travelPayHours;
-          const detailRegularPay = regularPart * rates.regularRate;
-          const detailSpecialPay = specialPart * rates.effectiveRate;
-          const detailTravelPay = travelPart * travelRate;
-          const detailOvertimePay = boundedOvertime * rates.overtimeRate;
-          const amount = detailRegularPay + detailSpecialPay + detailTravelPay + detailOvertimePay;
-
-          regularHours += regularPart;
-          overtimeHours += boundedOvertime;
-          specialHours += specialPart;
-          travelHours += travelPart;
-          totalHours += workHours + travelPart;
-          regularPay += detailRegularPay;
-          travelPay += detailTravelPay;
-          overtimePay += detailOvertimePay;
-          estimatedCheck += amount;
-
-          const displayRateType = rateType === "regular" && specialEligible ? "special" : rateType;
-          const rateLabel = rateLabelForType(displayRateType, { regularRate: rates.regularRate, effectiveRate: rates.effectiveRate, overtimeRate: rates.overtimeRate });
-
-          return {
-            id: entry.id,
-            date: toDateInput(new Date(entry.clockIn)),
-            clockIn: entry.clockIn,
-            project: entry.job?.name || "No project",
-            hours: workHours,
-            travelHours: travelPart,
-            rateLabel,
-            adjustment: rates.adjustment,
-            effectiveRate: rates.effectiveRate,
-            travelLabel: travelPart > 0 ? `${travelPart.toFixed(2)}h @ $${travelRate.toFixed(2)}` : "—",
-            dailyTotal: amount,
-            notes: entry.notes || "",
-          };
-        });
-
-        return {
-          id,
-          name,
-          regularHours,
-          overtimeHours,
-          specialHours,
-          travelHours,
-          totalHours,
-          hourlyRate,
-          estimatedCheck,
-          details,
-        };
-      })
-      .sort((a, b) => a.name.localeCompare(b.name));
+    return buildPayrollSummaries(rows, employeeRows);
   }, [employees.data, rows]);
 
   const summaryCards = useMemo(() => {
@@ -482,6 +308,14 @@ export default function TimePage() {
         description="Payroll preview from date range to check amount."
         actions={
           <div className="flex gap-2">
+            <ExportPdfButton disabled={listQuery.isFetching || listQuery.isError || !listQuery.data} build={() => payrollPdf(rows, employeeSummaries, {
+              dateRange: `${startDate} through ${endDate}`,
+              filters: [
+                ["Employee", employeeId ? employeeRows.find(row => row.id === Number(employeeId))?.name || "Selected employee" : "All"],
+                ["Job", projectId ? jobs.data?.find(row => row.id === Number(projectId))?.name || "Selected Job" : "All"],
+                ["View", tab],
+              ],
+            })} />
             <button className="btn btn-secondary" onClick={printSummary}><Printer className="mr-1 h-4 w-4" /> Print Payroll Summary</button>
             <button className="btn btn-primary" onClick={openCreate}><Plus className="mr-1 h-4 w-4" /> Add Manual Hours</button>
           </div>

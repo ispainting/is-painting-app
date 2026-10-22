@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { ExportPdfButton } from "@/components/ExportPdfButton";
+import { customersPdf } from "@/lib/pdf-export-data";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { isReferralSource, LEAD_SOURCE_OPTIONS, leadSourceOptionsWithLegacy, resolveReferralName } from "@/lib/lead-source";
 import { PIPELINE_STAGE_OPTIONS, type PipelineStageValue } from "@/lib/pipeline-stages";
@@ -100,7 +102,7 @@ export default function CustomersPage() {
     onlyWithActiveJobs,
   } as const;
 
-  const { data, isLoading } = api.customers.list.useQuery(queryInput);
+  const { data, isLoading, isFetching, isError } = api.customers.list.useQuery(queryInput);
 
   const create = api.customers.create.useMutation({
     onSuccess: (result) => {
@@ -282,9 +284,14 @@ export default function CustomersPage() {
         title="Customers"
         description="Lead, client, and account management in one workspace"
         actions={
+          <div className="flex flex-wrap gap-2">
+          <ExportPdfButton disabled={isFetching || isError || !data} build={() => customersPdf(rows, {
+            filters: [["Search", search], ["Lead source", leadSourceFilter], ["Tag", tagFilter], ["Open balance only", onlyWithOpenBalance ? "Yes" : "No"], ["Active Jobs only", onlyWithActiveJobs ? "Yes" : "No"], ["Sort", `${sortBy} ${sortDirection}`], ["Visibility", "Non-deleted customers"]],
+          })} />
           <button onClick={openCreate} className="btn btn-primary">
             <Plus className="mr-1 h-4 w-4" /> New customer
           </button>
+          </div>
         }
       />
 

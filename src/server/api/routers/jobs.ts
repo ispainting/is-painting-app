@@ -70,7 +70,11 @@ export const jobsRouter = router({
       });
       return ctx.prisma.job.findMany({
         where,
-        include: { customer: true },
+        include: {
+          customer: true,
+          invoices: { select: { status: true, total: true } },
+          payments: { select: { status: true, amount: true } },
+        },
         orderBy: { createdAt: "desc" },
         take: 200,
       });

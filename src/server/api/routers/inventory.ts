@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { router, protectedProcedure, adminProcedure } from "../trpc";
+import { employeeAssignmentFilter } from "@/lib/job-filters";
 
 const CategoryZ = z.enum(["paint", "primer", "caulk", "tape", "tools", "supplies", "other"]);
 
@@ -32,6 +33,12 @@ export const inventoryRouter = router({
           }),
         },
         orderBy: { name: "asc" },
+        include: {
+          jobMaterials: {
+            where: { job: { deletedAt: null, ...employeeAssignmentFilter({ isEmployee: ctx.session.role === "employee", employeeUserId: ctx.session.userId }) } },
+            select: { job: { select: { name: true } } },
+          },
+        },
       })
     ),
 

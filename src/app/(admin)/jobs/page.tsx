@@ -11,6 +11,8 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
 import { buildJobsListInputForPageFilter, type JobsPageFilter } from "@/lib/job-filters";
+import { ExportPdfButton } from "@/components/ExportPdfButton";
+import { jobsPdf } from "@/lib/pdf-export-data";
 
 const JOB_FILTERS: Array<{ key: JobsPageFilter; label: string }> = [
   { key: "active", label: "Active" },
@@ -28,7 +30,7 @@ export default function JobsPage() {
   const router = useRouter();
   const utils = api.useUtils();
   const [filter, setFilter] = useState<JobsPageFilter>("active");
-  const { data, isLoading } = api.jobs.list.useQuery(buildJobsListInputForPageFilter(filter));
+  const { data, isLoading, isFetching, isError } = api.jobs.list.useQuery(buildJobsListInputForPageFilter(filter));
   const counts = api.jobs.statusCounts.useQuery();
   const [open, setOpen] = useState(false);
   const [customerSearch, setCustomerSearch] = useState("");
@@ -143,6 +145,7 @@ export default function JobsPage() {
         description="Estimates and active jobs"
         actions={
           <div className="flex items-center gap-2">
+            <ExportPdfButton disabled={isFetching || isError || !data} build={() => jobsPdf(data ?? [], { filters: [["Status / Visibility", activeFilter.label]] })} />
             <button onClick={() => { setOpen(true); setShowCustomerResults(false); }} className="btn btn-primary">
               <Plus className="w-4 h-4 mr-1" /> New job
             </button>

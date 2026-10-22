@@ -386,6 +386,7 @@ export const customersRouter = router({
         _count: {
           select: {
             proposals: { where: { deletedAt: null } },
+            opportunities: true,
           },
         },
       },
@@ -429,6 +430,8 @@ export const customersRouter = router({
           openBalance,
           activeJobs,
           proposalCount,
+          opportunityCount: customer._count.opportunities,
+          jobCount: customer.jobs.length,
         },
         searchText: buildCustomerSearchText(customer),
       };

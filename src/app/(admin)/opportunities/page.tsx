@@ -14,6 +14,8 @@ import { filterOpportunityViews, OPPORTUNITY_BOARD_GROUPS, refreshOpportunityQue
 import { todayDateInputValueInMassachusetts } from "@/lib/employee-rate-resolver";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { toast } from "sonner";
+import { ExportPdfButton } from "@/components/ExportPdfButton";
+import { opportunitiesPdf } from "@/lib/pdf-export-data";
 
 export default function OpportunitiesPage() {
   const utils = api.useUtils();
@@ -113,7 +115,13 @@ export default function OpportunitiesPage() {
     })}</div>;
   }
   return <>
-    <PageHeader title="Opportunities" description="Lead dates and historical outcomes in America/New_York" actions={<button className="btn btn-primary" onClick={() => setEditor("new")}>New Opportunity</button>} />
+    <PageHeader title="Opportunities" description="Lead dates and historical outcomes in America/New_York" actions={<div className="flex flex-wrap gap-2">
+      <ExportPdfButton disabled={query.isFetching || query.isError || !query.data} build={() => opportunitiesPdf(filtered, {
+        dateRange: `${from || "No lower limit"} through ${to || "No upper limit"} (Lead Received Date)`,
+        filters: [["Visibility", visibility === "archived" ? "Archived only" : visibility], ["Search", search], ["Source", source], ["Service", service], ["Stage", stage ? opportunityStageLabel(stage) : "All"], ["Follow-up", followUp || "All"], ["View", view]],
+      })} />
+      <button className="btn btn-primary" onClick={() => setEditor("new")}>New Opportunity</button>
+    </div>} />
     <div className="card mb-4 grid grid-cols-2 gap-3 p-4 md:grid-cols-4">
       <label>Search<input className="input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Project or customer" /></label>
       <label>Lead Source<select className="input" value={source} onChange={(e) => setSource(e.target.value)}><option value="">All sources</option>{sources.map((s) => <option key={s}>{s}</option>)}</select></label>
