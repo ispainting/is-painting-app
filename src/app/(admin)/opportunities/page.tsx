@@ -4,6 +4,7 @@ import Link from "next/link";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { NOT_PROVIDED } from "@/lib/orion-lead-card";
 import { toast } from "sonner";
 
 const SALES_STAGES = [
@@ -44,9 +45,23 @@ export default function OpportunitiesPage() {
                   <div className="text-xs text-slate-500">
                     <Link href={`/customers/${o.customerId}`} className="text-brand-700 hover:underline">{o.customer.name}</Link>
                   </div>
+                  <div className="text-xs text-slate-700 mt-1">
+                    {o.customer.phone ? (
+                      <a href={`tel:${o.customer.phone.replace(/[^\d+]/g, "")}`} className="text-brand-700 hover:underline">{o.customer.phone}</a>
+                    ) : (
+                      `Phone: ${NOT_PROVIDED}`
+                    )}
+                  </div>
+                  <div className="text-xs text-slate-700">Town: {o.customer.city || NOT_PROVIDED}</div>
                   <div className="text-xs text-slate-500 mt-1">
                     {o.leadValue ? formatCurrency(Number(o.leadValue)) : ""} · {formatDate(o.createdAt)}
                   </div>
+                  {o.notes ? (
+                    <details className="mt-2 text-xs text-slate-600">
+                      <summary className="cursor-pointer text-brand-700">Lead form</summary>
+                      <p className="mt-1 whitespace-pre-wrap break-words">{o.notes}</p>
+                    </details>
+                  ) : null}
                   <select
                     className="input mt-2 text-xs"
                     value={o.stage}

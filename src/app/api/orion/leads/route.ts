@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { checkLeadIntakeAuth } from "@/lib/orion-auth";
+import { betterOpportunityName, blankCustomerFields, leadCardNote, leadOpportunityName, replacesNote } from "@/lib/orion-lead-card";
 
 // Lead intake from ORION, the marketing platform. Every quote request it receives — the website
 // form, the site's chat concierge, a Facebook instant form — is posted here and lands in the sales
@@ -10,6 +11,9 @@ import { checkLeadIntakeAuth } from "@/lib/orion-auth";
 //
 // - Idempotent: the same leadId always maps to the same opportunity (MigrationMap row
 //   "orion_lead"), so retries and backfills never duplicate.
+// - A later delivery of the same lead can only add: it fills empty contact fields and upgrades the
+//   automatic card (src/lib/orion-lead-card.ts). Make usually delivers a Facebook lead first, with
+//   whatever its scenario maps, so ORION's fuller delivery has to be able to complete it.
 // - Matches an existing customer by email, then by phone, before creating one, so a returning
 //   client gets a new opportunity on their own record.
 // - Same shape the admin "new opportunity" action writes (stage new_lead, sales pipeline); no
@@ -64,10 +68,13 @@ const ALIASES: Record<string, string> = {
   phonenumber: "phone",
   email: "email",
   service: "service",
+  servicetype: "service",
   city: "city",
+  town: "city",
   state: "state",
   zip: "zipCode",
   zipcode: "zipCode",
+  projectzipcode: "zipCode",
   postcode: "zipCode",
   streetaddress: "address",
   address: "address",
@@ -159,13 +166,39 @@ async function findCustomer(lead: LeadInput) {
   return null;
 }
 
-function noteBody(lead: LeadInput) {
-  const lines = [
-    lead.service && `Service: ${lead.service}`,
-    lead.message && `Message: ${lead.message}`,
-    ...Object.entries(lead.details ?? {}).map(([label, value]) => `${label}: ${value}`),
-  ].filter(Boolean);
-  return lines.length ? lines.join("\n") : null;
+// A repeat delivery of a lead already on file. Contact fields only ever go from empty to filled.
+// The card and title are ORION's to upgrade, for the same reason only ORION may re-date (below):
+// Make's copy of a Facebook lead is the thinner one, and it can arrive after ORION's.
+async function completeExistingLead(opportunityId: number, lead: LeadInput, caller: "ORION" | "Make" | null): Promise<string[]> {
+  const opportunity = await prisma.opportunity.findUnique({
+    where: { id: opportunityId },
+    select: { name: true, notes: true, customerId: true, customer: { select: { email: true, phone: true, address: true, city: true, state: true, zipCode: true } } },
+  });
+  if (!opportunity) return [];
+
+  const contact = blankCustomerFields(opportunity.customer, lead);
+  const filled = Object.keys(contact);
+  const note = leadCardNote(lead);
+  const touchpoint =
+    caller === "ORION"
+      ? await prisma.customerTouchpoint.findFirst({
+          where: { customerId: opportunity.customerId, type: "note", metadata: { path: ["leadId"], equals: lead.leadId } },
+          orderBy: { createdAt: "asc" },
+          select: { id: true, body: true },
+        })
+      : null;
+  const newNote = !!touchpoint && replacesNote(opportunity.notes, touchpoint.body, note);
+  const newName = caller === "ORION" ? betterOpportunityName(opportunity.name, lead) : null;
+  if (newNote) filled.push("card");
+  if (newName) filled.push("title");
+  if (filled.length === 0) return [];
+
+  await prisma.$transaction(async (tx) => {
+    if (Object.keys(contact).length) await tx.customer.update({ where: { id: opportunity.customerId }, data: contact });
+    if (newNote || newName) await tx.opportunity.update({ where: { id: opportunityId }, data: { ...(newNote ? { notes: note } : {}), ...(newName ? { name: newName } : {}) } });
+    if (newNote && touchpoint) await tx.customerTouchpoint.update({ where: { id: touchpoint.id }, data: { body: note } });
+  });
+  return filled;
 }
 
 export async function POST(req: Request) {
@@ -195,11 +228,12 @@ export async function POST(req: Request) {
     if (caller === "ORION" && lead.receivedAt) {
       await prisma.opportunity.updateMany({ where: { id: existing.newId, createdAt: { not: receivedAt } }, data: { createdAt: receivedAt } });
     }
-    return NextResponse.json({ status: "exists", opportunityId: existing.newId });
+    const filled = await completeExistingLead(existing.newId, lead, caller);
+    return NextResponse.json({ status: "exists", opportunityId: existing.newId, filled });
   }
 
   const matched = await findCustomer(lead);
-  const body = noteBody(lead);
+  const body = leadCardNote(lead);
 
   try {
     const result = await prisma.$transaction(async (tx) => {
@@ -228,7 +262,7 @@ export async function POST(req: Request) {
       const opportunity = await tx.opportunity.create({
         data: {
           customerId,
-          name: [lead.service || "Quote request", lead.city].filter(Boolean).join(" — "),
+          name: leadOpportunityName(lead),
           pipeline: "sales",
           stage: "new_lead",
           status: "open",

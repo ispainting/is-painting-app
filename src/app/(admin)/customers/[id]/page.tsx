@@ -347,6 +347,8 @@ export default function CustomerProfilePage() {
             <SectionCard title="Account Snapshot">
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <Info label="Primary Contact" value={customer.contactName || "Not set"} />
+                <Info label="Primary Phone" value={customer.phone || "Not set"} />
+                <Info label="Primary Email" value={customer.email || "Not set"} />
                 <Info label="Preferred Communication" value={customer.preferredCommunication || "Not set"} />
                 <Info label="Lead Source" value={customer.leadSource || customer.source || "Not set"} />
                 <Info label="Referral Source" value={customer.referralSource || "Not set"} />
@@ -1027,6 +1029,7 @@ function PipelineCards({ opportunities }: { opportunities: any[] }) {
             <div className="mt-3 text-sm text-slate-600">Lead value: {formatCurrency(opportunity.leadValue)}</div>
             <div className="text-sm text-slate-600">Assigned to: {opportunity.assignedTo?.name || "Unassigned"}</div>
             <div className="mt-2 text-xs text-slate-500">Created {formatDate(opportunity.createdAt)}</div>
+            {opportunity.notes ? <p className="mt-3 whitespace-pre-wrap break-words border-t border-slate-100 pt-3 text-sm text-slate-600">{opportunity.notes}</p> : null}
           </div>
         )) : <EmptyState text="No opportunities linked to this customer yet." />}
       </div>
