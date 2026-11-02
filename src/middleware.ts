@@ -7,6 +7,8 @@ const PUBLIC = [
   "/api/trpc",
   // Server-to-server read for the ORION marketing platform; the route checks its own bearer secret.
   "/api/orion",
+  // Lead webhooks from Meta, Google and the website; each route checks its own signature or key.
+  "/api/webhooks",
   "/_next",
   "/favicon.ico",
 ];

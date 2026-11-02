@@ -4,7 +4,7 @@
 // notes, and the rest of this file decides what a later delivery of the same lead may fill in.
 
 export const NOT_PROVIDED = "Not provided";
-const SERVICE_AREA = "Service area";
+export const SERVICE_AREA = "Service area";
 
 export interface LeadCardFields {
   name?: string;
@@ -75,7 +75,7 @@ export function blankCustomerFields(customer: CustomerContact, lead: LeadCardFie
   return fill;
 }
 
-function answeredLines(note: string | null): number {
+export function answeredLines(note: string | null): number {
   return (note ?? "").split("\n").filter((line) => line.includes(":") && !line.endsWith(`: ${NOT_PROVIDED}`)).length;
 }
 
