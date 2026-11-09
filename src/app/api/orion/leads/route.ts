@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { checkLeadIntakeAuth } from "@/lib/orion-auth";
+import { checkLeadIntakeAuth, classifyWordPressLead, type LeadIntakeCaller } from "@/lib/orion-auth";
 import { betterOpportunityName, blankCustomerFields, leadCardNote, leadOpportunityName, replacesNote } from "@/lib/orion-lead-card";
 
 // Lead intake from ORION, the marketing platform. Every quote request it receives — the website
@@ -19,7 +19,7 @@ import { betterOpportunityName, blankCustomerFields, leadCardNote, leadOpportuni
 // - Same shape the admin "new opportunity" action writes (stage new_lead, sales pipeline); no
 //   automations are triggered here, exactly like that action.
 //
-// Auth: `Authorization: Bearer <ORION_API_SECRET or MAKE_API_SECRET>` (see src/lib/orion-auth.ts).
+// Server-to-server bearer authentication and the WordPress key's scope are in src/lib/orion-auth.ts.
 // Accepts JSON or form fields (application/x-www-form-urlencoded), so a Make HTTP module can send
 // plain key/value fields without hand-building JSON.
 
@@ -169,7 +169,7 @@ async function findCustomer(lead: LeadInput) {
 // A repeat delivery of a lead already on file. Contact fields only ever go from empty to filled.
 // The card and title are ORION's to upgrade, for the same reason only ORION may re-date (below):
 // Make's copy of a Facebook lead is the thinner one, and it can arrive after ORION's.
-async function completeExistingLead(opportunityId: number, lead: LeadInput, caller: "ORION" | "Make" | null): Promise<string[]> {
+async function completeExistingLead(opportunityId: number, lead: LeadInput, caller: LeadIntakeCaller | null): Promise<string[]> {
   const opportunity = await prisma.opportunity.findUnique({
     where: { id: opportunityId },
     select: { name: true, notes: true, customerId: true, customer: { select: { email: true, phone: true, address: true, city: true, state: true, zipCode: true } } },
@@ -204,7 +204,7 @@ async function completeExistingLead(opportunityId: number, lead: LeadInput, call
 export async function POST(req: Request) {
   const { result: auth, caller } = checkLeadIntakeAuth(req);
   if (auth === "unconfigured") {
-    console.error("[api/orion/leads] neither ORION_API_SECRET nor MAKE_API_SECRET is set — refusing lead intake");
+    console.error("[api/orion/leads] no lead intake credential is configured");
     return NextResponse.json({ error: "ORION access is not configured" }, { status: 503 });
   }
   if (auth === "denied") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -213,9 +213,12 @@ export async function POST(req: Request) {
   if (!parsed.success) return NextResponse.json({ error: "Invalid lead", issues: parsed.error.issues }, { status: 400 });
   const lead = parsed.data;
 
-  // Meta's Lead Ads Testing Tool fills every field with "<test lead: dummy data for …>". Answer
-  // those so the owner can check a Make connection end to end, without a junk lead in the pipeline.
-  if ([lead.name, lead.email, ...Object.values(lead.details ?? {})].some((v) => v && /dummy data|test lead/i.test(v))) {
+  // WordPress has a distinct check ID. Meta's testing tool instead puts dummy markers in fields.
+  if (caller === "WordPress") {
+    const kind = classifyWordPressLead(lead);
+    if (kind === "denied") return NextResponse.json({ error: "Outside WordPress quote scope" }, { status: 403 });
+    if (kind === "check") return NextResponse.json({ status: "test_ok" });
+  } else if ([lead.name, lead.email, ...Object.values(lead.details ?? {})].some((v) => v && /dummy data|test lead/i.test(v))) {
     return NextResponse.json({ status: "test_ok", message: "Connection works — test lead not saved." });
   }
 

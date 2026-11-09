@@ -11,8 +11,10 @@ import { timingSafeEqual } from "node:crypto";
 //   never lead intake.
 // - MAKE_API_SECRET: the owner's Make scenario that forwards Facebook leads the moment they arrive
 //   (added 2026-10-17). Lead intake only — it can't read the summary.
+// - WORDPRESS_LEADS_SECRET: quote requests from the Coastal WordPress form and its connection check.
 
 type AuthResult = "ok" | "denied" | "unconfigured";
+export type LeadIntakeCaller = "ORION" | "Make" | "WordPress";
 
 // Tolerates how the key was typed into a tool's header field: "bearer" in any case, extra spaces
 // after it, or a stray space after the key.
@@ -41,11 +43,23 @@ export function checkReadAuth(req: Request): AuthResult {
   return keys.some((key) => matches(given, key)) ? "ok" : "denied";
 }
 
-/** Lead intake: ORION's key or the Make key. Says which one, so the lead records who sent it. */
-export function checkLeadIntakeAuth(req: Request): { result: AuthResult; caller: "ORION" | "Make" | null } {
-  if (!process.env.ORION_API_SECRET && !process.env.MAKE_API_SECRET) return { result: "unconfigured", caller: null };
+/** Identifies the intake caller so the route can enforce its scope and record the sender. */
+export function checkLeadIntakeAuth(req: Request): { result: AuthResult; caller: LeadIntakeCaller | null } {
+  if (!process.env.ORION_API_SECRET && !process.env.MAKE_API_SECRET && !process.env.WORDPRESS_LEADS_SECRET) {
+    return { result: "unconfigured", caller: null };
+  }
   const given = bearer(req);
   if (matches(given, process.env.ORION_API_SECRET)) return { result: "ok", caller: "ORION" };
   if (matches(given, process.env.MAKE_API_SECRET)) return { result: "ok", caller: "Make" };
+  if (matches(given, process.env.WORDPRESS_LEADS_SECRET)) return { result: "ok", caller: "WordPress" };
   return { result: "denied", caller: null };
+}
+
+// The plugin uses coastal:<uuid4> for quotes and check:<uuid4> for its admin connection test.
+// The same lead ID is the database deduplication key across all callers.
+export function classifyWordPressLead(lead: { source: string; leadId: string; name?: string; phone?: string }): "quote" | "check" | "denied" {
+  const id = /^(coastal|check):[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.exec(lead.leadId);
+  if (lead.source !== "Website" || !id) return "denied";
+  if (id[1] === "check") return lead.name === "Test lead" ? "check" : "denied";
+  return lead.name && lead.phone ? "quote" : "denied";
 }
