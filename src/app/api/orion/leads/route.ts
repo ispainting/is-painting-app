@@ -138,6 +138,10 @@ async function readBody(req: Request): Promise<Record<string, unknown> | null> {
   let looksLikeFacebook = false;
   for (const [key, value] of Object.entries(raw)) {
     const field = KNOWN_FIELDS.has(key) ? key : ALIASES[squash(key)];
+    if (field === "attribution" && value && typeof value === "object" && !Array.isArray(value)) {
+      body.attribution = value;
+      continue;
+    }
     if (field === "details" && value && typeof value === "object" && !Array.isArray(value)) {
       for (const [k, v] of Object.entries(value)) if (asText(v)) details[k] = asText(v);
       continue;
@@ -195,7 +199,7 @@ async function addAttribution(opportunityId: number, lead: LeadInput): Promise<b
   if (!incoming || !Object.values(incoming).some((value) => value !== undefined && value !== "")) return false;
   const existing = await prisma.opportunityAttribution.findUnique({ where: { opportunityId } });
   const data = Object.fromEntries(
-    Object.entries(incoming).filter(([key, value]) => value !== undefined && value !== "" && !(existing as Record<string, unknown> | null)?.[key])
+    Object.entries(incoming).filter(([key, value]) => value !== undefined && value !== "" && !(existing as unknown as Record<string, unknown> | null)?.[key])
   );
   if (!Object.keys(data).length) return false;
   await prisma.opportunityAttribution.upsert({
