@@ -360,7 +360,6 @@ export default function TimePage() {
                   <th className="px-3 py-2 font-medium text-right">Regular Hours</th>
                   <th className="px-3 py-2 font-medium text-right">Special Hours</th>
                   <th className="px-3 py-2 font-medium text-right">Travel Hours</th>
-                  <th className="px-3 py-2 font-medium text-right">Overtime</th>
                   <th className="px-3 py-2 font-medium text-right">Total Hours</th>
                   <th className="px-3 py-2 font-medium text-right">Hourly Rate</th>
                   <th className="px-3 py-2 font-medium text-right">Estimated Check</th>
@@ -382,7 +381,6 @@ export default function TimePage() {
                           <span className="text-right">{row.regularHours.toFixed(2)}</span>
                           <span className="text-right">{row.specialHours.toFixed(2)}</span>
                           <span className="text-right">{row.travelHours.toFixed(2)}</span>
-                          <span className="text-right">{row.overtimeHours.toFixed(2)}</span>
                           <span className="text-right">{row.totalHours.toFixed(2)}</span>
                           <span className="text-right">${row.hourlyRate.toFixed(2)}</span>
                           <span className="text-right font-semibold">${row.estimatedCheck.toFixed(2)}</span>
@@ -556,7 +554,6 @@ export default function TimePage() {
                   { value: "regular", label: "Regular" },
                   { value: "special", label: "Special" },
                   { value: "travel", label: "Travel" },
-                  { value: "overtime", label: "Overtime" },
                 ]}
               />
               <FieldInput
