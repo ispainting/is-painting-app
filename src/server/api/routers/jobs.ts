@@ -62,7 +62,7 @@ const paintColorInput = z.object({
 
 export const jobsRouter = router({
   list: protectedProcedure
-    .input(z.object({ status: JobStatusZ.optional(), visibility: JobVisibilityZ.optional() }).optional())
+    .input(z.object({ status: JobStatusZ.optional(), visibility: JobVisibilityZ.optional(), search: z.string().trim().max(200).optional() }).optional())
     .query(async ({ ctx, input }) => {
       const where = buildJobsListWhere(input, {
         isEmployee: ctx.session?.role === "employee",
