@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { checkLeadIntakeAuth } from "@/lib/orion-auth";
+import { checkLeadIntakeAuth, classifyWordPressLead } from "@/lib/orion-auth";
 import { isTestLead, leadFromOrion } from "@/lib/leads/normalize";
 import { errorCode, intakeLead } from "@/lib/leads/record-lead";
 
@@ -9,7 +9,7 @@ import { errorCode, intakeLead } from "@/lib/leads/record-lead";
 // lead is the same for every door (src/lib/leads/record-lead.ts): a row in the Leads Inbox and a
 // card in the sales pipeline, so nobody retypes it.
 //
-// Auth: `Authorization: Bearer <ORION_API_SECRET or MAKE_API_SECRET>` (see src/lib/orion-auth.ts).
+// Server-to-server bearer authentication and the WordPress key's scope are in src/lib/orion-auth.ts.
 // Accepts JSON or form fields (application/x-www-form-urlencoded), so a Make HTTP module can send
 // plain key/value fields without hand-building JSON.
 
@@ -125,7 +125,7 @@ async function readBody(req: Request): Promise<Record<string, unknown> | null> {
 export async function POST(req: Request) {
   const { result: auth, caller } = checkLeadIntakeAuth(req);
   if (auth === "unconfigured") {
-    console.error("[api/orion/leads] neither ORION_API_SECRET nor MAKE_API_SECRET is set — refusing lead intake");
+    console.error("[api/orion/leads] no lead intake credential is configured");
     return NextResponse.json({ error: "ORION access is not configured" }, { status: 503 });
   }
   if (auth === "denied") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -134,9 +134,14 @@ export async function POST(req: Request) {
   if (!parsed.success) return NextResponse.json({ error: "Invalid lead", issues: parsed.error.issues }, { status: 400 });
   const lead = parsed.data;
 
-  // Meta's Lead Ads Testing Tool fills every field with "<test lead: dummy data for …>". Answer
-  // those so the owner can check a Make connection end to end, without a junk lead in the pipeline.
-  if (isTestLead(lead)) {
+  // WordPress has a distinct check ID. Meta's Lead Ads Testing Tool instead fills every field with
+  // "<test lead: dummy data for …>"; answer those so the owner can check a Make connection end to
+  // end, without a junk lead in the pipeline.
+  if (caller === "WordPress") {
+    const kind = classifyWordPressLead(lead);
+    if (kind === "denied") return NextResponse.json({ error: "Outside WordPress quote scope" }, { status: 403 });
+    if (kind === "check") return NextResponse.json({ status: "test_ok" });
+  } else if (isTestLead(lead)) {
     return NextResponse.json({ status: "test_ok", message: "Connection works — test lead not saved." });
   }
 

@@ -17,8 +17,10 @@ import type { PipelineSource } from "./normalize";
 
 const MAP_TYPE = "orion_lead";
 
-/** Who delivered the lead. A webhook carries the platform's whole form, so it may upgrade the card. */
-export type PipelineCaller = "ORION" | "Make" | "Webhook" | null;
+/** Who delivered the lead. A webhook carries the platform's whole form, so it may upgrade the card.
+ *  WordPress (the Coastal quote form's own key, src/lib/orion-auth.ts) is treated like Make: it
+ *  never re-dates a lead nor upgrades a card ORION already filled. */
+export type PipelineCaller = "ORION" | "Make" | "WordPress" | "Webhook" | null;
 
 export interface PipelineLead extends LeadCardFields {
   leadId: string;
