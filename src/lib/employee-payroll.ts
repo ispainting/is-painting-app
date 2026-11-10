@@ -14,12 +14,10 @@ export type PayrollPreviewInput = {
 export function calculateEmployeeGrossPay(input: PayrollPreviewInput) {
   const regularRate = safeNumber(input.regularRate);
   const specialAdjustment = safeNumber(input.specialAdjustment);
-  const overtimeMultiplier = safeNumber(input.overtimeMultiplier) || 1.5;
-  const explicitOvertimeRate = input.overtimeRate == null ? null : safeNumber(input.overtimeRate);
   const customTravelRate = input.customTravelRate == null ? null : safeNumber(input.customTravelRate);
 
   const specialRate = regularRate + specialAdjustment;
-  const overtimeRate = explicitOvertimeRate != null ? explicitOvertimeRate : specialRate * overtimeMultiplier;
+  // Overtime is disabled. Legacy fields remain readable for compatibility only.
   const travelRate =
     input.travelRateType === "special"
       ? specialRate
@@ -30,18 +28,18 @@ export function calculateEmployeeGrossPay(input: PayrollPreviewInput) {
   const regularPay = safeNumber(input.regularHours) * regularRate;
   const specialPay = safeNumber(input.specialHours) * specialRate;
   const travelPay = safeNumber(input.travelHours) * travelRate;
-  const overtimePay = safeNumber(input.overtimeHours) * overtimeRate;
+  const overtimePay = 0;
 
   return {
     regularRate,
     specialRate,
     travelRate,
-    overtimeRate,
+    overtimeRate: regularRate,
     regularPay,
     specialPay,
     travelPay,
     overtimePay,
-    estimatedGrossPay: regularPay + specialPay + travelPay + overtimePay,
+    estimatedGrossPay: regularPay + specialPay + travelPay,
   };
 }
 
