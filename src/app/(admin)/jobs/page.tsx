@@ -30,7 +30,12 @@ export default function JobsPage() {
   const router = useRouter();
   const utils = api.useUtils();
   const [filter, setFilter] = useState<JobsPageFilter>("active");
-  const { data, isLoading, isFetching, isError } = api.jobs.list.useQuery(buildJobsListInputForPageFilter(filter));
+  const [search, setSearch] = useState("");
+  const listInput = {
+    ...buildJobsListInputForPageFilter(filter),
+    search: search.trim() || undefined,
+  };
+  const { data, isLoading, isFetching, isError } = api.jobs.list.useQuery(listInput);
   const counts = api.jobs.statusCounts.useQuery();
   const [open, setOpen] = useState(false);
   const [customerSearch, setCustomerSearch] = useState("");
@@ -145,13 +150,25 @@ export default function JobsPage() {
         description="Estimates and active jobs"
         actions={
           <div className="flex items-center gap-2">
-            <ExportPdfButton disabled={isFetching || isError || !data} build={() => jobsPdf(data ?? [], { filters: [["Status / Visibility", activeFilter.label]] })} />
+            <ExportPdfButton disabled={isFetching || isError || !data} build={() => jobsPdf(data ?? [], { filters: [["Status / Visibility", activeFilter.label], ["Search", search]] })} />
             <button onClick={() => { setOpen(true); setShowCustomerResults(false); }} className="btn btn-primary">
               <Plus className="w-4 h-4 mr-1" /> New job
             </button>
           </div>
         }
       />
+
+      <div className="mb-4">
+        <label htmlFor="jobs-search" className="sr-only">Search jobs</label>
+        <input
+          id="jobs-search"
+          type="search"
+          className="input w-full sm:max-w-md"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Search by customer, project, estimate #, or address"
+        />
+      </div>
 
       <div className="mb-4 flex gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible" role="tablist" aria-label="Filter jobs by status">
         {JOB_FILTERS.map(({ key, label }) => {
