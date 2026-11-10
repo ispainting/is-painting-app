@@ -14,6 +14,7 @@ export type JobVisibility = "active" | "archived" | "all";
 export interface JobsListFilterInput {
   status?: JobStatusValue;
   visibility?: JobVisibility;
+  search?: string;
 }
 
 export interface JobsAccessContext {
@@ -38,6 +39,17 @@ export function buildJobsListWhere(input: JobsListFilterInput | undefined, ctx: 
   const visibility = input?.visibility ?? "active";
   if (visibility === "active") where.deletedAt = null;
   if (visibility === "archived") where.deletedAt = { not: null };
+
+  const search = input?.search?.trim();
+  if (search) {
+    const contains = { contains: search, mode: "insensitive" };
+    where.OR = [
+      { name: contains },
+      { estimateNumber: contains },
+      { address: contains },
+      { customer: { name: contains } },
+    ];
+  }
 
   return where;
 }
