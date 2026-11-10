@@ -28,6 +28,25 @@ export const dynamic = "force-dynamic";
 
 const MAP_TYPE = "orion_lead";
 
+const AttributionInput = z.object({
+  platform: z.string().trim().max(50).optional(),
+  campaignId: z.string().trim().max(191).optional(),
+  campaignName: z.string().trim().max(300).optional(),
+  adSetId: z.string().trim().max(191).optional(),
+  adSetName: z.string().trim().max(300).optional(),
+  adId: z.string().trim().max(191).optional(),
+  adName: z.string().trim().max(300).optional(),
+  formId: z.string().trim().max(191).optional(),
+  formName: z.string().trim().max(300).optional(),
+  gclid: z.string().trim().max(300).optional(),
+  utmSource: z.string().trim().max(200).optional(),
+  utmMedium: z.string().trim().max(200).optional(),
+  utmCampaign: z.string().trim().max(300).optional(),
+  utmContent: z.string().trim().max(300).optional(),
+  utmTerm: z.string().trim().max(300).optional(),
+  confirmed: z.boolean().optional(),
+});
+
 const LeadInput = z.object({
   leadId: z.string().min(1).max(191),
   source: z.enum(["Website", "Meta", "Concierge", "Google"]),
@@ -48,10 +67,11 @@ const LeadInput = z.object({
   message: z.string().trim().max(5000).optional(),
   // Any other answers from the form, label → value, kept on the lead's first note.
   details: z.record(z.string().max(5000)).optional(),
+  attribution: AttributionInput.optional(),
 });
 type LeadInput = z.infer<typeof LeadInput>;
 
-const KNOWN_FIELDS = new Set(["leadId", "source", "receivedAt", "name", "email", "phone", "address", "city", "state", "zipCode", "service", "message", "details"]);
+const KNOWN_FIELDS = new Set(["leadId", "source", "receivedAt", "name", "email", "phone", "address", "city", "state", "zipCode", "service", "message", "details", "attribution"]);
 
 // The owner's Make scenario already shapes each Facebook lead for Viktor ("Lead ID", "Created time",
 // "Full name", "Phone", "Email", "Service", "Form ID", "Ad ID"). Accepting those names lets the CRM
@@ -118,6 +138,10 @@ async function readBody(req: Request): Promise<Record<string, unknown> | null> {
   let looksLikeFacebook = false;
   for (const [key, value] of Object.entries(raw)) {
     const field = KNOWN_FIELDS.has(key) ? key : ALIASES[squash(key)];
+    if (field === "attribution" && value && typeof value === "object" && !Array.isArray(value)) {
+      body.attribution = value;
+      continue;
+    }
     if (field === "details" && value && typeof value === "object" && !Array.isArray(value)) {
       for (const [k, v] of Object.entries(value)) if (asText(v)) details[k] = asText(v);
       continue;
@@ -169,6 +193,23 @@ async function findCustomer(lead: LeadInput) {
 // A repeat delivery of a lead already on file. Contact fields only ever go from empty to filled.
 // The card and title are ORION's to upgrade, for the same reason only ORION may re-date (below):
 // Make's copy of a Facebook lead is the thinner one, and it can arrive after ORION's.
+
+async function addAttribution(opportunityId: number, lead: LeadInput): Promise<boolean> {
+  const incoming = lead.attribution;
+  if (!incoming || !Object.values(incoming).some((value) => value !== undefined && value !== "")) return false;
+  const existing = await prisma.opportunityAttribution.findUnique({ where: { opportunityId } });
+  const data = Object.fromEntries(
+    Object.entries(incoming).filter(([key, value]) => value !== undefined && value !== "" && !(existing as unknown as Record<string, unknown> | null)?.[key])
+  );
+  if (!Object.keys(data).length) return false;
+  await prisma.opportunityAttribution.upsert({
+    where: { opportunityId },
+    create: { opportunityId, ...incoming, platform: incoming.platform ?? lead.source },
+    update: data,
+  });
+  return true;
+}
+
 async function completeExistingLead(opportunityId: number, lead: LeadInput, caller: LeadIntakeCaller | null): Promise<string[]> {
   const opportunity = await prisma.opportunity.findUnique({
     where: { id: opportunityId },
@@ -232,6 +273,7 @@ export async function POST(req: Request) {
       await prisma.opportunity.updateMany({ where: { id: existing.newId, createdAt: { not: receivedAt } }, data: { createdAt: receivedAt } });
     }
     const filled = await completeExistingLead(existing.newId, lead, caller);
+    if (await addAttribution(existing.newId, lead)) filled.push("attribution");
     return NextResponse.json({ status: "exists", opportunityId: existing.newId, filled });
   }
 
@@ -278,6 +320,12 @@ export async function POST(req: Request) {
         },
         select: { id: true },
       });
+
+      if (lead.attribution) {
+        await tx.opportunityAttribution.create({
+          data: { opportunityId: opportunity.id, ...lead.attribution, platform: lead.attribution.platform ?? lead.source },
+        });
+      }
 
       await tx.customerTouchpoint.create({
         data: {

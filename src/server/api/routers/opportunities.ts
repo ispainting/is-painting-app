@@ -12,7 +12,7 @@ const StatusZ = z.enum(["open", "won", "lost"]);
 export const opportunitiesRouter = router({
   list: protectedProcedure.query(({ ctx }) =>
     ctx.prisma.opportunity.findMany({
-      include: { customer: true, assignedTo: true },
+      include: { customer: true, assignedTo: true, attribution: true },
       orderBy: { createdAt: "desc" },
     })
   ),
@@ -20,7 +20,7 @@ export const opportunitiesRouter = router({
   byId: protectedProcedure.input(z.object({ id: z.number() })).query(({ ctx, input }) =>
     ctx.prisma.opportunity.findUnique({
       where: { id: input.id },
-      include: { customer: true, assignedTo: true, automationRuns: true, job: true },
+      include: { customer: true, assignedTo: true, automationRuns: true, job: true, attribution: true },
     })
   ),
 

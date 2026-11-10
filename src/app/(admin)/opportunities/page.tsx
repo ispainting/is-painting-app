@@ -56,6 +56,17 @@ export default function OpportunitiesPage() {
                   <div className="text-xs text-slate-500 mt-1">
                     {o.leadValue ? formatCurrency(Number(o.leadValue)) : ""} · {formatDate(o.createdAt)}
                   </div>
+                  {o.attribution ? (
+                    <details className="mt-2 text-xs text-slate-600">
+                      <summary className="cursor-pointer text-brand-700">Ad origin</summary>
+                      <div className="mt-1 space-y-0.5 break-words">
+                        <div>Platform: {o.attribution.platform || o.source || "Unconfirmed"}</div>
+                        <div>Campaign: {o.attribution.campaignName || o.attribution.campaignId || "Unconfirmed"}</div>
+                        <div>Ad: {o.attribution.adName || o.attribution.adId || "Unconfirmed"}</div>
+                        <div>Form: {o.attribution.formName || o.attribution.formId || "Unconfirmed"}</div>
+                      </div>
+                    </details>
+                  ) : null}
                   {o.notes ? (
                     <details className="mt-2 text-xs text-slate-600">
                       <summary className="cursor-pointer text-brand-700">Lead form</summary>
