@@ -1,0 +1,50 @@
+name: Preview Migration Check
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  verify-migrations:
+    name: Verify pending migrations (Preview)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check that DATABASE_URL and DIRECT_URL are available
+        id: check-env
+        env:
+          DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.PREVIEW_DIRECT_URL }}
+        run: |
+          if [ -z "${DATABASE_URL}" ] || [ -z "${DIRECT_URL}" ]; then
+            echo "Skipping migration verification: PREVIEW_DATABASE_URL and PREVIEW_DIRECT_URL repository secrets are not set."
+            echo "credentials_present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "DATABASE_URL and DIRECT_URL are present – continuing with migration verification."
+            echo "credentials_present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Node.js
+        if: steps.check-env.outputs.credentials_present == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.check-env.outputs.credentials_present == 'true'
+        run: npm ci
+
+      - name: Generate Prisma client
+        if: steps.check-env.outputs.credentials_present == 'true'
+        run: npx prisma generate
+
+      - name: Check for pending migrations (Preview)
+        if: steps.check-env.outputs.credentials_present == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.PREVIEW_DIRECT_URL }}
+        run: npx prisma migrate status
