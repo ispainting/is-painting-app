@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { checkReadAuth } from "@/lib/orion-auth";
 import { buildLeadOutcomes } from "@/lib/orion-lead-outcomes";
 import { attributionFromMetadata, mergeAttribution, type LeadAttribution } from "@/lib/orion-attribution";
+import { summarizeMarketingFunnel } from "@/lib/orion-marketing-funnel";
 
 // Per-lead outcomes for ORION, the marketing platform: for every lead that arrived through
 // POST /api/orion/leads (ORION or Make), its pipeline stage, the proposals sent to that customer
@@ -41,10 +42,18 @@ export async function GET(req: Request) {
       stage: true,
       status: true,
       source: true,
+      serviceType: true,
+      outcomeAt: true,
+      outcomeReason: true,
+      archivedAt: true,
       createdAt: true,
       leadReceivedAt: true,
       lastStageChangedAt: true,
       customer: { select: { city: true } },
+      stageHistory: {
+        select: { previousStage: true, newStage: true, effectiveAt: true, reason: true },
+        orderBy: [{ effectiveAt: "asc" as const }, { id: "asc" as const }],
+      },
       job: { select: { status: true, contractAmount: true, totalEstimate: true } },
     },
   });
@@ -73,5 +82,16 @@ export async function GET(req: Request) {
     proposals,
     attribution,
   );
-  return NextResponse.json({ generatedAt: new Date().toISOString(), currency: "USD", window: { days, since: since.toISOString() }, leads });
+  return NextResponse.json({
+    generatedAt: new Date().toISOString(),
+    currency: "USD",
+    window: { days, since: since.toISOString() },
+    funnel: summarizeMarketingFunnel(leads),
+    leads,
+    guardrails: {
+      advertisingChangesRequireApproval: true,
+      crmIsReadOnlyForMarketingAnalysis: true,
+      spendMustComeFromAdvertisingPlatforms: true,
+    },
+  });
 }

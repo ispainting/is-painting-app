@@ -22,7 +22,19 @@ export interface LeadOrigin {
   utmSource?: string;
   utmCampaign?: string;
   utmContent?: string;
+  // Kept on the card's attribution only (the inbox has no column for them).
+  trafficSource?: string;
+  utmMedium?: string;
+  landingPage?: string;
+  idealTiming?: string;
 }
+
+// The inbox columns that hold an origin field, and how much each holds (prisma/schema.prisma, Lead).
+const ORIGIN_COLUMN_MAX: Partial<Record<keyof LeadOrigin, number>> = {
+  campaignId: 100, campaignName: 255, adsetId: 100, adId: 100, adName: 255, formId: 100,
+  gclid: 255, fbclid: 255, utmSource: 255, utmCampaign: 255, utmContent: 255,
+};
+const fitOrigin = (key: keyof LeadOrigin, value: string) => value.slice(0, ORIGIN_COLUMN_MAX[key] ?? 1000);
 
 export interface LeadIntake extends LeadCardFields {
   source: LeadSource;
@@ -52,6 +64,16 @@ export function attributionOf(intake: LeadIntake): LeadAttribution | null {
     adName: origin.adName,
     formId: origin.formId,
     formName: origin.formName,
+    trafficSource: origin.trafficSource,
+    utmSource: origin.utmSource,
+    utmMedium: origin.utmMedium,
+    utmCampaign: origin.utmCampaign,
+    utmContent: origin.utmContent,
+    gclid: origin.gclid,
+    fbclid: origin.fbclid,
+    landingPage: origin.landingPage,
+    idealTiming: origin.idealTiming,
+    externalLeadId: intake.pipelineKey,
   });
 }
 
@@ -366,6 +388,15 @@ export interface OrionLead extends LeadCardFields {
   receivedAt?: string;
   // The campaign the lead came from, as ORION or the owner's Make scenario names it.
   platform?: string;
+  trafficSource?: string;
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
+  utmContent?: string;
+  gclid?: string;
+  fbclid?: string;
+  landingPage?: string;
+  idealTiming?: string;
   campaignId?: string;
   campaignName?: string;
   adSetId?: string;
@@ -394,20 +425,25 @@ const ORION_ORIGIN = new Map<string, keyof LeadOrigin>([
 ]);
 
 export function leadFromOrion(lead: OrionLead): LeadIntake {
-  const { leadId, source, receivedAt, platform, campaignId, campaignName, adSetId, adSetName, adId, adName, formId, formName, ...fields } = lead;
+  const {
+    leadId, source, receivedAt,
+    platform, campaignId, campaignName, adSetId, adSetName, adId, adName, formId, formName,
+    trafficSource, utmSource, utmMedium, utmCampaign, utmContent, gclid, fbclid, landingPage, idealTiming,
+    ...fields
+  } = lead;
   const origin: LeadOrigin = {};
   // The named fields first; an answer among the details only fills what they left empty.
   const named: Record<keyof LeadOrigin, string | undefined> = {
     platform, campaignId, campaignName, adsetId: adSetId, adsetName: adSetName, adId, adName, formId, formName,
-    gclid: undefined, fbclid: undefined, utmSource: undefined, utmCampaign: undefined, utmContent: undefined,
+    trafficSource, utmSource, utmMedium, utmCampaign, utmContent, gclid, fbclid, landingPage, idealTiming,
   };
   for (const [key, value] of Object.entries(named) as [keyof LeadOrigin, string | undefined][]) {
     const clean = value?.trim();
-    if (clean) origin[key] = clean.slice(0, key.endsWith("Id") ? 100 : 255);
+    if (clean) origin[key] = fitOrigin(key, clean);
   }
   for (const [label, value] of Object.entries(fields.details ?? {})) {
     const key = ORION_ORIGIN.get(squash(label));
-    if (key && !origin[key]) origin[key] = value.slice(0, key.endsWith("Id") ? 100 : 255);
+    if (key && !origin[key]) origin[key] = fitOrigin(key, value);
   }
   return {
     ...fields,

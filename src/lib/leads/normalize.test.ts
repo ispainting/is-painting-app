@@ -262,12 +262,15 @@ describe("leadFromOrion", () => {
 
 describe("attributionOf", () => {
   it("names the platform after the door when the sender doesn't", () => {
-    expect(attributionOf(leadFromOrion({ leadId: "meta:1", source: "Meta", adSetId: "s1" }))).toEqual({ platform: "Meta", adSetId: "s1" });
-    expect(attributionOf(leadFromOrion({ leadId: "meta:1", source: "Meta", platform: "Instagram" }))).toEqual({ platform: "Instagram" });
-    expect(attributionOf(leadFromGoogle({ lead_id: "g1", campaign_id: "c9", user_column_data: [{ column_id: "PHONE_NUMBER", string_value: "5085550142" }] } as never)!)).toMatchObject({ platform: "Google", campaignId: "c9" });
+    expect(attributionOf(leadFromOrion({ leadId: "meta:1", source: "Meta", adSetId: "s1" }))).toEqual({ platform: "Meta", adSetId: "s1", externalLeadId: "meta:1" });
+    expect(attributionOf(leadFromOrion({ leadId: "meta:1", source: "Meta", platform: "Instagram" }))).toMatchObject({ platform: "Instagram" });
+    expect(attributionOf(leadFromGoogle({ lead_id: "g1", campaign_id: "c9", user_column_data: [{ column_id: "PHONE_NUMBER", string_value: "5085550142" }] } as never)!)).toMatchObject({ platform: "Google", campaignId: "c9", externalLeadId: "google-form:g1" });
   });
 
-  it("has nothing to keep for a website lead with no campaign", () => {
-    expect(attributionOf(leadFromOrion({ leadId: "tally:1", source: "Website", details: { utm_source: "google" } }))).toBeNull();
+  it("keeps a website lead's traffic, UTMs and landing page, whole", () => {
+    const page = `https://ispaintingcorp.com/painting-quote/?q=${"x".repeat(400)}`;
+    expect(
+      attributionOf(leadFromOrion({ leadId: "tally:1", source: "Website", trafficSource: "Paid search", utmMedium: "cpc", landingPage: page, idealTiming: "Spring", details: { utm_source: "google" } })),
+    ).toEqual({ trafficSource: "Paid search", utmSource: "google", utmMedium: "cpc", landingPage: page, idealTiming: "Spring", externalLeadId: "tally:1" });
   });
 });

@@ -7,10 +7,15 @@ const opp = (over: Partial<OpportunityRow> = {}): OpportunityRow => ({
   stage: "new_lead",
   status: "open",
   source: "Meta",
+  serviceType: "Interior Painting",
+  outcomeAt: null,
+  outcomeReason: null,
+  archivedAt: null,
   createdAt: new Date("2026-10-10T12:00:00Z"),
   leadReceivedAt: null,
   lastStageChangedAt: null,
   city: "Falmouth",
+  stageHistory: [{ previousStage: null, newStage: "new_lead", effectiveAt: new Date("2026-10-10T12:00:00Z"), reason: "Initial lead received" }],
   job: null,
   ...over,
 });
@@ -37,6 +42,30 @@ describe("buildLeadOutcomes", () => {
     expect(row.proposals).toMatchObject({ count: 2, sent: 2, approved: 1, sentAmount: 10000, approvedAmount: 5200 });
     expect(row.proposals.firstApprovedAt).toBe("2026-10-15T12:00:00.000Z");
     expect(row.job).toEqual({ status: "active", value: 5200 });
+    expect(row.classification).toEqual({ valid: true, qualified: true, quoted: true, won: true });
+    expect(row.serviceType).toBe("Interior Painting");
+    expect(row.stageHistory).toEqual([{ previousStage: null, stage: "new_lead", effectiveAt: "2026-10-10T12:00:00.000Z", reason: "Initial lead received" }]);
+  });
+
+  it("communicates disqualification and loss reasons without deleting history", () => {
+    const [row] = buildLeadOutcomes(
+      [{ legacyId: "meta:lost", newId: 1 }],
+      [opp({
+        stage: "not_qualified",
+        status: "lost",
+        outcomeAt: new Date("2026-10-14T12:00:00Z"),
+        outcomeReason: "No response",
+        archivedAt: new Date("2026-10-20T12:00:00Z"),
+        stageHistory: [
+          { previousStage: null, newStage: "new_lead", effectiveAt: new Date("2026-10-10T12:00:00Z"), reason: "Initial lead received" },
+          { previousStage: "new_lead", newStage: "not_qualified", effectiveAt: new Date("2026-10-14T12:00:00Z"), reason: "No response" },
+        ],
+      })],
+      [],
+    );
+    expect(row.classification).toEqual({ valid: true, qualified: false, quoted: false, won: false });
+    expect(row.outcome).toEqual({ at: "2026-10-14T12:00:00.000Z", reason: "No response", archived: true });
+    expect(row.stageHistory).toHaveLength(2);
   });
 
   it("leaves out proposals made for the same customer well before the lead", () => {

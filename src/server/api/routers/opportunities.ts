@@ -8,10 +8,12 @@ import { isTerminalStage, opportunityStatusForStage } from "@/lib/pipeline-sync"
 import { opportunityValues } from "@/lib/opportunity-values";
 import { linkJobOpportunity } from "@/lib/opportunity-links";
 import { synchronizeInitialOpportunityHistory } from "@/lib/opportunity-history";
+import { attributionFromLeadNote, attributionFromMetadata, compactAttribution, leadAttributionFields, mergeAttribution, type LeadAttribution } from "@/lib/orion-attribution";
 
 const PipelineZ = z.enum(["sales", "not_interested"]);
 const StageZ = z.nativeEnum(OpportunityStage);
 const StatusZ = z.enum(["open", "won", "lost"]);
+const AttributionZ = z.object(Object.fromEntries(leadAttributionFields.map((field) => [field, z.string().trim().max(1000).optional()])) as Record<typeof leadAttributionFields[number], z.ZodOptional<z.ZodString>>);
 const editable = z.object({
   customerId: z.number().int().positive().optional(),
   name: z.string().trim().min(1).optional(),
@@ -121,6 +123,53 @@ export const opportunitiesRouter = router({
         stageHistory: { include: { changedBy: { select: { id: true, name: true } } }, orderBy: [{ recordedAt: "desc" }, { id: "desc" }] } },
     })
   ),
+
+  marketingAttribution: protectedProcedure.input(z.object({ id: z.number().int().positive() })).query(async ({ ctx, input }) => {
+    const opportunity = await ctx.prisma.opportunity.findUnique({
+      where: { id: input.id },
+      select: { id: true, customerId: true, notes: true },
+    });
+    if (!opportunity) throw new TRPCError({ code: "NOT_FOUND", message: "Opportunity not found." });
+    const touchpoints = await ctx.prisma.customerTouchpoint.findMany({
+      where: { customerId: opportunity.customerId, deletedAt: null, metadata: { path: ["opportunityId"], equals: opportunity.id } },
+      orderBy: { createdAt: "asc" },
+      select: { metadata: true },
+    });
+    let structured: LeadAttribution | null = null;
+    for (const touchpoint of touchpoints) structured = mergeAttribution(structured, attributionFromMetadata(touchpoint.metadata));
+    return mergeAttribution(structured, attributionFromLeadNote(opportunity.notes)) ?? {};
+  }),
+
+  updateMarketingAttribution: adminProcedure
+    .input(z.object({ id: z.number().int().positive(), attribution: AttributionZ }))
+    .mutation(async ({ ctx, input }) => ctx.prisma.$transaction(async (tx) => {
+      const opportunity = await tx.opportunity.findUnique({ where: { id: input.id }, select: { id: true, customerId: true, leadReceivedAt: true, createdAt: true } });
+      if (!opportunity) throw new TRPCError({ code: "NOT_FOUND", message: "Opportunity not found." });
+      const existing = await tx.customerTouchpoint.findFirst({
+        where: { customerId: opportunity.customerId, deletedAt: null, metadata: { path: ["opportunityId"], equals: opportunity.id } },
+        orderBy: { createdAt: "asc" },
+        select: { id: true, metadata: true },
+      });
+      const attribution = compactAttribution(input.attribution);
+      const base = existing?.metadata && typeof existing.metadata === "object" && !Array.isArray(existing.metadata)
+        ? { ...(existing.metadata as Prisma.JsonObject) }
+        : {};
+      for (const field of leadAttributionFields) delete base[field];
+      const metadata = { ...base, type: "marketing_attribution", opportunityId: opportunity.id, ...(attribution ?? {}) };
+      if (existing) {
+        await tx.customerTouchpoint.update({ where: { id: existing.id }, data: { metadata } });
+      } else {
+        await tx.customerTouchpoint.create({ data: {
+          customerId: opportunity.customerId,
+          type: "note",
+          subject: "Marketing attribution",
+          body: "Marketing attribution entered or confirmed in the Opportunity editor.",
+          occurredAt: opportunity.leadReceivedAt ?? opportunity.createdAt,
+          metadata,
+        } });
+      }
+      return attribution ?? {};
+    })),
 
   create: adminProcedure
     .input(z.object({

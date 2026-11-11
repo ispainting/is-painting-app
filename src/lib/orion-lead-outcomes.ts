@@ -4,6 +4,14 @@
 // cities, dates, campaign attribution and amounts — never a customer's name, phone, email or address.
 
 import type { LeadAttribution } from "./orion-attribution";
+import { isQualifiedLead, isValidLead } from "./pipeline-sync";
+
+export interface StageHistoryRow {
+  previousStage: string | null;
+  newStage: string;
+  effectiveAt: Date;
+  reason: string | null;
+}
 
 export interface OpportunityRow {
   id: number;
@@ -11,10 +19,15 @@ export interface OpportunityRow {
   stage: string;
   status: string;
   source: string | null;
+  serviceType: string | null;
+  outcomeAt: Date | null;
+  outcomeReason: string | null;
+  archivedAt: Date | null;
   createdAt: Date;
   leadReceivedAt: Date | null;
   lastStageChangedAt: Date | null;
   city: string | null;
+  stageHistory: StageHistoryRow[];
   job: { status: string; contractAmount: unknown; totalEstimate: unknown } | null;
 }
 
@@ -36,7 +49,25 @@ export interface LeadOutcome {
   lastStageChangedAt: string | null;
   source: string | null;
   city: string | null;
+  serviceType: string | null;
   attribution: LeadAttribution | null;
+  classification: {
+    valid: boolean;
+    qualified: boolean;
+    quoted: boolean;
+    won: boolean;
+  };
+  outcome: {
+    at: string | null;
+    reason: string | null;
+    archived: boolean;
+  };
+  stageHistory: Array<{
+    previousStage: string | null;
+    stage: string;
+    effectiveAt: string;
+    reason: string | null;
+  }>;
   proposals: {
     count: number;
     sent: number;
@@ -87,6 +118,8 @@ export function buildLeadOutcomes(
       return ms.length ? new Date(Math.min(...ms)).toISOString() : null;
     };
     const jobValue = o.job ? (money(o.job.contractAmount) > 0 ? money(o.job.contractAmount) : money(o.job.totalEstimate)) : 0;
+    const quoted = sent.length > 0;
+    const won = o.status === "won" || o.stage === "completed" || !!o.job && ["approved", "active", "on_hold", "completed"].includes(o.job.status);
     out.push({
       leadKey: map.legacyId,
       opportunityId: o.id,
@@ -96,7 +129,25 @@ export function buildLeadOutcomes(
       lastStageChangedAt: o.lastStageChangedAt?.toISOString() ?? null,
       source: o.source,
       city: o.city,
+      serviceType: o.serviceType,
       attribution: attributionByOpportunity.get(o.id) ?? null,
+      classification: {
+        valid: isValidLead(o.stage),
+        qualified: isQualifiedLead(o.stage),
+        quoted,
+        won,
+      },
+      outcome: {
+        at: o.outcomeAt?.toISOString() ?? null,
+        reason: o.outcomeReason,
+        archived: o.archivedAt !== null,
+      },
+      stageHistory: o.stageHistory.map((history) => ({
+        previousStage: history.previousStage,
+        stage: history.newStage,
+        effectiveAt: history.effectiveAt.toISOString(),
+        reason: history.reason,
+      })),
       proposals: {
         count: mine.length,
         sent: sent.length,
