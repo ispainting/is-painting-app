@@ -8,6 +8,10 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { api } from "@/trpc/react";
 import { formatDate } from "@/lib/utils";
 import { toast } from "sonner";
+import { ExportPdfButton } from "@/components/ExportPdfButton";
+import { employeesPdf } from "@/lib/pdf-export-data";
+import { buildPayrollSummaries } from "@/lib/payroll-preview";
+import { todayDateInputValueInMassachusetts } from "@/lib/employee-rate-resolver";
 import {
   ArrowDownWideNarrow,
   ArrowUpWideNarrow,
@@ -41,6 +45,8 @@ export default function EmployeesPage() {
   const [bulkJobId, setBulkJobId] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [page, setPage] = useState(1);
+  const [payrollStart, setPayrollStart] = useState(() => todayDateInputValueInMassachusetts(new Date(Date.now() - 29 * 86_400_000)));
+  const [payrollEnd, setPayrollEnd] = useState(() => todayDateInputValueInMassachusetts());
   const [confirmDelete, setConfirmDelete] = useState<{ id: number; name: string } | null>(null);
   const [duplicateTarget, setDuplicateTarget] = useState<{ id: number; name: string } | null>(null);
   const [duplicateEmail, setDuplicateEmail] = useState("");
@@ -261,12 +267,32 @@ export default function EmployeesPage() {
         description="Manage your workforce, payroll settings, and field assignments"
         actions={
           <div className="flex items-center gap-2">
+            <ExportPdfButton disabled={list.isFetching || list.isError || !list.data} build={async () => {
+              if (!payrollStart || !payrollEnd || payrollStart > payrollEnd) throw new Error("Select a valid payroll export date range.");
+              // Use each visible employee's existing authorized time query; never export hidden pages.
+              const employeeEntries = await Promise.all(rows.map(row => utils.time.listAll.fetch({
+                startDate: payrollStart, endDate: payrollEnd, employeeId: row.id,
+              })));
+              if (employeeEntries.some(entries => entries.length === 1000)) {
+                throw new Error("A visible employee reached the 1,000-entry limit. Narrow the payroll export period to avoid incomplete totals.");
+              }
+              const entries = employeeEntries.flat();
+              return employeesPdf(rows, buildPayrollSummaries(entries, rows), {
+                dateRange: `${payrollStart} through ${payrollEnd}`,
+                filters: [["Search", search], ["Position", positionFilter], ["Visibility", visibility], ["Sort", `${sortBy} ${sortDir}`], ["Page", `${page} of ${list.data?.pageCount ?? 1}`]],
+              });
+            }} />
             <button className="btn btn-primary" onClick={() => setCreateOpen(true)}>
               <Plus className="mr-1 h-4 w-4" /> New Employee
             </button>
           </div>
         }
       />
+
+      <div className="mb-4 flex flex-wrap items-end gap-3">
+        <label className="text-sm">Payroll export from<input aria-label="Payroll export from" type="date" className="input" value={payrollStart} onChange={event => setPayrollStart(event.target.value)} /></label>
+        <label className="text-sm">Payroll export through<input aria-label="Payroll export through" type="date" className="input" value={payrollEnd} onChange={event => setPayrollEnd(event.target.value)} /></label>
+      </div>
 
       <div className="mb-4 grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
         <SummaryCard icon={<Users className="h-4 w-4" />} label="Total" value={String(list.data?.total || 0)} />

@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { attributionFromMetadata, mergeAttribution, type LeadAttribution } from "@/lib/orion-attribution";
 import { betterOpportunityName, blankCustomerFields, leadCardNote, leadOpportunityName, replacesNote, type LeadCardFields } from "@/lib/orion-lead-card";
 import type { PipelineSource } from "./normalize";
 
@@ -27,11 +28,13 @@ export interface PipelineLead extends LeadCardFields {
   source: PipelineSource;
   /** Left out when the delivery carried no date: the card is then dated "now" and never re-dated. */
   receivedAt?: Date;
+  /** The campaign, ad set, ad and form the lead came from, read by ORION's lead outcomes. */
+  attribution?: LeadAttribution | null;
 }
 
 export type PipelineResult =
   | { status: "created"; customerMatched: boolean; opportunityId: number; customerId: number }
-  | { status: "exists"; opportunityId: number; filled?: string[] };
+  | { status: "exists"; opportunityId: number; filled?: string[]; attributionAdded?: boolean };
 
 const CRM_SOURCE: Record<PipelineSource, { leadSource: string; source: string; label: string }> = {
   Website: { leadSource: "Website", source: "Website form", label: "website form" },
@@ -64,6 +67,39 @@ async function findCustomer(lead: PipelineLead) {
     if (match) return { id: match.id };
   }
   return null;
+}
+
+/**
+ * Keeps the lead's campaign on its card. A later delivery may fill a field still missing, never
+ * rewrite one (src/lib/orion-attribution.ts). True when something was added.
+ */
+async function preserveAttribution(opportunityId: number, customerId: number, lead: PipelineLead, occurredAt: Date): Promise<boolean> {
+  const incoming = lead.attribution;
+  if (!incoming) return false;
+  const existing = await prisma.customerTouchpoint.findFirst({
+    where: { customerId, deletedAt: null, metadata: { path: ["opportunityId"], equals: opportunityId } },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, metadata: true },
+  });
+  if (existing) {
+    const current = attributionFromMetadata(existing.metadata);
+    const merged = mergeAttribution(current, incoming);
+    if (JSON.stringify(current) === JSON.stringify(merged)) return false;
+    const base = existing.metadata && typeof existing.metadata === "object" && !Array.isArray(existing.metadata) ? (existing.metadata as Record<string, unknown>) : {};
+    await prisma.customerTouchpoint.update({ where: { id: existing.id }, data: { metadata: { ...base, ...merged } } });
+    return true;
+  }
+  await prisma.customerTouchpoint.create({
+    data: {
+      customerId,
+      type: "note",
+      subject: "Marketing attribution",
+      body: "Campaign attribution captured automatically.",
+      occurredAt,
+      metadata: { type: "marketing_attribution", source: lead.source, leadId: lead.leadId, opportunityId, ...incoming },
+    },
+  });
+  return true;
 }
 
 /**
@@ -111,10 +147,12 @@ export async function deliverToPipeline(lead: PipelineLead, caller: PipelineCall
     // ORION also corrected the first backfill, which was stamped with the import time. Only ORION
     // may re-date: a Make delivery of a lead ORION already pulled must never move its date.
     if (caller === "ORION" && lead.receivedAt) {
-      await prisma.opportunity.updateMany({ where: { id: existing.newId, createdAt: { not: receivedAt } }, data: { createdAt: receivedAt } });
+      await prisma.opportunity.updateMany({ where: { id: existing.newId, leadReceivedAt: { not: receivedAt } }, data: { leadReceivedAt: receivedAt } });
     }
     const filled = await completeExistingLead(existing.newId, lead, caller);
-    return { status: "exists", opportunityId: existing.newId, filled };
+    const mapped = await prisma.opportunity.findUnique({ where: { id: existing.newId }, select: { customerId: true } });
+    const attributionAdded = mapped ? await preserveAttribution(existing.newId, mapped.customerId, lead, receivedAt) : false;
+    return { status: "exists", opportunityId: existing.newId, filled, attributionAdded };
   }
 
   const matched = await findCustomer(lead);
@@ -153,10 +191,12 @@ export async function deliverToPipeline(lead: PipelineLead, caller: PipelineCall
           status: "open",
           source: CRM_SOURCE[lead.source].leadSource,
           notes: body,
+          leadReceivedAt: receivedAt,
           lastStageChangedAt: receivedAt,
           // Dated when the request arrived, not when it reached the CRM, so "leads this month" and
           // the source breakdowns count it in the right month even when it was delivered later.
           createdAt: receivedAt,
+          stageHistory: { create: { newStage: "new_lead", effectiveAt: receivedAt, reason: "Initial lead received" } },
         },
         select: { id: true },
       });
@@ -168,9 +208,22 @@ export async function deliverToPipeline(lead: PipelineLead, caller: PipelineCall
           subject: `Quote request received (${CRM_SOURCE[lead.source].label})`,
           body,
           occurredAt: receivedAt,
-          metadata: { via: caller, leadId: lead.leadId, opportunityId: opportunity.id },
+          metadata: { via: caller, leadId: lead.leadId, opportunityId: opportunity.id, type: "lead_intake" },
         },
       });
+
+      if (lead.attribution) {
+        await tx.customerTouchpoint.create({
+          data: {
+            customerId,
+            type: "note",
+            subject: "Marketing attribution",
+            body: "Campaign attribution captured automatically.",
+            occurredAt: receivedAt,
+            metadata: { type: "marketing_attribution", source: lead.source, leadId: lead.leadId, opportunityId: opportunity.id, ...lead.attribution },
+          },
+        });
+      }
 
       await tx.migrationMap.create({ data: { entityType: MAP_TYPE, legacyId: lead.leadId, newId: opportunity.id } });
       return { opportunityId: opportunity.id, customerId };

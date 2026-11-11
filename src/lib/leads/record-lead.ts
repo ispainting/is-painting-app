@@ -1,7 +1,7 @@
 import { Prisma, type Lead } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { SERVICE_AREA, answeredLines, leadCardNote } from "@/lib/orion-lead-card";
-import { isOutOfMap, normalizePhone, normalizeService, type LeadIntake } from "./normalize";
+import { attributionOf, isOutOfMap, normalizePhone, normalizeService, type LeadIntake } from "./normalize";
 import { notifyNewLead } from "./notify";
 import { completeExistingLead, deliverToPipeline, type PipelineCaller, type PipelineLead, type PipelineResult } from "./pipeline";
 
@@ -141,6 +141,7 @@ export async function intakeLead(intake: LeadIntake, caller: PipelineCaller): Pr
     source: intake.pipelineSource,
     receivedAt: intake.dated ? intake.receivedAt : undefined,
     name, email, phone, address, city, state, zipCode, service, message, details,
+    attribution: attributionOf(intake),
   };
 
   let pipeline: PipelineResult | null = null;

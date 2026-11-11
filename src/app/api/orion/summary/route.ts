@@ -78,7 +78,7 @@ export async function GET(req: Request) {
     recentPayments,
     newLeadsWaiting,
   ] = await Promise.all([
-    prisma.opportunity.count({ where: { createdAt: month } }),
+    prisma.opportunity.count({ where: { OR: [{ leadReceivedAt: month }, { leadReceivedAt: null, createdAt: month }] } }),
     prisma.proposal.findMany({ where: { sentAt: month, deletedAt: null }, select: { totalAmount: true } }),
     prisma.proposal.findMany({ where: { approvedAt: month, deletedAt: null }, select: { totalAmount: true } }),
     prisma.job.findMany({ where: { approvedAt: month, deletedAt: null }, select: { contractAmount: true, totalEstimate: true } }),
@@ -98,9 +98,10 @@ export async function GET(req: Request) {
     prisma.job.findMany({ where: { status: { in: ["approved", "active"] }, deletedAt: null }, select: { contractAmount: true, totalEstimate: true } }),
     prisma.invoice.findMany({ where: { status: { not: "cancelled" } }, select: { status: true, amountRemaining: true, dueDate: true } }),
     prisma.opportunity.findMany({
-      where: { createdAt: { gte: sourceWindowStart } },
+      where: { OR: [{ leadReceivedAt: { gte: sourceWindowStart } }, { leadReceivedAt: null, createdAt: { gte: sourceWindowStart } }] },
       select: {
         createdAt: true,
+        leadReceivedAt: true,
         stage: true,
         status: true,
         source: true,
@@ -127,11 +128,9 @@ export async function GET(req: Request) {
       take: 5,
     }),
     // Leads nobody has moved past "new lead" yet — how many, and how long the oldest has waited.
-    prisma.opportunity.aggregate({
+    prisma.opportunity.findMany({
       where: { status: "open", pipeline: "sales", stage: "new_lead" },
-      _count: true,
-      _min: { createdAt: true },
-      _max: { createdAt: true },
+      select: { leadReceivedAt: true, createdAt: true },
     }),
   ]);
 
@@ -163,7 +162,7 @@ export async function GET(req: Request) {
       amount: null,
       city: o.customer.city ?? null,
       source: normalizeSource(o.source ?? o.customer.leadSource),
-      at: o.createdAt,
+      at: o.leadReceivedAt ?? o.createdAt,
     })),
     ...recentProposals.map((p) => ({
       kind: p.approvedAt ? ("proposal_approved" as const) : ("proposal_sent" as const),
@@ -204,9 +203,13 @@ export async function GET(req: Request) {
         openInvoices: { count: openInvoices.length, amount: openInvoices.reduce((t, i) => t + money(i.amountRemaining), 0) },
         overdueInvoices: { count: overdueInvoices.length, amount: overdueInvoices.reduce((t, i) => t + money(i.amountRemaining), 0) },
         newLeadsWaiting: {
-          count: newLeadsWaiting._count,
-          oldestAt: newLeadsWaiting._min.createdAt?.toISOString() ?? null,
-          newestAt: newLeadsWaiting._max.createdAt?.toISOString() ?? null,
+          count: newLeadsWaiting.length,
+          oldestAt: newLeadsWaiting.length
+            ? new Date(Math.min(...newLeadsWaiting.map((lead) => (lead.leadReceivedAt ?? lead.createdAt).getTime()))).toISOString()
+            : null,
+          newestAt: newLeadsWaiting.length
+            ? new Date(Math.max(...newLeadsWaiting.map((lead) => (lead.leadReceivedAt ?? lead.createdAt).getTime()))).toISOString()
+            : null,
         },
       },
       sources: { windowDays: SOURCE_WINDOW_DAYS, rows: [...bySource.values()].sort((a, b) => b.leads - a.leads) },

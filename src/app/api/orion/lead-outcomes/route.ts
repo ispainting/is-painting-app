@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { checkReadAuth } from "@/lib/orion-auth";
 import { buildLeadOutcomes } from "@/lib/orion-lead-outcomes";
+import { attributionFromMetadata, mergeAttribution, type LeadAttribution } from "@/lib/orion-attribution";
 
 // Per-lead outcomes for ORION, the marketing platform: for every lead that arrived through
 // POST /api/orion/leads (ORION or Make), its pipeline stage, the proposals sent to that customer
@@ -30,7 +31,10 @@ export async function GET(req: Request) {
 
   const maps = await prisma.migrationMap.findMany({ where: { entityType: MAP_TYPE }, select: { legacyId: true, newId: true } });
   const opportunities = await prisma.opportunity.findMany({
-    where: { id: { in: maps.map((m) => m.newId) }, createdAt: { gte: since } },
+    where: {
+      id: { in: maps.map((m) => m.newId) },
+      OR: [{ leadReceivedAt: { gte: since } }, { leadReceivedAt: null, createdAt: { gte: since } }],
+    },
     select: {
       id: true,
       customerId: true,
@@ -38,6 +42,7 @@ export async function GET(req: Request) {
       status: true,
       source: true,
       createdAt: true,
+      leadReceivedAt: true,
       lastStageChangedAt: true,
       customer: { select: { city: true } },
       job: { select: { status: true, contractAmount: true, totalEstimate: true } },
@@ -47,11 +52,26 @@ export async function GET(req: Request) {
     where: { customerId: { in: [...new Set(opportunities.map((o) => o.customerId))] }, deletedAt: null },
     select: { customerId: true, status: true, totalAmount: true, sentAt: true, approvedAt: true, createdAt: true },
   });
+  const touchpoints = await prisma.customerTouchpoint.findMany({
+    where: { customerId: { in: [...new Set(opportunities.map((o) => o.customerId))] }, deletedAt: null },
+    select: { metadata: true },
+  });
+  const attribution = new Map<number, LeadAttribution>();
+  for (const touchpoint of touchpoints) {
+    if (!touchpoint.metadata || typeof touchpoint.metadata !== "object" || Array.isArray(touchpoint.metadata)) continue;
+    const metadata = touchpoint.metadata as Record<string, unknown>;
+    const opportunityId = typeof metadata.opportunityId === "number" ? metadata.opportunityId : Number(metadata.opportunityId);
+    const row = attributionFromMetadata(metadata);
+    if (!Number.isInteger(opportunityId) || !row) continue;
+    const merged = mergeAttribution(attribution.get(opportunityId), row);
+    if (merged) attribution.set(opportunityId, merged);
+  }
 
   const leads = buildLeadOutcomes(
     maps,
     opportunities.map(({ customer, ...o }) => ({ ...o, city: customer.city })),
-    proposals
+    proposals,
+    attribution,
   );
   return NextResponse.json({ generatedAt: new Date().toISOString(), currency: "USD", window: { days, since: since.toISOString() }, leads });
 }

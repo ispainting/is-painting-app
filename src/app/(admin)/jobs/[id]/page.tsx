@@ -1,13 +1,21 @@
 "use client";
 
 import { useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
+import { jobCanonicalTotal } from "@/lib/job-total";
+import { getLifecycleDate, toDateInputValue, parseLifecycleDateInput } from "@/lib/job-lifecycle";
+import { formatLifecycleDate } from "@/lib/job-lifecycle";
+import { todayDateInputValueInMassachusetts } from "@/lib/employee-rate-resolver";
+import { invalidateExpenseQueries } from "@/lib/expense-invalidation";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { toast } from "sonner";
 import { JobExpenseEntry } from "@/components/expenses/JobExpenseEntry";
+import { JobFinancials } from "@/components/jobs/JobFinancials";
+import { JobOpportunityLink } from "@/components/jobs/JobOpportunityLink";
+import { calculateJobTracking, calculateEntryMinutes, formatMinutesToHours } from "@/lib/job-tracking";
 
 const STATUSES = ["estimate", "sent", "approved", "active", "completed", "on_hold", "cancelled"] as const;
 const WORKSPACE_TABS = [
@@ -23,18 +31,22 @@ type WorkspaceTab = (typeof WORKSPACE_TABS)[number]["id"];
 
 export default function JobDetailPage() {
   const params = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
   const id = Number(params.id);
   const utils = api.useUtils();
   const { data: job, isLoading } = api.jobs.byId.useQuery({ id });
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustomerResults, setShowCustomerResults] = useState(false);
+  const [completionDate, setCompletionDate] = useState("");
   const customers = api.customers.list.useQuery(
     { search: customerSearch.trim() || undefined },
     { enabled: isEditOpen }
   );
 
-  const [activeTab, setActiveTab] = useState<WorkspaceTab>("overview");
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>(() =>
+    searchParams.get("tab") === "financials" ? "financials" : "overview"
+  );
   const [editForm, setEditForm] = useState({
     customerId: 0,
     name: "",
@@ -52,6 +64,9 @@ export default function JobDetailPage() {
     subcontractorBudget: 0,
     totalEstimate: 0,
     contractAmount: 0,
+    leadReceivedAt: "",
+    proposalSentAt: "",
+    workStartedAt: "",
   });
 
   const [paintForm, setPaintForm] = useState({
@@ -71,9 +86,12 @@ export default function JobDetailPage() {
   });
 
   const updateJob = api.jobs.update.useMutation({
-    onSuccess: () => {
-      utils.jobs.byId.invalidate({ id });
-      utils.jobs.list.invalidate();
+    onSuccess: async () => {
+      await Promise.all([
+        utils.jobs.byId.invalidate({ id }), utils.jobs.list.invalidate(), utils.jobs.statusCounts.invalidate(),
+        utils.jobs.clockable.invalidate(), utils.business.analytics.invalidate(), utils.reports.dashboard.invalidate(),
+        utils.invoices.invalidate(), utils.customers.invalidate(), utils.opportunities.invalidate(),
+      ]);
       toast.success("Job updated");
       setIsEditOpen(false);
     },
@@ -81,10 +99,46 @@ export default function JobDetailPage() {
   });
 
   const setStatus = api.jobs.setStatus.useMutation({
-    onSuccess: () => {
-      utils.jobs.byId.invalidate({ id });
-      utils.jobs.list.invalidate();
+    onSuccess: async () => {
+      await Promise.all([
+        utils.jobs.byId.invalidate({ id }), utils.jobs.list.invalidate(), utils.jobs.statusCounts.invalidate(),
+        utils.jobs.clockable.invalidate(), utils.business.analytics.invalidate(), utils.reports.dashboard.invalidate(),
+        utils.invoices.invalidate(), utils.customers.invalidate(), utils.opportunities.invalidate(),
+      ]);
       toast.success("Status updated");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const updateCompletionDate = api.jobs.setCompletionDate.useMutation({
+    onSuccess: async () => {
+      await Promise.all([
+        utils.jobs.byId.invalidate({ id }), utils.jobs.list.invalidate(), utils.business.analytics.invalidate(),
+        utils.reports.dashboard.invalidate(), utils.customers.invalidate(), utils.opportunities.invalidate(),
+      ]);
+      toast.success("Completed date saved as manual");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const updateLifecycleDates = api.jobs.updateLifecycleDates.useMutation({
+    onSuccess: async () => {
+      await Promise.all([
+        utils.jobs.byId.invalidate({ id }),
+        utils.jobs.list.invalidate(),
+        utils.business.analytics.invalidate(),
+        utils.reports.dashboard.invalidate(),
+      ]);
+      toast.success("Lifecycle dates updated");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const deleteExpense = api.expenses.remove.useMutation({
+    onSuccess: () => {
+      invalidateExpenseQueries(utils, id);
+      setExpenseToDelete(null);
+      toast.success("Expense deleted");
     },
     onError: (e) => toast.error(e.message),
   });
@@ -120,20 +174,50 @@ export default function JobDetailPage() {
     onSuccess: () => {
       utils.jobs.byId.invalidate({ id });
       utils.jobs.list.invalidate();
+      utils.jobs.statusCounts.invalidate();
+      utils.jobs.clockable.invalidate();
       toast.success("Job archived");
       setConfirmDeleteOpen(false);
     },
     onError: (e) => toast.error(e.message),
   });
 
+  const restoreJob = api.jobs.restore.useMutation({
+    onSuccess: () => {
+      utils.jobs.byId.invalidate({ id });
+      utils.jobs.list.invalidate();
+      utils.jobs.statusCounts.invalidate();
+      utils.jobs.clockable.invalidate();
+      toast.success("Job restored");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const router = useRouter();
+  const [confirmPermanentOpen, setConfirmPermanentOpen] = useState(false);
+  const deleteJobPermanently = api.jobs.remove.useMutation({
+    onSuccess: () => {
+      utils.jobs.list.invalidate();
+      utils.jobs.statusCounts.invalidate();
+      utils.jobs.clockable.invalidate();
+      utils.business.analytics.invalidate();
+      utils.reports.dashboard.invalidate();
+      toast.success("Job permanently deleted");
+      setConfirmPermanentOpen(false);
+      router.push("/jobs");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [expenseToDelete, setExpenseToDelete] = useState<{ id: number; vendor: string | null; amount: string | number } | null>(null);
 
   if (isLoading || !job) return <div className="text-slate-500">Loading…</div>;
   const jobData = job as typeof job & {
     customer: { name: string };
     assignments: Array<{ id: number; user: { name: string }; userId: number }>;
     expenses: Array<{ id: number; status: string; category: string; amount: string | number; receiptUrl: string | null; vendor: string | null; expenseDate: string; description: string | null; attachments: Array<{ id: number; originalFilename: string; mimeType: string }> }>;
-    timeEntries: Array<{ id: number; paidHours: string | number | null; hoursWorked: string | number | null; grossHours: string | number | null; clockOut: string | null; clockIn: string; user: { name: string; hourlyRate: string | number | null } }>;
+    timeEntries: Array<{ id: number; paidHours: string | number | null; hoursWorked: string | number | null; grossHours: string | number | null; clockOut: string | null; clockIn: string; hourlyRateSnapshot: string | number | null; user: { name: string; hourlyRate: string | number | null } }>;
     invoices: Array<{ id: number; total: string | number; invoiceNumber: string | null; title: string | null }>;
     payments: Array<{ id: number; amount: string | number; dateReceived: string; attachmentUrl: string | null; method: string | null }>;
     paintColors: Array<{ id: number; area: string; colorName: string; brand: string | null; finish: string | null; notes: string | null }>;
@@ -165,6 +249,9 @@ export default function JobDetailPage() {
       subcontractorBudget: Number(job.subcontractorBudget || 0),
       totalEstimate: Number(job.totalEstimate),
       contractAmount: Number(job.contractAmount),
+      leadReceivedAt: toDateInputValue(getLifecycleDate(job, "leadReceivedAt")),
+      proposalSentAt: toDateInputValue(getLifecycleDate(job, "proposalSentAt")),
+      workStartedAt: toDateInputValue(getLifecycleDate(job, "workStartedAt")),
     });
     setCustomerSearch(customerName);
     setShowCustomerResults(false);
@@ -190,17 +277,44 @@ export default function JobDetailPage() {
         subcontractorBudget: editForm.subcontractorBudget,
         totalEstimate: editForm.totalEstimate,
         contractAmount: editForm.contractAmount,
+        leadReceivedAt: parseLifecycleDateInput(editForm.leadReceivedAt),
+        proposalSentAt: parseLifecycleDateInput(editForm.proposalSentAt),
+        workStartedAt: parseLifecycleDateInput(editForm.workStartedAt),
       },
     });
 
     if (editForm.status !== job.status) {
-      await setStatus.mutateAsync({ id, status: editForm.status });
+      await setStatus.mutateAsync({
+        id,
+        status: editForm.status,
+        ...(editForm.status === "completed"
+          ? { completedAt: parseLifecycleDateInput(completionDate || toDateInputValue(job.completedAt) || todayDateInputValueInMassachusetts())! }
+          : {}),
+      });
     }
   };
 
-  const contractOrTotalAmount = Number(job.contractAmount) > 0
-    ? Number(job.contractAmount)
-    : Number(job.totalEstimate);
+  const contractOrTotalAmount = jobCanonicalTotal(job);
+  const leadReceivedAt = getLifecycleDate(job, "leadReceivedAt");
+  const proposalSentAt = getLifecycleDate(job, "proposalSentAt");
+  const workStartedAt = getLifecycleDate(job, "workStartedAt");
+  const changeJobStatus = (status: (typeof STATUSES)[number]) => {
+    if (status === "completed" && job.completionSource === "payment" &&
+        !window.confirm("This Job has a final-payment completion date. Marking it manually will replace that date and disable automatic payment-date updates. Continue?")) return;
+    setStatus.mutate({
+      id,
+      status,
+      ...(status === "completed"
+        ? { completedAt: parseLifecycleDateInput(completionDate || toDateInputValue(job.completedAt) || todayDateInputValueInMassachusetts())! }
+        : {}),
+    });
+  };
+  const saveManualCompletionDate = () => {
+    if (!completionDate) return toast.error("Select a completion date.");
+    if (job.completionSource === "payment" &&
+        !window.confirm("Replacing the final-payment completion date with a manual date will disable automatic payment-date updates. Continue?")) return;
+    updateCompletionDate.mutate({ id, completedAt: parseLifecycleDateInput(completionDate)! });
+  };
   const estimatedMaterials = Number(job.materialsBudget);
   const estimatedLabor = Number(job.laborBudget);
   const estimatedSubcontractor = Number(job.subcontractorBudget || 0);
@@ -218,47 +332,15 @@ export default function JobDetailPage() {
   const actualSubcontractorCost = subcontractorExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
   const actualExpensesTotal = nonSubcontractorExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
 
-  const actualLaborResult = jobData.timeEntries.reduce(
-    (acc, t) => {
-      const hours = t.paidHours != null
-        ? Number(t.paidHours)
-        : t.hoursWorked != null
-          ? Number(t.hoursWorked)
-          : t.grossHours != null
-            ? Number(t.grossHours)
-            : t.clockOut
-              ? (new Date(t.clockOut).getTime() - new Date(t.clockIn).getTime()) / 3_600_000
-              : null;
-
-      if (hours == null || !Number.isFinite(hours) || hours <= 0) {
-        return acc;
-      }
-
-      acc.hasHours = true;
-      const hourlyRate = Number(t.user.hourlyRate || 0);
-      if (hourlyRate <= 0) {
-        acc.pending = true;
-        return acc;
-      }
-
-      acc.cost += hours * hourlyRate;
-      return acc;
-    },
-    { cost: 0, pending: false, hasHours: false }
-  );
-
-  const actualLaborCost = actualLaborResult.cost;
-  const actualLaborPending = jobData.timeEntries.length === 0 || (actualLaborResult.hasHours && actualLaborResult.pending);
+  const trackingSummary = (job as any)?.trackingSummary ?? calculateJobTracking(jobData.timeEntries, job.id);
+  const actualLaborCost = trackingSummary.totalLaborCost;
+  const actualLaborPending = trackingSummary.isLaborCostPending;
   const actualExpensesPending = nonSubcontractorExpenses.length === 0;
   const actualSubcontractorPending = subcontractorExpenses.length === 0;
 
   const actualTotalCost = actualLaborCost + actualExpensesTotal + actualSubcontractorCost;
   const actualProfit = contractOrTotalAmount - actualTotalCost;
   const actualMarginPct = contractOrTotalAmount > 0 ? (actualProfit / contractOrTotalAmount) * 100 : 0;
-
-  const invoiceTotal = jobData.invoices.reduce((sum, i) => sum + Number(i.total), 0);
-  const paymentsTotal = jobData.payments.reduce((sum, p) => sum + Number(p.amount), 0);
-  const balanceDue = contractOrTotalAmount - paymentsTotal;
 
   const knownAttachments = [
     ...jobData.expenses
@@ -298,13 +380,24 @@ export default function JobDetailPage() {
             <button className="btn btn-secondary" type="button" onClick={openEditModal}>
               Edit Job
             </button>
-            <button className="btn bg-rose-600 text-white hover:bg-rose-700" type="button" onClick={() => setConfirmDeleteOpen(true)}>
-              Delete Job
-            </button>
+            {job.deletedAt ? (
+              <>
+                <button className="btn btn-secondary" type="button" onClick={() => restoreJob.mutate({ id })} disabled={restoreJob.isPending}>
+                  Restore Job
+                </button>
+                <button className="btn bg-rose-600 text-white hover:bg-rose-700" type="button" onClick={() => setConfirmPermanentOpen(true)}>
+                  Delete Permanently
+                </button>
+              </>
+            ) : (
+              <button className="btn bg-rose-600 text-white hover:bg-rose-700" type="button" onClick={() => setConfirmDeleteOpen(true)}>
+                Archive Job
+              </button>
+            )}
             <select
               className="input w-auto"
               value={job.status}
-              onChange={(e) => setStatus.mutate({ id, status: e.target.value as any })}
+              onChange={(e) => changeJobStatus(e.target.value as (typeof STATUSES)[number])}
             >
               {STATUSES.map((s) => (
                 <option key={s} value={s}>{s}</option>
@@ -312,13 +405,23 @@ export default function JobDetailPage() {
 
               <ConfirmDialog
                 open={confirmDeleteOpen}
-                title="Delete Job"
-                message="Are you sure you want to delete this job? This cannot be undone."
-                confirmLabel="Delete Job"
+                title="Archive Job"
+                message="Archive this job? It disappears from the normal tabs and moves to Archived. You can restore it anytime."
+                confirmLabel="Archive Job"
                 destructive
                 isPending={archiveJob.isPending}
                 onCancel={() => setConfirmDeleteOpen(false)}
                 onConfirm={() => archiveJob.mutate({ id })}
+              />
+              <ConfirmDialog
+                open={confirmPermanentOpen}
+                title="Delete Job Permanently"
+                message={`Permanently delete "${job.name}"? This is only possible for zero-history test jobs. Jobs with invoices, payments, expenses, or time entries are protected and cannot be deleted. This cannot be undone.`}
+                confirmLabel="Delete Permanently"
+                destructive
+                isPending={deleteJobPermanently.isPending}
+                onCancel={() => setConfirmPermanentOpen(false)}
+                onConfirm={() => deleteJobPermanently.mutate({ id })}
               />
             </select>
           </div>
@@ -335,6 +438,14 @@ export default function JobDetailPage() {
         {jobData.travelPayEnabled ? <span className="badge bg-slate-100 text-slate-700">Travel Hours {Number(jobData.defaultTravelHours || 0).toFixed(2)}</span> : null}
       </div>
 
+      <JobOpportunityLink jobId={job.id} customerId={job.customerId} opportunityId={job.opportunityId} />
+      {job.status === "completed" && !job.completedAt && !job.endDate && (
+        <div role="alert" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <strong>Completion date missing.</strong> This Job remains in all-time completed totals but cannot be assigned to a reporting month.
+          {" "}Enter the actual completion date in Lifecycle Dates on the Overview tab.
+          <button type="button" className="btn btn-secondary ml-2" onClick={() => setActiveTab("overview")}>Open Overview</button>
+        </div>
+      )}
       <div className="card p-2 mb-4">
         <div className="flex flex-wrap gap-2">
           {WORKSPACE_TABS.map((tab) => (
@@ -365,6 +476,10 @@ export default function JobDetailPage() {
               <Stat label="Zip Code" value={zipCode} />
               <Stat label="Status" value={job.status} />
               <Stat label="Contract" value={formatCurrency(contractOrTotalAmount)} />
+              <Stat label="Lead received" value={formatLifecycleDate(leadReceivedAt)} />
+              <Stat label="Proposal sent" value={formatLifecycleDate(proposalSentAt)} />
+              <Stat label="Work started" value={formatLifecycleDate(workStartedAt)} />
+              <Stat label={job.status === "completed" && !job.completedAt && job.endDate ? "Completed (legacy End Date)" : "Completed"} value={formatLifecycleDate(job.completedAt ?? (job.status === "completed" ? job.endDate : null))} />
               <Stat label="Estimated total cost" value={formatCurrency(estimatedTotalCost)} />
               <Stat label="Estimated margin" value={`${estimatedMarginPct.toFixed(1)}%`} />
               <Stat label="Actual total cost" value={formatCurrency(actualTotalCost)} />
@@ -416,6 +531,41 @@ export default function JobDetailPage() {
             )}
           </div>
 
+          <div className="card p-5 md:col-span-3">
+            <h2 className="text-base font-semibold mb-3">Lifecycle Dates</h2>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <label className="label">Lead received</label>
+                <input type="date" className="input" defaultValue={toDateInputValue(leadReceivedAt)} onChange={(event) => updateLifecycleDates.mutate({ id, leadReceivedAt: parseLifecycleDateInput(event.target.value) })} />
+              </div>
+              <div>
+                <label className="label">Proposal sent</label>
+                <input type="date" className="input" defaultValue={toDateInputValue(proposalSentAt)} onChange={(event) => updateLifecycleDates.mutate({ id, proposalSentAt: parseLifecycleDateInput(event.target.value) })} />
+              </div>
+              <div>
+                <label className="label">Work started</label>
+                <input type="date" className="input" defaultValue={toDateInputValue(workStartedAt)} onChange={(event) => updateLifecycleDates.mutate({ id, workStartedAt: parseLifecycleDateInput(event.target.value) })} />
+              </div>
+              <div>
+                <label className="label">Completed date</label>
+                <input
+                  type="date"
+                  className="input"
+                  value={completionDate || toDateInputValue(job.completedAt)}
+                  onChange={(event) => setCompletionDate(event.target.value)}
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  {job.completionSource === "payment" ? "Final Payment" : job.completionSource === "manual" ? "Manual" : job.completedAt ? "Existing date; source not recorded" : job.status === "completed" && job.endDate ? `Reporting uses legacy End Date: ${formatLifecycleDate(job.endDate)}` : "No completion date recorded"}
+                </p>
+                {job.status === "completed" && completionDate !== toDateInputValue(job.completedAt) && (
+                  <button type="button" className="btn btn-secondary mt-2" disabled={updateCompletionDate.isPending} onClick={saveManualCompletionDate}>
+                    Save manual date
+                  </button>
+                )}
+              </div>
+            </div>
+            <p className="mt-3 text-xs text-slate-500">Dates use America/New_York. Completion reporting uses Completed Date, then legacy End Date, never the last edit date. Missing dates are reported separately.</p>
+          </div>
           <div className="card p-5">
             <h2 className="text-base font-semibold mb-2">Quick Actions</h2>
             <div className="space-y-2">
@@ -425,7 +575,7 @@ export default function JobDetailPage() {
                 <select
                   className="input"
                   value={job.status}
-                  onChange={(e) => setStatus.mutate({ id, status: e.target.value as any })}
+                  onChange={(e) => changeJobStatus(e.target.value as (typeof STATUSES)[number])}
                 >
                   {STATUSES.map((s) => (
                     <option key={s} value={s}>{s}</option>
@@ -674,22 +824,167 @@ export default function JobDetailPage() {
 
       {activeTab === "tracking" && (
         <div className="space-y-4">
-          <div className="grid gap-4 min-w-0">
-            <div className="card min-w-0 overflow-hidden p-5">
-              <h2 className="text-base font-semibold mb-3">Time Entries</h2>
-              {jobData.timeEntries.length === 0 ? (
-                <p className="text-sm text-slate-500">No time logged.</p>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="card p-5">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Total Hours</p>
+              <p className="mt-1 text-2xl font-bold text-slate-900">{trackingSummary.formattedHours}</p>
+              <p className="text-xs text-slate-500 mt-1">{trackingSummary.totalHours.toFixed(2)} total decimal hours</p>
+            </div>
+            <div className="card p-5">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Actual Labor Cost</p>
+              <p className="mt-1 text-2xl font-bold text-slate-900">
+                {actualLaborPending ? `${formatCurrency(actualLaborCost)} (Pending)` : formatCurrency(actualLaborCost)}
+              </p>
+              <p className="text-xs text-slate-500 mt-1">{actualLaborPending ? "Some hourly rates missing" : "Fully calculated"}</p>
+            </div>
+            <div className="card p-5">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Tracked Entries</p>
+              <p className="mt-1 text-2xl font-bold text-slate-900">{trackingSummary.entriesCount}</p>
+              <p className="text-xs text-slate-500 mt-1">Across all employees</p>
+            </div>
+            <div className="card p-5">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Materials &amp; Expenses</p>
+              <p className="mt-1 text-2xl font-bold text-slate-900">{formatCurrency(actualExpensesTotal)}</p>
+              <p className="text-xs text-slate-500 mt-1">{nonSubcontractorExpenses.length} expenses for this job</p>
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="card p-5">
+              <h2 className="text-base font-semibold mb-3">Hours by Employee</h2>
+              {trackingSummary.byEmployee.length === 0 ? (
+                <p className="text-sm text-slate-500">No time logged for any employee.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-left text-xs font-medium uppercase tracking-wider text-slate-500">
+                        <th className="pb-2">Employee</th>
+                        <th className="pb-2 text-right">Hours</th>
+                        <th className="pb-2 text-right">Rate</th>
+                        <th className="pb-2 text-right">Labor Cost</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {trackingSummary.byEmployee.map((emp: any) => (
+                        <tr key={emp.userId} className="py-2">
+                          <td className="py-2 font-medium text-slate-900">{emp.userName}</td>
+                          <td className="py-2 text-right text-slate-700">
+                            {emp.formattedHours} <span className="text-xs text-slate-400">({emp.totalHours.toFixed(2)}h)</span>
+                          </td>
+                          <td className="py-2 text-right text-slate-600">
+                            {emp.hasMixedRates ? "Mixed rates" : emp.hourlyRate != null && emp.hourlyRate > 0 ? formatCurrency(emp.hourlyRate) + "/h" : "Pending"}
+                          </td>
+                          <td className="py-2 text-right font-medium text-slate-900">
+                            {formatCurrency(emp.laborCost)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="card p-5">
+              <h2 className="text-base font-semibold mb-3">Hours by Workday</h2>
+              {trackingSummary.byDate.length === 0 ? (
+                <p className="text-sm text-slate-500">No workdays recorded.</p>
+              ) : (
+                <div className="overflow-x-auto max-h-72">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-left text-xs font-medium uppercase tracking-wider text-slate-500">
+                        <th className="pb-2">Date</th>
+                        <th className="pb-2 text-right">Entries</th>
+                        <th className="pb-2 text-right">Total Hours</th>
+                        <th className="pb-2 text-right">Labor Cost</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {trackingSummary.byDate.map((day: any) => (
+                        <tr key={day.date} className="py-2">
+                          <td className="py-2 text-slate-800">{day.date}</td>
+                          <td className="py-2 text-right text-slate-500">{day.entriesCount}</td>
+                          <td className="py-2 text-right font-medium text-slate-900">{day.formattedHours}</td>
+                          <td className="py-2 text-right text-slate-700">{formatCurrency(day.laborCost)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="card p-5">
+            <h2 className="text-base font-semibold mb-3">Complete Time Entries ({jobData.timeEntries.length})</h2>
+            {jobData.timeEntries.length === 0 ? (
+              <p className="text-sm text-slate-500">No time logged for this job yet.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-left text-xs font-medium uppercase tracking-wider text-slate-500">
+                      <th className="pb-2">Employee</th>
+                      <th className="pb-2">Date</th>
+                      <th className="pb-2">Time / Mode</th>
+                      <th className="pb-2 text-right">Duration</th>
+                      <th className="pb-2 text-right">Rate</th>
+                      <th className="pb-2 text-right">Cost</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {jobData.timeEntries.map((t) => {
+                      const mins = calculateEntryMinutes(t);
+                      const { formatted, decimalHours } = formatMinutesToHours(mins);
+                      const rate = Number(t.hourlyRateSnapshot ?? t.user.hourlyRate ?? 0);
+                      const cost = rate > 0 ? (mins / 60) * rate : 0;
+                      return (
+                        <tr key={t.id} className="py-2">
+                          <td className="py-2 font-medium text-slate-900">{t.user.name}</td>
+                          <td className="py-2 text-slate-600">{formatDateTime(t.clockIn).slice(0, 10)}</td>
+                          <td className="py-2 text-slate-500 text-xs">
+                            {t.clockOut ? `${new Date(t.clockIn).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} – ${new Date(t.clockOut).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : t.isManual ? "Manual entry" : "In progress"}
+                          </td>
+                          <td className="py-2 text-right font-medium text-slate-900">
+                            {formatted} <span className="text-xs font-normal text-slate-400">({decimalHours.toFixed(2)}h)</span>
+                          </td>
+                          <td className="py-2 text-right text-slate-600">
+                            {rate > 0 ? `${formatCurrency(rate)}/h` : "—"}
+                          </td>
+                          <td className="py-2 text-right font-medium text-slate-900">
+                            {rate > 0 ? formatCurrency(cost) : "Pending"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="card p-5">
+              <div className="flex flex-col items-stretch gap-3 mb-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-base font-semibold">Materials &amp; Expenses</h2>
+                  <p className="mt-1 text-xl font-bold text-slate-900">{formatCurrency(actualExpensesTotal)}</p>
+                  <p className="text-xs text-slate-500">Total from {nonSubcontractorExpenses.length} expenses</p>
+                </div>
+                <JobExpenseEntry jobId={id} jobName={job.name} onSaved={() => invalidateExpenseQueries(utils, id)} />
+              </div>
+              {nonSubcontractorExpenses.length === 0 ? (
+                <p className="text-sm text-slate-500">No expenses tracked yet.</p>
               ) : (
                 <ul className="text-sm divide-y">
-                  {jobData.timeEntries.slice(0, 12).map((t) => (
-                    <li key={t.id} className="py-2 flex justify-between">
-                      <span>{t.user.name}</span>
-                      <span className="text-slate-500">
-                        {t.paidHours != null
-                          ? `${Number(t.paidHours).toFixed(2)}h`
-                          : t.hoursWorked != null
-                            ? `${Number(t.hoursWorked).toFixed(2)}h`
-                            : "in progress"}
+                  {nonSubcontractorExpenses.map((e) => (
+                    <li key={e.id} className="py-3 flex items-start justify-between gap-3">
+                      <div className="min-w-0"><p className="truncate text-slate-700">{e.vendor || "Expense"}</p><p className="text-xs text-slate-500">{formatDateTime(e.expenseDate)} · {e.category}{e.description ? ` · ${e.description}` : ""}</p>{e.attachments.length > 0 ? <a className="text-xs text-brand-700 hover:underline" href={`/api/expenses/attachments/${e.attachments[0].id}/preview`} target="_blank" rel="noreferrer">View Receipt</a> : <span className="text-xs text-slate-400">No receipt</span>}</div>
+                      <span className="flex shrink-0 items-center gap-2">
+                        <span className="font-medium">{formatCurrency(Number(e.amount))}</span>
+                        <button type="button" className="btn btn-danger text-xs" onClick={() => setExpenseToDelete({ id: e.id, vendor: e.vendor, amount: Number(e.amount) })}>Delete</button>
                       </span>
                     </li>
                   ))}
@@ -698,110 +993,37 @@ export default function JobDetailPage() {
             </div>
 
             <div className="card p-5">
-              <h2 className="text-base font-semibold mb-3">Labor Cost</h2>
-              <div className="grid grid-cols-2 gap-4">
-                <Stat label="Actual labor cost" value={actualLaborPending ? `${formatCurrency(actualLaborCost)} (Pending)` : formatCurrency(actualLaborCost)} />
-                <Stat label="Tracked entries" value={String(jobData.timeEntries.length)} />
-              </div>
-            </div>
-          </div>
-
-          <div className="grid md:grid-cols-2 gap-4">
-            <div className="card p-5">
-              <div className="flex flex-col items-stretch gap-3 mb-3 sm:flex-row sm:items-center sm:justify-between">
-                <h2 className="text-base font-semibold">Expenses</h2>
-                <JobExpenseEntry jobId={id} jobName={job.name} onSaved={() => utils.jobs.byId.invalidate({ id })} />
-              </div>
-              {nonRejectedExpenses.length === 0 ? (
-                <p className="text-sm text-slate-500">No expenses tracked yet.</p>
-              ) : (
-                <ul className="text-sm divide-y">
-                  {nonRejectedExpenses.slice(0, 12).map((e) => (
-                    <li key={e.id} className="py-3 flex items-start justify-between gap-3">
-                      <div className="min-w-0"><p className="truncate text-slate-700">{e.vendor || "Expense"}</p><p className="text-xs text-slate-500">{formatDateTime(e.expenseDate)} · {e.category}{e.description ? ` · ${e.description}` : ""}</p>{e.attachments.length > 0 ? <a className="text-xs text-brand-700 hover:underline" href={`/api/expenses/attachments/${e.attachments[0].id}/preview`} target="_blank" rel="noreferrer">View Receipt</a> : <span className="text-xs text-slate-400">No receipt</span>}</div>
-                      <span className="shrink-0 font-medium">{formatCurrency(Number(e.amount))}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-
-          <div className="grid md:grid-cols-3 gap-4">
-            <div className="card p-5">
               <h2 className="text-base font-semibold mb-3">Subcontractors</h2>
               {subcontractorExpenses.length === 0 ? (
                 <p className="text-sm text-slate-500">No subcontractor costs tracked yet.</p>
               ) : (
                 <ul className="text-sm divide-y">
                   {subcontractorExpenses.slice(0, 8).map((e) => (
-                    <li key={e.id} className="py-2 flex justify-between">
+                    <li key={e.id} className="py-2 flex justify-between gap-2">
                       <span>{e.vendor || "Subcontractor"}</span>
-                      <span>{formatCurrency(Number(e.amount))}</span>
+                      <span className="flex items-center gap-2">
+                        {formatCurrency(Number(e.amount))}
+                        <button type="button" className="btn btn-danger text-xs" onClick={() => setExpenseToDelete({ id: e.id, vendor: e.vendor, amount: Number(e.amount) })}>Delete</button>
+                      </span>
                     </li>
                   ))}
                 </ul>
               )}
             </div>
-            <ComingSoonCard title="Progress Photos" description="Progress photo timeline is coming soon." />
-            <ComingSoonCard title="Daily Logs" description="Daily work logs are coming soon." />
           </div>
         </div>
       )}
 
       {activeTab === "financials" && (
-        <div className="space-y-4">
-          <div className="card p-5">
-            <h2 className="text-base font-semibold mb-3">Financial Summary</h2>
-            <div className="grid md:grid-cols-3 gap-4">
-              <Stat label="Contract amount" value={formatCurrency(contractOrTotalAmount)} />
-              <Stat label="Change orders" value="Coming Soon" />
-              <Stat label="Invoices total" value={formatCurrency(invoiceTotal)} />
-              <Stat label="Payments received" value={formatCurrency(paymentsTotal)} />
-              <Stat label="Balance due" value={formatCurrency(balanceDue)} />
-              <Stat label="Actual costs" value={formatCurrency(actualTotalCost)} />
-              <Stat label="Gross profit" value={formatCurrency(actualProfit)} />
-              <Stat label="Net profit" value={formatCurrency(actualProfit)} />
-              <Stat label="Margin" value={`${actualMarginPct.toFixed(1)}%`} />
-              <Stat label="ROI" value={`${actualMarginPct.toFixed(1)}%`} />
-              <RoiFlag profit={actualProfit} />
-            </div>
-          </div>
-
-          <div className="grid md:grid-cols-2 gap-4">
-            <div className="card p-5">
-              <h2 className="text-base font-semibold mb-3">Invoices</h2>
-              {jobData.invoices.length === 0 ? (
-                <p className="text-sm text-slate-500">No invoices yet.</p>
-              ) : (
-                <ul className="text-sm divide-y">
-                  {jobData.invoices.map((i) => (
-                    <li key={i.id} className="py-2 flex justify-between">
-                      <span>{i.invoiceNumber} · {i.title}</span>
-                      <span>{formatCurrency(Number(i.total))}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            <div className="card p-5">
-              <h2 className="text-base font-semibold mb-3">Payments</h2>
-              {jobData.payments.length === 0 ? (
-                <p className="text-sm text-slate-500">No payments recorded yet.</p>
-              ) : (
-                <ul className="text-sm divide-y">
-                  {jobData.payments.map((p) => (
-                    <li key={p.id} className="py-2 flex justify-between">
-                      <span>{p.method} · {formatDateTime(p.dateReceived)}</span>
-                      <span>{formatCurrency(Number(p.amount))}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-        </div>
+        <JobFinancials
+          jobId={id}
+          jobName={job.name}
+          contractAmount={Number(job.contractAmount)}
+          totalEstimate={Number(job.totalEstimate)}
+          actualCosts={actualTotalCost}
+          grossProfit={actualProfit}
+          marginPercent={actualMarginPct}
+        />
       )}
 
       {activeTab === "documents" && (
@@ -953,6 +1175,25 @@ export default function JobDetailPage() {
               <Field label="Subcontractor budget" value={editForm.subcontractorBudget} onChange={(v) => setEditForm((f) => ({ ...f, subcontractorBudget: v }))} />
               <Field label="Total amount" value={editForm.totalEstimate} onChange={(v) => setEditForm((f) => ({ ...f, totalEstimate: v }))} />
               <Field label="Contract amount" value={editForm.contractAmount} onChange={(v) => setEditForm((f) => ({ ...f, contractAmount: v }))} />
+
+              <div className="col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Lifecycle Dates</div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="label">Lead received</label>
+                    <input type="date" className="input" value={editForm.leadReceivedAt} onChange={(e) => setEditForm((f) => ({ ...f, leadReceivedAt: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="label">Proposal sent</label>
+                    <input type="date" className="input" value={editForm.proposalSentAt} onChange={(e) => setEditForm((f) => ({ ...f, proposalSentAt: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="label">Work started</label>
+                    <input type="date" className="input" value={editForm.workStartedAt} onChange={(e) => setEditForm((f) => ({ ...f, workStartedAt: e.target.value }))} />
+                  </div>
+                </div>
+                <p className="mt-2 text-xs text-slate-500">Leave blank to clear a date. Dates use the Massachusetts business day.</p>
+              </div>
             </div>
 
             <div className="sticky bottom-0 z-10 flex justify-end gap-2 border-t border-slate-200 bg-white px-6 py-4">
@@ -968,6 +1209,23 @@ export default function JobDetailPage() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={expenseToDelete !== null}
+        title="Delete expense?"
+        destructive
+        confirmLabel="Delete expense"
+        isPending={deleteExpense.isPending}
+        onCancel={() => setExpenseToDelete(null)}
+        onConfirm={() => {
+          if (expenseToDelete) deleteExpense.mutate({ id: expenseToDelete.id, jobId: id });
+        }}
+        message={
+          expenseToDelete
+            ? `Delete ${expenseToDelete.vendor || "this expense"} for ${formatCurrency(Number(expenseToDelete.amount))} on job "${job.name}"? This cannot be undone.`
+            : ""
+        }
+      />
     </>
   );
 }

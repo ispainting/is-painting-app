@@ -1,17 +1,22 @@
 // Turns what each door delivers (Meta, Google, the website form, ORION/Make) into one shape the
 // inbox and the pipeline can both use. No database and no network here: only reading the fields.
 import type { LeadSource } from "@prisma/client";
+import { compactAttribution, type LeadAttribution } from "../orion-attribution";
 import { SERVICE_AREA, readable, type LeadCardFields } from "../orion-lead-card";
 
 export type PipelineSource = "Website" | "Meta" | "Concierge" | "Google" | "GoogleForm";
 
 export interface LeadOrigin {
+  /** The ad platform when the sender names it ("Meta", "Google"); otherwise inferred from the source. */
+  platform?: string;
   campaignId?: string;
   campaignName?: string;
   adsetId?: string;
+  adsetName?: string;
   adId?: string;
   adName?: string;
   formId?: string;
+  formName?: string;
   gclid?: string;
   fbclid?: string;
   utmSource?: string;
@@ -31,6 +36,23 @@ export interface LeadIntake extends LeadCardFields {
   dated: boolean;
   origin: LeadOrigin;
   rawPayload: unknown;
+}
+
+/** The campaign on the card, as ORION's lead outcomes read it. The platform defaults to the door's. */
+export function attributionOf(intake: LeadIntake): LeadAttribution | null {
+  const { origin } = intake;
+  const platform = origin.platform ?? (intake.pipelineSource === "Meta" ? "Meta" : intake.pipelineSource === "Google" || intake.pipelineSource === "GoogleForm" ? "Google" : undefined);
+  return compactAttribution({
+    platform,
+    campaignId: origin.campaignId,
+    campaignName: origin.campaignName,
+    adSetId: origin.adsetId,
+    adSetName: origin.adsetName,
+    adId: origin.adId,
+    adName: origin.adName,
+    formId: origin.formId,
+    formName: origin.formName,
+  });
 }
 
 // ─── Single fields ───────────────────────────────────────
@@ -342,6 +364,16 @@ export interface OrionLead extends LeadCardFields {
   leadId: string;
   source: "Website" | "Meta" | "Concierge" | "Google";
   receivedAt?: string;
+  // The campaign the lead came from, as ORION or the owner's Make scenario names it.
+  platform?: string;
+  campaignId?: string;
+  campaignName?: string;
+  adSetId?: string;
+  adSetName?: string;
+  adId?: string;
+  adName?: string;
+  formId?: string;
+  formName?: string;
 }
 
 const ORION_SOURCE: Record<OrionLead["source"], LeadSource> = { Website: "WEBSITE", Concierge: "WEBSITE", Meta: "META", Google: "GOOGLE_ADS" };
@@ -362,11 +394,20 @@ const ORION_ORIGIN = new Map<string, keyof LeadOrigin>([
 ]);
 
 export function leadFromOrion(lead: OrionLead): LeadIntake {
-  const { leadId, source, receivedAt, ...fields } = lead;
+  const { leadId, source, receivedAt, platform, campaignId, campaignName, adSetId, adSetName, adId, adName, formId, formName, ...fields } = lead;
   const origin: LeadOrigin = {};
+  // The named fields first; an answer among the details only fills what they left empty.
+  const named: Record<keyof LeadOrigin, string | undefined> = {
+    platform, campaignId, campaignName, adsetId: adSetId, adsetName: adSetName, adId, adName, formId, formName,
+    gclid: undefined, fbclid: undefined, utmSource: undefined, utmCampaign: undefined, utmContent: undefined,
+  };
+  for (const [key, value] of Object.entries(named) as [keyof LeadOrigin, string | undefined][]) {
+    const clean = value?.trim();
+    if (clean) origin[key] = clean.slice(0, key.endsWith("Id") ? 100 : 255);
+  }
   for (const [label, value] of Object.entries(fields.details ?? {})) {
     const key = ORION_ORIGIN.get(squash(label));
-    if (key) origin[key] = value.slice(0, key.endsWith("Id") ? 100 : 255);
+    if (key && !origin[key]) origin[key] = value.slice(0, key.endsWith("Id") ? 100 : 255);
   }
   return {
     ...fields,

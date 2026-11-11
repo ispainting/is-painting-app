@@ -8,6 +8,7 @@ const opp = (over: Partial<OpportunityRow> = {}): OpportunityRow => ({
   status: "open",
   source: "Meta",
   createdAt: new Date("2026-10-10T12:00:00Z"),
+  leadReceivedAt: null,
   lastStageChangedAt: null,
   city: "Falmouth",
   job: null,
@@ -64,5 +65,17 @@ describe("buildLeadOutcomes", () => {
       []
     );
     expect(rows.map((r) => r.leadKey)).toEqual(["b", "a"]);
+  });
+
+  it("uses the real lead date and returns campaign attribution", () => {
+    const attribution = new Map([[1, { campaignId: "cmp-1", adId: "ad-2" }]]);
+    const [row] = buildLeadOutcomes(
+      [{ legacyId: "meta:1", newId: 1 }],
+      [opp({ leadReceivedAt: new Date("2026-07-25T12:00:00Z") })],
+      [],
+      attribution,
+    );
+    expect(row.receivedAt).toBe("2026-07-25T12:00:00.000Z");
+    expect(row.attribution).toEqual({ campaignId: "cmp-1", adId: "ad-2" });
   });
 });

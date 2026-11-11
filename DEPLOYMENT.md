@@ -10,7 +10,10 @@ Total time: ~10 minutes if everything goes well.
 - A live URL (e.g. `https://is-painting.vercel.app`) you can open from any browser
 - A real Postgres database on Neon (free tier)
 - An admin login: `admin@ispainting.com / admin123`
-- An employee login: `painter@ispainting.com / painter123`
+- Employee portal: `<deployment-base-url>/login`
+  - Login: the employee's company email
+  - PIN: the employee's phone number, digits only (formatting like `(508) 555-1234` is accepted and normalized)
+  - Successful employee login redirects to `/clock`
 - All MVP features working: customers, jobs (with auto-priced estimates), opportunities pipeline, time clock with GPS, inventory, expenses, invoices, automation templates, public review pages, settings
 
 What WON'T work without extra setup (all optional):

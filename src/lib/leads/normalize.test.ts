@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isOutOfMap, isTestLead, leadFromGoogle, leadFromMeta, leadFromOrion, leadFromWebsite, leadgenIdsFromWebhook, normalizePhone, normalizeService } from "./normalize";
+import { attributionOf, isOutOfMap, isTestLead, leadFromGoogle, leadFromMeta, leadFromOrion, leadFromWebsite, leadgenIdsFromWebhook, normalizePhone, normalizeService } from "./normalize";
 
 describe("normalizePhone", () => {
   it("reads the ways a US number gets typed", () => {
@@ -238,8 +238,36 @@ describe("leadFromOrion", () => {
     expect(leadFromOrion({ leadId: "meta:1", source: "Meta", details: { "Ad ID": "1".repeat(150), "Ad name": "n".repeat(300) } }).origin).toEqual({ adId: "1".repeat(100), adName: "n".repeat(255) });
   });
 
+  it("reads the campaign ORION names, ahead of an answer among the details", () => {
+    const intake = leadFromOrion({
+      leadId: "meta:1",
+      source: "Meta",
+      campaignId: " c1 ",
+      campaignName: "Cape Cod Leads",
+      adSetId: "s1",
+      adSetName: "Interior",
+      adId: "a1",
+      formName: "Short Verified",
+      details: { "Ad ID": "other", "Form ID": "f1" },
+    });
+    expect(intake.origin).toEqual({ campaignId: "c1", campaignName: "Cape Cod Leads", adsetId: "s1", adsetName: "Interior", adId: "a1", formId: "f1", formName: "Short Verified" });
+    expect(intake).not.toHaveProperty("campaignId");
+  });
+
   it("is dated only when the delivery says when", () => {
     expect(leadFromOrion({ leadId: "x", source: "Website" }).dated).toBe(false);
     expect(leadFromOrion({ leadId: "x", source: "Website", receivedAt: "2026-10-16T15:44:26+0000" }).dated).toBe(true);
+  });
+});
+
+describe("attributionOf", () => {
+  it("names the platform after the door when the sender doesn't", () => {
+    expect(attributionOf(leadFromOrion({ leadId: "meta:1", source: "Meta", adSetId: "s1" }))).toEqual({ platform: "Meta", adSetId: "s1" });
+    expect(attributionOf(leadFromOrion({ leadId: "meta:1", source: "Meta", platform: "Instagram" }))).toEqual({ platform: "Instagram" });
+    expect(attributionOf(leadFromGoogle({ lead_id: "g1", campaign_id: "c9", user_column_data: [{ column_id: "PHONE_NUMBER", string_value: "5085550142" }] } as never)!)).toMatchObject({ platform: "Google", campaignId: "c9" });
+  });
+
+  it("has nothing to keep for a website lead with no campaign", () => {
+    expect(attributionOf(leadFromOrion({ leadId: "tally:1", source: "Website", details: { utm_source: "google" } }))).toBeNull();
   });
 });

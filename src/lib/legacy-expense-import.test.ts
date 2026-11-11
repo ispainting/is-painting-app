@@ -265,10 +265,10 @@ describe("legacy expense schema safety", () => {
       "utf8",
     );
 
-    expect(schema).toContain("submittedById        Int?");
-    expect(schema).toContain("legacySubmittedById  String?");
+    expect(schema).toContain("submittedById         Int?");
+    expect(schema).toContain("legacySubmittedById   String?");
     expect(schema).toContain("legacySubmittedByName String?");
-    expect(schema).toContain('submittedBy         User?                 @relation("SubmittedExpenses", fields: [submittedById], references: [id])');
+    expect(schema).toContain('submittedBy         User?                     @relation("SubmittedExpenses", fields: [submittedById], references: [id])');
     expect(migration).toContain('ALTER COLUMN "submittedById" DROP NOT NULL');
     expect(migration).toContain('ADD COLUMN "legacySubmittedById" TEXT');
     expect(migration).toContain('ADD COLUMN "legacySubmittedByName" TEXT');

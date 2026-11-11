@@ -34,12 +34,21 @@ const LeadInput = z.object({
   zipCode: z.string().trim().max(20).optional(),
   service: z.string().trim().max(120).optional(),
   message: z.string().trim().max(5000).optional(),
+  platform: z.string().trim().max(100).optional(),
+  campaignId: z.string().trim().max(191).optional(),
+  campaignName: z.string().trim().max(300).optional(),
+  adSetId: z.string().trim().max(191).optional(),
+  adSetName: z.string().trim().max(300).optional(),
+  adId: z.string().trim().max(191).optional(),
+  adName: z.string().trim().max(300).optional(),
+  formId: z.string().trim().max(191).optional(),
+  formName: z.string().trim().max(300).optional(),
   // Any other answers from the form, label → value, kept on the lead's first note.
   details: z.record(z.string().max(5000)).optional(),
 });
 type LeadInput = z.infer<typeof LeadInput>;
 
-const KNOWN_FIELDS = new Set(["leadId", "source", "receivedAt", "name", "email", "phone", "address", "city", "state", "zipCode", "service", "message", "details"]);
+const KNOWN_FIELDS = new Set(["leadId", "source", "receivedAt", "name", "email", "phone", "address", "city", "state", "zipCode", "service", "message", "platform", "campaignId", "campaignName", "adSetId", "adSetName", "adId", "adName", "formId", "formName", "details"]);
 
 // The owner's Make scenario already shapes each Facebook lead for Viktor ("Lead ID", "Created time",
 // "Full name", "Phone", "Email", "Service", "Form ID", "Ad ID"). Accepting those names lets the CRM
@@ -68,6 +77,16 @@ const ALIASES: Record<string, string> = {
   address: "address",
   message: "message",
   source: "source",
+  platform: "platform",
+  campaignid: "campaignId",
+  campaignname: "campaignName",
+  campaign: "campaignName",
+  adsetid: "adSetId",
+  adsetname: "adSetName",
+  adid: "adId",
+  adname: "adName",
+  formid: "formId",
+  formname: "formName",
   details: "details",
 };
 // Fields only a Facebook lead carries — their presence means the source is Meta.
@@ -151,7 +170,7 @@ export async function POST(req: Request) {
       const { status, customerMatched, opportunityId, customerId } = pipeline;
       return NextResponse.json({ status, customerMatched, opportunityId, customerId }, { status: 201 });
     }
-    return NextResponse.json({ status: "exists", opportunityId: pipeline.opportunityId, filled: pipeline.filled });
+    return NextResponse.json({ status: "exists", opportunityId: pipeline.opportunityId, filled: pipeline.filled, attributionAdded: pipeline.attributionAdded ?? false });
   } catch (err) {
     console.error("[api/orion/leads] intake failed", errorCode(err));
     return NextResponse.json({ error: "Lead intake failed" }, { status: 500 });
