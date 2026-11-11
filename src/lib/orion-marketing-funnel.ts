@@ -69,7 +69,11 @@ function group(
   return [...rows.values()].map(finish).sort((a, b) => b.leads - a.leads || b.wonValue - a.wonValue);
 }
 
-const platformOf = (lead: LeadOutcome) => lead.attribution?.platform ?? lead.source ?? "Unknown";
+const platformOf = (lead: LeadOutcome) => lead.attribution?.platform
+  ?? lead.attribution?.trafficSource
+  ?? lead.attribution?.utmSource
+  ?? lead.source
+  ?? "Unknown";
 
 /**
  * CRM-side funnel only. Advertising spend remains owned by Google/Meta and is intentionally not
@@ -87,14 +91,14 @@ export function summarizeMarketingFunnel(leads: LeadOutcome[]) {
     }),
     byCampaign: group(leads, (lead) => {
       const id = lead.attribution?.campaignId;
-      const name = lead.attribution?.campaignName;
+      const name = lead.attribution?.campaignName ?? lead.attribution?.utmCampaign;
       if (!id && !name) return null;
       const platform = platformOf(lead);
       return { key: `${platform}:${id ?? name}`, name: name ?? id!, platform, campaignId: id };
     }),
     byAd: group(leads, (lead) => {
       const id = lead.attribution?.adId;
-      const name = lead.attribution?.adName;
+      const name = lead.attribution?.adName ?? lead.attribution?.utmContent;
       if (!id && !name) return null;
       const platform = platformOf(lead);
       return { key: `${platform}:${id ?? name}`, name: name ?? id!, platform, campaignId: lead.attribution?.campaignId, adId: id };
