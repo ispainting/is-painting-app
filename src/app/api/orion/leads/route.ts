@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { checkLeadIntakeAuth, classifyWordPressLead, type LeadIntakeCaller } from "@/lib/orion-auth";
 import { betterOpportunityName, blankCustomerFields, leadCardNote, leadOpportunityName, replacesNote } from "@/lib/orion-lead-card";
+import { attributionFromMetadata, compactAttribution, mergeAttribution, type LeadAttribution } from "@/lib/orion-attribution";
 
 // Lead intake from ORION, the marketing platform. Every quote request it receives — the website
 // form, the site's chat concierge, a Facebook instant form — is posted here and lands in the sales
@@ -46,12 +47,21 @@ const LeadInput = z.object({
   zipCode: z.string().trim().max(20).optional(),
   service: z.string().trim().max(120).optional(),
   message: z.string().trim().max(5000).optional(),
+  platform: z.string().trim().max(100).optional(),
+  campaignId: z.string().trim().max(191).optional(),
+  campaignName: z.string().trim().max(300).optional(),
+  adSetId: z.string().trim().max(191).optional(),
+  adSetName: z.string().trim().max(300).optional(),
+  adId: z.string().trim().max(191).optional(),
+  adName: z.string().trim().max(300).optional(),
+  formId: z.string().trim().max(191).optional(),
+  formName: z.string().trim().max(300).optional(),
   // Any other answers from the form, label → value, kept on the lead's first note.
   details: z.record(z.string().max(5000)).optional(),
 });
 type LeadInput = z.infer<typeof LeadInput>;
 
-const KNOWN_FIELDS = new Set(["leadId", "source", "receivedAt", "name", "email", "phone", "address", "city", "state", "zipCode", "service", "message", "details"]);
+const KNOWN_FIELDS = new Set(["leadId", "source", "receivedAt", "name", "email", "phone", "address", "city", "state", "zipCode", "service", "message", "platform", "campaignId", "campaignName", "adSetId", "adSetName", "adId", "adName", "formId", "formName", "details"]);
 
 // The owner's Make scenario already shapes each Facebook lead for Viktor ("Lead ID", "Created time",
 // "Full name", "Phone", "Email", "Service", "Form ID", "Ad ID"). Accepting those names lets the CRM
@@ -80,6 +90,16 @@ const ALIASES: Record<string, string> = {
   address: "address",
   message: "message",
   source: "source",
+  platform: "platform",
+  campaignid: "campaignId",
+  campaignname: "campaignName",
+  campaign: "campaignName",
+  adsetid: "adSetId",
+  adsetname: "adSetName",
+  adid: "adId",
+  adname: "adName",
+  formid: "formId",
+  formname: "formName",
   details: "details",
 };
 // Fields only a Facebook lead carries — their presence means the source is Meta.
@@ -142,6 +162,53 @@ const CRM_SOURCE: Record<LeadInput["source"], { leadSource: string; source: stri
 };
 
 const digits = (value: string) => value.replace(/\D/g, "").slice(-10);
+
+function leadAttribution(lead: LeadInput): LeadAttribution | null {
+  return compactAttribution({
+    platform: lead.platform ?? (lead.source === "Meta" ? "Meta" : lead.source === "Google" ? "Google" : undefined),
+    campaignId: lead.campaignId,
+    campaignName: lead.campaignName,
+    adSetId: lead.adSetId,
+    adSetName: lead.adSetName,
+    adId: lead.adId,
+    adName: lead.adName,
+    formId: lead.formId,
+    formName: lead.formName,
+  });
+}
+
+async function preserveAttribution(opportunityId: number, customerId: number, lead: LeadInput, occurredAt: Date) {
+  const incoming = leadAttribution(lead);
+  if (!incoming) return false;
+  const existing = await prisma.customerTouchpoint.findFirst({
+    where: { customerId, deletedAt: null, metadata: { path: ["opportunityId"], equals: opportunityId } },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, metadata: true },
+  });
+  if (existing) {
+    const current = attributionFromMetadata(existing.metadata);
+    const merged = mergeAttribution(current, incoming);
+    if (JSON.stringify(current) !== JSON.stringify(merged)) {
+      const base = existing.metadata && typeof existing.metadata === "object" && !Array.isArray(existing.metadata)
+        ? existing.metadata as Record<string, unknown>
+        : {};
+      await prisma.customerTouchpoint.update({ where: { id: existing.id }, data: { metadata: { ...base, ...merged } } });
+      return true;
+    }
+    return false;
+  }
+  await prisma.customerTouchpoint.create({
+    data: {
+      customerId,
+      type: "note",
+      subject: "Marketing attribution",
+      body: "Campaign attribution captured automatically.",
+      occurredAt,
+      metadata: { type: "marketing_attribution", source: lead.source, leadId: lead.leadId, opportunityId, ...incoming },
+    },
+  });
+  return true;
+}
 
 async function findCustomer(lead: LeadInput) {
   if (lead.email) {
@@ -229,10 +296,12 @@ export async function POST(req: Request) {
     // ORION also corrected the first backfill, which was stamped with the import time. Only ORION
     // may re-date: a Make delivery of a lead ORION already pulled must never move its date.
     if (caller === "ORION" && lead.receivedAt) {
-      await prisma.opportunity.updateMany({ where: { id: existing.newId, createdAt: { not: receivedAt } }, data: { createdAt: receivedAt } });
+      await prisma.opportunity.updateMany({ where: { id: existing.newId, leadReceivedAt: { not: receivedAt } }, data: { leadReceivedAt: receivedAt } });
     }
     const filled = await completeExistingLead(existing.newId, lead, caller);
-    return NextResponse.json({ status: "exists", opportunityId: existing.newId, filled });
+    const mapped = await prisma.opportunity.findUnique({ where: { id: existing.newId }, select: { customerId: true } });
+    const attributionAdded = mapped ? await preserveAttribution(existing.newId, mapped.customerId, lead, receivedAt) : false;
+    return NextResponse.json({ status: "exists", opportunityId: existing.newId, filled, attributionAdded });
   }
 
   const matched = await findCustomer(lead);
@@ -271,10 +340,18 @@ export async function POST(req: Request) {
           status: "open",
           source: CRM_SOURCE[lead.source].leadSource,
           notes: body,
+          leadReceivedAt: receivedAt,
           lastStageChangedAt: receivedAt,
           // Dated when the request arrived, not when it reached the CRM, so "leads this month" and
           // the source breakdowns count it in the right month even when it was delivered later.
           createdAt: receivedAt,
+          stageHistory: {
+            create: {
+              newStage: "new_lead",
+              effectiveAt: receivedAt,
+              reason: "Initial lead received",
+            },
+          },
         },
         select: { id: true },
       });
@@ -286,9 +363,23 @@ export async function POST(req: Request) {
           subject: `Quote request received (${CRM_SOURCE[lead.source].label})`,
           body,
           occurredAt: receivedAt,
-          metadata: { via: caller, leadId: lead.leadId, opportunityId: opportunity.id },
+          metadata: { via: caller, leadId: lead.leadId, opportunityId: opportunity.id, type: "lead_intake" },
         },
       });
+
+      const attribution = leadAttribution(lead);
+      if (attribution) {
+        await tx.customerTouchpoint.create({
+          data: {
+            customerId,
+            type: "note",
+            subject: "Marketing attribution",
+            body: "Campaign attribution captured automatically.",
+            occurredAt: receivedAt,
+            metadata: { type: "marketing_attribution", source: lead.source, leadId: lead.leadId, opportunityId: opportunity.id, ...attribution },
+          },
+        });
+      }
 
       await tx.migrationMap.create({ data: { entityType: MAP_TYPE, legacyId: lead.leadId, newId: opportunity.id } });
       return { opportunityId: opportunity.id, customerId };

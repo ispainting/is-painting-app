@@ -1,14 +1,46 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
+import type { InvoiceStatus, Prisma } from "@prisma/client";
 import { router, protectedProcedure, adminProcedure } from "../trpc";
+import {
+  calculateInvoicePaymentState,
+  unpaidInvoiceStatus,
+  validatePaymentTarget,
+  type InvoiceStatusValue,
+} from "@/lib/invoice-calculations";
+import { synchronizeJobCompletion } from "@/lib/job-completion";
+import { businessDateSchema } from "@/lib/job-lifecycle";
 
 const MethodZ = z.enum(["check", "cash", "credit_card", "bank_transfer", "other"]);
+
+async function recomputeInvoice(tx: Prisma.TransactionClient, invoiceId: number) {
+  const invoice = await tx.invoice.findUnique({
+    where: { id: invoiceId },
+    select: { id: true, total: true, status: true, sentAt: true, dueDate: true },
+  });
+  if (!invoice) throw new TRPCError({ code: "NOT_FOUND", message: "Invoice not found." });
+
+  const aggregate = await tx.payment.aggregate({ where: { invoiceId, status: { not: "bounced" } }, _sum: { amount: true } });
+  const state = calculateInvoicePaymentState(
+    Number(invoice.total),
+    Number(aggregate._sum.amount ?? 0),
+    unpaidInvoiceStatus({ ...invoice, status: invoice.status as InvoiceStatusValue }),
+  );
+  return tx.invoice.update({
+    where: { id: invoiceId },
+    data: { ...state, status: state.status as InvoiceStatus },
+  });
+}
 
 export const paymentsRouter = router({
   list: protectedProcedure
     .input(z.object({ jobId: z.number().optional() }).optional())
     .query(({ ctx, input }) =>
       ctx.prisma.payment.findMany({
-        where: input?.jobId ? { jobId: input.jobId } : {},
+        where: {
+          ...(input?.jobId ? { jobId: input.jobId } : {}),
+          ...(ctx.session?.role === "employee" ? { job: { assignments: { some: { userId: ctx.session.userId } } } } : {}),
+        },
         include: { invoice: true, job: true, recordedBy: true },
         orderBy: { dateReceived: "desc" },
         take: 300,
@@ -20,7 +52,7 @@ export const paymentsRouter = router({
       jobId: z.number(),
       invoiceId: z.number().optional(),
       amount: z.number().positive(),
-      dateReceived: z.coerce.date(),
+      dateReceived: businessDateSchema,
       method: MethodZ.default("check"),
       checkNumber: z.string().optional(),
       bank: z.string().optional(),
@@ -28,33 +60,96 @@ export const paymentsRouter = router({
       notes: z.string().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
-      const payment = await ctx.prisma.payment.create({
-        data: { ...input, recordedById: ctx.session!.userId },
-      });
+      try {
+        return await ctx.prisma.$transaction(async (tx) => {
+          const [job, invoice] = await Promise.all([
+            tx.job.findUnique({ where: { id: input.jobId }, select: { id: true, contractAmount: true, totalEstimate: true } }),
+            input.invoiceId
+              ? tx.invoice.findUnique({ where: { id: input.invoiceId }, select: { id: true, jobId: true, total: true, status: true } })
+              : Promise.resolve(null),
+          ]);
+          validatePaymentTarget(Boolean(job), invoice, input.jobId, input.invoiceId != null);
+          if (invoice?.status === "cancelled") {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "Cannot record a payment against a cancelled invoice." });
+          }
 
-      // If linked to invoice, recompute amounts and status
-      if (input.invoiceId) {
-        const inv = await ctx.prisma.invoice.findUnique({
-          where: { id: input.invoiceId },
-          include: { payments: true },
-        });
-        if (inv) {
-          const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
-          const remaining = Number(inv.total) - paid;
-          await ctx.prisma.invoice.update({
-            where: { id: inv.id },
-            data: {
-              amountPaid: paid,
-              amountRemaining: remaining,
-              status: remaining <= 0 ? "paid" : paid > 0 ? "partial" : inv.status,
-            },
+          if (invoice) {
+            const existing = await tx.payment.aggregate({ where: { invoiceId: invoice.id, status: { not: "bounced" } }, _sum: { amount: true } });
+            calculateInvoicePaymentState(Number(invoice.total), Number(existing._sum.amount ?? 0) + input.amount, "sent");
+          }
+
+          const payment = await tx.payment.create({
+            data: { ...input, recordedById: ctx.session!.userId },
           });
-        }
+          if (input.invoiceId) await recomputeInvoice(tx, input.invoiceId);
+          await synchronizeJobCompletion(tx, input.jobId, ctx.session!.userId);
+          return payment;
+        }, { isolationLevel: "Serializable" });
+      } catch (error) {
+        if (error instanceof TRPCError) throw error;
+        throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to record payment." });
       }
-      return payment;
     }),
 
-  remove: adminProcedure.input(z.object({ id: z.number() })).mutation(({ ctx, input }) =>
-    ctx.prisma.payment.delete({ where: { id: input.id } })
-  ),
+  update: adminProcedure
+    .input(z.object({
+      id: z.number(),
+      invoiceId: z.number().nullable().optional(),
+      amount: z.number().positive(),
+      dateReceived: businessDateSchema,
+      method: MethodZ,
+      checkNumber: z.string().optional(),
+      bank: z.string().optional(),
+      memo: z.string().optional(),
+      notes: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return ctx.prisma.$transaction(async (tx) => {
+        const existing = await tx.payment.findUnique({ where: { id: input.id }, select: { id: true, jobId: true, invoiceId: true, amount: true } });
+        if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Payment not found." });
+
+        const nextInvoiceId = input.invoiceId ?? existing.invoiceId ?? null;
+        const nextInvoice = nextInvoiceId
+          ? await tx.invoice.findUnique({ where: { id: nextInvoiceId }, select: { id: true, jobId: true, total: true, status: true } })
+          : null;
+        if (nextInvoiceId && !nextInvoice) throw new TRPCError({ code: "NOT_FOUND", message: "Invoice not found." });
+        if (nextInvoice && nextInvoice.jobId !== existing.jobId) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Invoice does not belong to this job." });
+        }
+        if (nextInvoice?.status === "cancelled") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Cannot record a payment against a cancelled invoice." });
+        }
+
+        const previousInvoiceId = existing.invoiceId;
+        const payment = await tx.payment.update({
+          where: { id: input.id },
+          data: {
+            invoiceId: nextInvoiceId,
+            amount: input.amount,
+            dateReceived: input.dateReceived,
+            method: input.method,
+            checkNumber: input.checkNumber,
+            bank: input.bank,
+            memo: input.memo,
+            notes: input.notes,
+          },
+        });
+
+        if (previousInvoiceId) await recomputeInvoice(tx, previousInvoiceId);
+        if (nextInvoiceId && nextInvoiceId !== previousInvoiceId) await recomputeInvoice(tx, nextInvoiceId);
+        await synchronizeJobCompletion(tx, existing.jobId, ctx.session!.userId);
+        return payment;
+      }, { isolationLevel: "Serializable" });
+    }),
+
+  remove: adminProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
+    return ctx.prisma.$transaction(async (tx) => {
+      const payment = await tx.payment.findUnique({ where: { id: input.id }, select: { id: true, jobId: true, invoiceId: true } });
+      if (!payment) throw new TRPCError({ code: "NOT_FOUND", message: "Payment not found." });
+      const removed = await tx.payment.delete({ where: { id: input.id } });
+      if (payment.invoiceId) await recomputeInvoice(tx, payment.invoiceId);
+      await synchronizeJobCompletion(tx, payment.jobId, ctx.session!.userId);
+      return removed;
+    }, { isolationLevel: "Serializable" });
+  }),
 });

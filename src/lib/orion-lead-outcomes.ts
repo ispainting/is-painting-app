@@ -1,7 +1,9 @@
 // What became of each lead ORION (or Make) delivered: its pipeline stage, the proposals sent to
 // that customer afterwards, and the job it turned into. Feeds /api/orion/lead-outcomes, which lets
 // the marketing platform tie an ad to a lead to a proposal to a signed job. Only ids, stages,
-// cities, dates and amounts — never a customer's name, phone, email or address.
+// cities, dates, campaign attribution and amounts — never a customer's name, phone, email or address.
+
+import type { LeadAttribution } from "./orion-attribution";
 
 export interface OpportunityRow {
   id: number;
@@ -10,6 +12,7 @@ export interface OpportunityRow {
   status: string;
   source: string | null;
   createdAt: Date;
+  leadReceivedAt: Date | null;
   lastStageChangedAt: Date | null;
   city: string | null;
   job: { status: string; contractAmount: unknown; totalEstimate: unknown } | null;
@@ -33,6 +36,7 @@ export interface LeadOutcome {
   lastStageChangedAt: string | null;
   source: string | null;
   city: string | null;
+  attribution: LeadAttribution | null;
   proposals: {
     count: number;
     sent: number;
@@ -57,7 +61,12 @@ function money(value: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-export function buildLeadOutcomes(maps: { legacyId: string; newId: number }[], opportunities: OpportunityRow[], proposals: ProposalRow[]): LeadOutcome[] {
+export function buildLeadOutcomes(
+  maps: { legacyId: string; newId: number }[],
+  opportunities: OpportunityRow[],
+  proposals: ProposalRow[],
+  attributionByOpportunity = new Map<number, LeadAttribution>(),
+): LeadOutcome[] {
   const byOpportunity = new Map(opportunities.map((o) => [o.id, o]));
   const proposalsByCustomer = new Map<number, ProposalRow[]>();
   for (const p of proposals) {
@@ -69,7 +78,8 @@ export function buildLeadOutcomes(maps: { legacyId: string; newId: number }[], o
   for (const map of maps) {
     const o = byOpportunity.get(map.newId);
     if (!o) continue;
-    const mine = (proposalsByCustomer.get(o.customerId) ?? []).filter((p) => p.createdAt.getTime() >= o.createdAt.getTime() - PROPOSAL_GRACE_MS);
+    const receivedAt = o.leadReceivedAt ?? o.createdAt;
+    const mine = (proposalsByCustomer.get(o.customerId) ?? []).filter((p) => p.createdAt.getTime() >= receivedAt.getTime() - PROPOSAL_GRACE_MS);
     const sent = mine.filter((p) => SENT.has(p.status) || p.sentAt);
     const approved = mine.filter((p) => APPROVED.has(p.status) || p.approvedAt);
     const firstOf = (dates: (Date | null)[]) => {
@@ -80,12 +90,13 @@ export function buildLeadOutcomes(maps: { legacyId: string; newId: number }[], o
     out.push({
       leadKey: map.legacyId,
       opportunityId: o.id,
-      receivedAt: o.createdAt.toISOString(),
+      receivedAt: receivedAt.toISOString(),
       stage: o.stage,
       status: o.status,
       lastStageChangedAt: o.lastStageChangedAt?.toISOString() ?? null,
       source: o.source,
       city: o.city,
+      attribution: attributionByOpportunity.get(o.id) ?? null,
       proposals: {
         count: mine.length,
         sent: sent.length,

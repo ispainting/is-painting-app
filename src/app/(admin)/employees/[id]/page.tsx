@@ -73,8 +73,9 @@ export default function EmployeeDetailPage() {
 
   const [payrollForm, setPayrollForm] = useState({
     hourlyRate: 0,
+    effectiveDate: new Date().toISOString().slice(0, 10),
     specialJobAdjustment: 0,
-    overtimeMultiplier: 1.5,
+    overtimeMultiplier: 1,
     overtimeRate: "",
     travelPayEnabled: false,
     defaultTravelHours: 0,
@@ -84,7 +85,7 @@ export default function EmployeeDetailPage() {
     regularHours: 32,
     specialHours: 4,
     travelHours: 2,
-    overtimeHours: 8,
+    overtimeHours: 0,
   });
 
   const [certForm, setCertForm] = useState({
@@ -198,6 +199,7 @@ export default function EmployeeDetailPage() {
   const preview = api.employees.payrollPreview.useQuery(
     {
       hourlyRate: payrollForm.hourlyRate,
+      effectiveDate: payrollForm.effectiveDate,
       specialJobAdjustment: payrollForm.specialJobAdjustment,
       overtimeMultiplier: payrollForm.overtimeMultiplier,
       overtimeRate: payrollForm.overtimeRate ? Number(payrollForm.overtimeRate) : null,
@@ -239,7 +241,7 @@ export default function EmployeeDetailPage() {
       ...current,
       hourlyRate: Number(employee.hourlyRate || 0),
       specialJobAdjustment: Number(employee.specialJobAdjustment || 0),
-      overtimeMultiplier: Number(employee.overtimeMultiplier || 1.5),
+      overtimeMultiplier: 1,
       overtimeRate: employee.overtimeRate == null ? "" : String(Number(employee.overtimeRate)),
       travelPayEnabled: employee.travelPayEnabled,
       defaultTravelHours: Number(employee.defaultTravelHours || 0),
@@ -414,9 +416,8 @@ export default function EmployeeDetailPage() {
           <div className="card space-y-3 p-5">
             <h2 className="text-lg font-semibold">Payroll Settings</h2>
             <Field label="Regular Hourly Rate" type="number" value={String(payrollForm.hourlyRate)} onChange={(v) => setPayrollForm((f) => ({ ...f, hourlyRate: Number(v || 0) }))} />
+            <Field label="Effective Date" type="date" value={payrollForm.effectiveDate} onChange={(v) => setPayrollForm((f) => ({ ...f, effectiveDate: v }))} />
             <Field label="Special Job Adjustment (+$/hr)" type="number" value={String(payrollForm.specialJobAdjustment)} onChange={(v) => setPayrollForm((f) => ({ ...f, specialJobAdjustment: Number(v || 0) }))} />
-            <Field label="Overtime Multiplier" type="number" value={String(payrollForm.overtimeMultiplier)} onChange={(v) => setPayrollForm((f) => ({ ...f, overtimeMultiplier: Number(v || 1.5) }))} />
-            <Field label="Custom Overtime Rate" type="number" value={payrollForm.overtimeRate} onChange={(v) => setPayrollForm((f) => ({ ...f, overtimeRate: v }))} />
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={payrollForm.travelPayEnabled} onChange={(event) => setPayrollForm((f) => ({ ...f, travelPayEnabled: event.target.checked }))} />
               Travel Pay Enabled
@@ -445,6 +446,7 @@ export default function EmployeeDetailPage() {
                   id,
                   data: {
                     hourlyRate: payrollForm.hourlyRate,
+                    effectiveDate: payrollForm.effectiveDate,
                     specialJobAdjustment: payrollForm.specialJobAdjustment,
                     overtimeMultiplier: payrollForm.overtimeMultiplier,
                     overtimeRate: payrollForm.overtimeRate ? Number(payrollForm.overtimeRate) : null,
@@ -467,18 +469,15 @@ export default function EmployeeDetailPage() {
               <Field label="Regular Hours" type="number" value={String(payrollForm.regularHours)} onChange={(v) => setPayrollForm((f) => ({ ...f, regularHours: Number(v || 0) }))} />
               <Field label="Special Hours" type="number" value={String(payrollForm.specialHours)} onChange={(v) => setPayrollForm((f) => ({ ...f, specialHours: Number(v || 0) }))} />
               <Field label="Travel Hours" type="number" value={String(payrollForm.travelHours)} onChange={(v) => setPayrollForm((f) => ({ ...f, travelHours: Number(v || 0) }))} />
-              <Field label="Overtime Hours" type="number" value={String(payrollForm.overtimeHours)} onChange={(v) => setPayrollForm((f) => ({ ...f, overtimeHours: Number(v || 0) }))} />
             </div>
             <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm">
               <Row label="Regular Pay" value={`$${Number(preview.data?.regularPay || 0).toFixed(2)}`} />
               <Row label="Special Pay" value={`$${Number(preview.data?.specialPay || 0).toFixed(2)}`} />
               <Row label="Travel Pay" value={`$${Number(preview.data?.travelPay || 0).toFixed(2)}`} />
-              <Row label="Overtime Pay" value={`$${Number(preview.data?.overtimePay || 0).toFixed(2)}`} />
               <div className="my-2 border-t border-slate-200" />
               <Row label="Regular Rate" value={`$${Number(preview.data?.regularRate || 0).toFixed(2)}/hr`} />
               <Row label="Special Rate" value={`$${Number(preview.data?.specialRate || 0).toFixed(2)}/hr`} />
               <Row label="Travel Rate" value={`$${Number(preview.data?.travelRate || 0).toFixed(2)}/hr`} />
-              <Row label="Overtime Rate" value={`$${Number(preview.data?.overtimeRate || 0).toFixed(2)}/hr`} />
               <div className="my-2 border-t border-slate-200" />
               <Row label="Estimated Gross Pay" value={`$${Number(preview.data?.estimatedGrossPay || 0).toFixed(2)}`} strong />
             </div>

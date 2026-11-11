@@ -26,6 +26,12 @@ export const configRouter = router({
         reminderEmailTo: z.string().optional(),
         defaultLaborSellRate: z.number().min(0).nullable().optional(),
         defaultLaborCostRate: z.number().min(0).nullable().optional(),
+        defaultProposalPricingMethod: z.enum(["GROSS_MARGIN", "MARKUP"]).optional(),
+        defaultDesiredProfitMarginPercent: z.number().min(0).max(99.99).optional(),
+        defaultGeneralLiabilityMode: z.enum(["PERCENT_OF_LABOR", "PERCENT_OF_REVENUE", "FLAT_AMOUNT", "EXCLUDED"]).optional(),
+        defaultMassTaxRate: z.number().min(0).optional(),
+        defaultFederalTaxRate: z.number().min(0).optional(),
+        defaultWorkDayHours: z.number().min(0.01).optional(),
       })
     )
     .mutation(({ ctx, input }) =>

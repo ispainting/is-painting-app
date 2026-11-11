@@ -1,9 +1,13 @@
 import { ExpenseCategory, ExpenseStatus, Prisma } from "@prisma/client";
+import { TRPCError } from "@trpc/server";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   getAttachmentDownloadUrl,
 } from "@/lib/expense-attachments";
 import { buildConfidenceByField, extractReceipt } from "@/lib/receipt-extraction";
+import { describeOpenAiApiKeyConfiguration } from "@/lib/receipt-extraction/providers/openai-provider";
+import { runReceiptExtractionWorkflow } from "@/lib/receipt-extraction/workflow";
 import { getReceiptStorageProvider } from "@/lib/receipt-storage";
 import { adminProcedure, protectedProcedure, router } from "../trpc";
 
@@ -50,17 +54,6 @@ const createInput = z.object({
   ).default([]),
 });
 
-function getUserFacingExtractionError(error: unknown) {
-  const message = error instanceof Error ? error.message.toLowerCase() : "";
-  if (message.includes("timeout") || message.includes("timed out")) {
-    return "Receipt reading timed out. You can enter the expense manually.";
-  }
-  if (message.includes("429") || message.includes("credit_balance_exhausted") || message.includes("provider unavailable")) {
-    return "Receipt reading is temporarily unavailable. You can enter the expense manually.";
-  }
-  return "Receipt reading failed. You can enter the expense manually.";
-}
-
 export const expensesRouter = router({
   list: protectedProcedure.input(listInput).query(async ({ ctx, input }) => {
     const search = input?.search?.trim();
@@ -97,6 +90,15 @@ export const expensesRouter = router({
         job: { select: { id: true, name: true } },
         employee: { select: { id: true, name: true } },
         submittedBy: { select: { id: true, name: true } },
+        lineItems: {
+          select: {
+            id: true,
+            description: true,
+            quantity: true,
+            unitPrice: true,
+            total: true,
+          },
+        },
         attachments: {
           orderBy: { uploadedAt: "desc" },
           select: {
@@ -113,12 +115,44 @@ export const expensesRouter = router({
     });
   }),
 
-  stats: protectedProcedure.query(async ({ ctx }) => {
-    const where = ctx.session.role === "employee" ? { submittedById: ctx.session.userId } : {};
+  stats: protectedProcedure.input(listInput).query(async ({ ctx, input }) => {
+    const search = input?.search?.trim();
+    const where = {
+      ...(ctx.session.role === "employee" && { submittedById: ctx.session.userId }),
+      ...(input?.status && { status: input.status }),
+      ...(input?.category && { category: input.category }),
+      ...(input?.jobId && { jobId: input.jobId }),
+      ...(input?.employeeId && { employeeId: input.employeeId }),
+      ...(search && {
+        OR: [
+          { vendor: { contains: search, mode: "insensitive" as const } },
+          { description: { contains: search, mode: "insensitive" as const } },
+          { notes: { contains: search, mode: "insensitive" as const } },
+          { job: { name: { contains: search, mode: "insensitive" as const } } },
+        ],
+      }),
+    };
 
-    const [expenseAgg, pendingUploads] = await Promise.all([
+    const [expenseAgg, reviewedAgg, unreviewedAgg, pendingUploads] = await Promise.all([
       ctx.prisma.expense.aggregate({
         where,
+        _sum: { amount: true },
+        _count: { _all: true },
+      }),
+      ctx.prisma.expense.aggregate({
+        where: {
+          ...where,
+          OR: [{ status: "approved" }, { reviewStatus: "reviewed" }],
+        },
+        _sum: { amount: true },
+        _count: { _all: true },
+      }),
+      ctx.prisma.expense.aggregate({
+        where: {
+          ...where,
+          status: { not: "approved" },
+          reviewStatus: { not: "reviewed" },
+        },
         _sum: { amount: true },
         _count: { _all: true },
       }),
@@ -133,6 +167,10 @@ export const expensesRouter = router({
     return {
       totalExpenses: Number(expenseAgg._sum.amount ?? 0),
       expenseCount: expenseAgg._count._all,
+      reviewedCount: reviewedAgg._count._all,
+      reviewedTotal: Number(reviewedAgg._sum.amount ?? 0),
+      unreviewedCount: unreviewedAgg._count._all,
+      unreviewedTotal: Number(unreviewedAgg._sum.amount ?? 0),
       pendingUploads,
     };
   }),
@@ -280,6 +318,7 @@ export const expensesRouter = router({
           storagePath: true,
           originalFilename: true,
           mimeType: true,
+          sizeBytes: true,
           extractionStatus: true,
           expense: {
             select: { submittedById: true },
@@ -308,71 +347,71 @@ export const expensesRouter = router({
         },
       });
 
-      try {
-        const object = await provider.download(attachment.storagePath);
-        const jobs = await ctx.prisma.job.findMany({
+      const requestId = `receipt-${randomUUID()}`;
+      const workflow = await runReceiptExtractionWorkflow(attachment, requestId, {
+        download: (storagePath) => provider.download(storagePath),
+        loadJobs: () => ctx.prisma.job.findMany({
           where: { deletedAt: null },
           select: { id: true, name: true },
           orderBy: { name: "asc" },
           take: 500,
-        });
+        }),
+        extract: extractReceipt,
+        saveSuccess: async (extracted) => {
+          const status = extracted.needsReview ? "needs_review" : "completed";
+          await ctx.prisma.expenseAttachment.update({
+            where: { id: attachment.id },
+            data: {
+              extractionStatus: status,
+              extractionRawText: extracted.normalized.rawText,
+              extractionStructured: extracted.normalized,
+              extractionConfidence: extracted.normalized.overallConfidence,
+              extractionConfidenceByField: buildConfidenceByField(extracted.normalized),
+              extractionProvider: extracted.provider,
+              extractionModel: extracted.model,
+              extractionError: null,
+              extractionProcessedAt: new Date(),
+            },
+          });
+        },
+        saveFailure: async (message) => {
+          await ctx.prisma.expenseAttachment.update({
+            where: { id: attachment.id },
+            data: { extractionStatus: "failed", extractionError: message, extractionProcessedAt: new Date() },
+          });
+        },
+        log: (event) => {
+          if (event.event === "receipt_extraction_failed") {
+            console.error({ ...event, openAiKeyConfig: describeOpenAiApiKeyConfiguration() });
+          } else {
+            console.info(event);
+          }
+        },
+      });
 
-        const extracted = await extractReceipt({
-          attachmentId: attachment.id,
-          originalFilename: attachment.originalFilename,
-          mimeType: attachment.mimeType,
-          fileData: object.data,
-          jobOptions: jobs,
-        });
-
-        const status = extracted.needsReview ? "needs_review" : "completed";
-        await ctx.prisma.expenseAttachment.update({
-          where: { id: attachment.id },
-          data: {
-            extractionStatus: status,
-            extractionRawText: extracted.normalized.rawText,
-            extractionStructured: extracted.normalized,
-            extractionConfidence: extracted.normalized.overallConfidence,
-            extractionConfidenceByField: buildConfidenceByField(extracted.normalized),
-            extractionProvider: extracted.provider,
-            extractionModel: extracted.model,
-            extractionError: null,
-            extractionProcessedAt: new Date(),
-          },
-        });
-
-        return {
-          status,
-          attachmentId: attachment.id,
-          message: status === "needs_review" ? "Receipt extracted with low confidence. Needs review." : "Receipt extracted successfully.",
-          data: extracted.normalized,
-          provider: extracted.provider,
-          model: extracted.model,
-        };
-      } catch (error) {
-        const message = getUserFacingExtractionError(error);
-        console.error("Receipt extraction failed", {
-          attachmentId: attachment.id,
-          error,
-        });
-        await ctx.prisma.expenseAttachment.update({
-          where: { id: attachment.id },
-          data: {
-            extractionStatus: "failed",
-            extractionError: message,
-            extractionProcessedAt: new Date(),
-          },
-        });
-
+      if (!workflow.ok) {
         return {
           status: "failed" as const,
           attachmentId: attachment.id,
-          message,
+          message: workflow.error.userMessage,
+          failureCategory: workflow.error.kind,
+          requestId,
           data: null,
           provider: process.env.RECEIPT_EXTRACTION_PROVIDER?.trim().toLowerCase() || "openai",
           model: process.env.RECEIPT_EXTRACTION_OPENAI_MODEL?.trim() || "gpt-4.1-mini",
         };
       }
+
+      const status = workflow.result.needsReview ? "needs_review" as const : "completed" as const;
+      return {
+        status,
+        attachmentId: attachment.id,
+        message: status === "needs_review" ? "Receipt extracted with low confidence. Needs review." : "Receipt extracted successfully.",
+        requestId,
+        data: workflow.result.normalized,
+        provider: workflow.result.provider,
+        model: workflow.result.model,
+      };
     }),
 
   replaceAttachment: protectedProcedure
@@ -492,4 +531,46 @@ export const expensesRouter = router({
       data: { status: "rejected", approvedById: ctx.session.userId },
     })
   ),
+
+  // Admin-only hard delete of a single expense regardless of status
+  // (pending/approved/rejected/paid). Line items cascade via the schema;
+  // directly owned attachment rows are removed in the same transaction and
+  // their receipt blobs are cleaned up through the existing storage provider.
+  remove: adminProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        jobId: z.number().int().positive().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const expense = await ctx.prisma.expense.findUnique({
+        where: { id: input.id },
+        select: {
+          id: true,
+          jobId: true,
+          attachments: { select: { id: true, storagePath: true } },
+        },
+      });
+      if (!expense) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Expense not found." });
+      }
+      if (input.jobId !== undefined && expense.jobId !== input.jobId) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Expense does not belong to the supplied job." });
+      }
+
+      await ctx.prisma.$transaction(async (tx) => {
+        // Only this expense's own attachment rows; lineItems cascade via onDelete: Cascade.
+        await tx.expenseAttachment.deleteMany({ where: { expenseId: expense.id } });
+        await tx.expense.delete({ where: { id: expense.id } });
+      });
+
+      // Best-effort blob cleanup using the existing provider; never throws.
+      const provider = getReceiptStorageProvider();
+      for (const attachment of expense.attachments) {
+        await provider.delete(attachment.storagePath).catch(() => undefined);
+      }
+
+      return { ok: true };
+    }),
 });

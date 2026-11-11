@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import * as XLSX from "xlsx";
+import { LeadSourceQualityTable } from "@/components/reports/LeadSourceQualityTable";
 import {
   Area,
   AreaChart,
@@ -18,7 +19,9 @@ import {
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatCurrency } from "@/lib/utils";
-import { CalendarDays, FileSpreadsheet, FileText, Printer, Sparkles } from "lucide-react";
+import { CalendarDays, FileSpreadsheet, FileText, Sparkles } from "lucide-react";
+import { ExportPdfButton } from "@/components/ExportPdfButton";
+import { reportsPdf } from "@/lib/pdf-export-data";
 
 const PERIOD_LABELS = {
   month: "Monthly Report",
@@ -69,7 +72,7 @@ export default function ReportsPage() {
     return input;
   }, [periodType, month, quarter, year, startDate, endDate]);
 
-  const { data, isLoading } = api.business.analytics.useQuery(query);
+  const { data, isLoading, isFetching, isError } = api.business.analytics.useQuery(query);
   const reportLabel = data?.period?.label ?? "Selected period";
   const aiReview = data?.aiReview;
 
@@ -95,10 +98,6 @@ export default function ReportsPage() {
     XLSX.writeFile(workbook, `${PERIOD_LABELS[periodType].replace(/\s+/g, "-").toLowerCase()}.xlsx`);
   };
 
-  const printPdf = () => {
-    window.print();
-  };
-
   return (
     <>
       <PageHeader title="Reports" description="Professional business reports for banks, investors, accountants, and partners." />
@@ -116,7 +115,16 @@ export default function ReportsPage() {
               <ActionButton icon={CalendarDays} label="Quarterly Report" onClick={() => setPeriodType("quarter")} active={periodType === "quarter"} />
               <ActionButton icon={CalendarDays} label="Annual Report" onClick={() => setPeriodType("year")} active={periodType === "year"} />
               <ActionButton icon={CalendarDays} label="Custom Report" onClick={() => setPeriodType("custom")} active={periodType === "custom"} />
-              <ActionButton icon={Printer} label="Export PDF" onClick={printPdf} />
+              <ExportPdfButton disabled={isFetching || isError || !data} build={() => {
+                if (!data) throw new Error("Report is not loaded.");
+                return reportsPdf(data, { filters: [
+                  ["Report", PERIOD_LABELS[periodType]], ["Period", reportLabel],
+                  ["Previous month comparison", query.comparePreviousMonth ? "Yes" : "No"],
+                  ["Same month last year comparison", query.compareSameMonthLastYear ? "Yes" : "No"],
+                  ["Previous year comparison", query.comparePreviousYear ? "Yes" : "No"],
+                  ["Custom comparison", query.compareCustomPeriods ? "Yes" : "No"],
+                ] });
+              }} />
               <ActionButton icon={FileSpreadsheet} label="Export Excel" onClick={exportExcel} />
             </div>
           </div>
@@ -179,6 +187,10 @@ export default function ReportsPage() {
             <SectionBlock title="Operations" icon={Sparkles}>
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                 <KpiCard label="Completed jobs" value={formatCount(data.dashboard.operations.completedJobs)} />
+                <KpiCard label="Completed jobs (all time)" value={formatCount(data.jobCompletions.totalCompletedJobs)} />
+                <KpiCard label="Completed value (all time)" value={formatCurrency(data.jobCompletions.totalCompletedValue)} />
+                <KpiCard label="Completion date missing (all time)" value={formatCount(data.jobCompletions.completionDateMissingCount)} />
+                <KpiCard label="Completion date missing value (all time)" value={formatCurrency(data.jobCompletions.completionDateMissingValue)} />
                 <KpiCard label="Open jobs" value={formatCount(data.dashboard.operations.openJobs)} />
                 <KpiCard label="Active jobs" value={formatCount(data.dashboard.operations.activeJobs)} />
                 <KpiCard label="Employee hours" value={formatCount(data.dashboard.operations.employeeHours)} />
@@ -187,7 +199,10 @@ export default function ReportsPage() {
                 <KpiCard label="Jobs starting this week" value={formatCount(data.dashboard.operations.jobsStartingThisWeek)} />
                 <KpiCard label="Jobs ending this week" value={formatCount(data.dashboard.operations.jobsEndingThisWeek)} />
                 <KpiCard label="Employees working today" value={formatCount(data.dashboard.operations.employeesWorkingToday)} />
+                <KpiCard label="Avg. job duration (days)" value={formatCount(data.dashboard.operations.averageJobDurationDays)} />
+                <KpiCard label="Avg. lead to completion (days)" value={formatCount(data.dashboard.operations.averageLeadToCompletionDays)} />
               </div>
+              <p className="mt-3 text-xs text-slate-500">Completion reporting uses Completed Date, or legacy End Date. Jobs missing both remain in all-time totals but are excluded from dated charts and durations.</p>
             </SectionBlock>
 
             <div className="grid gap-4 xl:grid-cols-2">
@@ -211,6 +226,17 @@ export default function ReportsPage() {
                     <Tooltip formatter={(value: any) => formatCurrency(Number(value))} />
                     <Area type="monotone" dataKey="value" stroke="#166534" fill="#22c55e" fillOpacity={0.22} />
                   </AreaChart>
+                </ResponsiveContainer>
+              </ReportChartCard>
+              <ReportChartCard title="Jobs completed by completion date">
+                <ResponsiveContainer width="100%" height={280}>
+                  <BarChart data={data.jobCompletions.series}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
+                    <Tooltip formatter={(value: any) => formatCount(Number(value))} />
+                    <Bar dataKey="completedJobs" name="Completed jobs" fill="#0f766e" radius={[4, 4, 0, 0]} />
+                  </BarChart>
                 </ResponsiveContainer>
               </ReportChartCard>
             </div>
@@ -289,6 +315,13 @@ export default function ReportsPage() {
                   </tbody>
                 </table>
               </div>
+            </SectionBlock>
+
+            <SectionBlock title="Lead Source Quality" icon={Sparkles}>
+              <p className="mb-3 text-xs text-slate-500">
+                Lead cohort grouped by lead-received date (Massachusetts business days). Cash collected is grouped by payment date and labeled separately from lead-cohort value. Invalid/duplicate and spam/fraud leads are shown, never removed.
+              </p>
+              <LeadSourceQualityTable data={data.leadSourceQuality} />
             </SectionBlock>
 
             <SectionBlock title="Customer Intelligence" icon={FileText}>

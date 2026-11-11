@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { LeadSourceQualityTable } from "@/components/reports/LeadSourceQualityTable";
 import {
   Area,
   AreaChart,
@@ -120,6 +121,16 @@ export default function BusinessAnalyticsPage() {
             </div>
           </SectionCard>
         ) : null}
+
+        <SectionCard title="Job Completions" icon={Briefcase} subtitle="Completed Date takes priority over legacy End Date. Missing dates are not assigned to a month.">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <KpiCard label="Completed jobs (selected period)" value={formatCount(data?.dashboard.operations.completedJobs)} />
+            <KpiCard label="Completed jobs (all time)" value={formatCount(data?.jobCompletions.totalCompletedJobs)} />
+            <KpiCard label="Completed value (all time)" value={formatCurrency(data?.jobCompletions.totalCompletedValue)} />
+            <KpiCard label="Completion date missing (all time)" value={formatCount(data?.jobCompletions.completionDateMissingCount)} />
+            <KpiCard label="Completion date missing value (all time)" value={formatCurrency(data?.jobCompletions.completionDateMissingValue)} />
+          </div>
+        </SectionCard>
 
         <div className="grid gap-4 xl:grid-cols-2">
           <SectionCard title="Revenue Analytics" icon={DollarSign} subtitle="Revenue by month and year, plus growth context.">
@@ -250,6 +261,13 @@ export default function BusinessAnalyticsPage() {
               </tbody>
             </table>
           </div>
+        </SectionCard>
+
+        <SectionCard title="Lead Source Quality" icon={Sparkles} subtitle="Lead cohort quality, conversion, and value by source for the selected timeframe.">
+          <p className="mb-3 text-xs text-slate-500">
+            Leads grouped by lead-received date (Massachusetts business days); cash collected grouped by payment date.
+          </p>
+          <LeadSourceQualityTable data={data?.leadSourceQuality} />
         </SectionCard>
 
         <ExpandableSection title="Customer Analytics" icon={Users} summary="Top customers, repeat customers, largest jobs, and most profitable jobs.">

@@ -1,12 +1,15 @@
 import { z } from "zod";
 import { router, adminProcedure } from "../trpc";
+import { LEAD_SOURCE_OPTIONS, normalizeLeadSourceForReport } from "@/lib/lead-source";
+import { businessRangeInMassachusetts } from "@/lib/employee-rate-resolver";
+import { averageJobCompletionDurations, isJobCompletedInRange, summarizeCompletedJobs } from "@/lib/job-completion";
 
 const SURVIVAL_TARGET = 40_000;
 const PRODUCTION_GOAL = 65_000;
 const PROPOSAL_CLOSE_RATE_LOW = 0.35;
 const PROPOSAL_CLOSE_RATE_HIGH = 0.5;
 const PAY_PERIOD_ANCHOR = new Date("2026-01-05T00:00:00");
-const TRACKED_SOURCES = ["Google", "Meta", "Website", "Referral", "Property Manager", "Unknown"];
+const TRACKED_SOURCES: string[] = [...LEAD_SOURCE_OPTIONS];
 
 function startOfMonth(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), 1);
@@ -77,6 +80,7 @@ function estimatePayrollForPayPeriod(entries: Array<{
   isIslandJob: boolean;
   specialPayEnabled: boolean;
   hourlyRateAdjustment: unknown;
+  hourlyRateSnapshot: unknown;
   user: { hourlyRate: unknown };
   job: {
     isIslandJob: boolean;
@@ -99,7 +103,7 @@ function estimatePayrollForPayPeriod(entries: Array<{
   let total = 0;
   for (const groupEntries of grouped.values()) {
     const anchor = groupEntries[0];
-    const baseRate = money(anchor.user.hourlyRate);
+    const baseRate = money(anchor.hourlyRateSnapshot ?? anchor.user.hourlyRate);
     const specialPayEnabled = anchor.specialPayEnabled || anchor.isIslandJob || anchor.job?.specialPayEnabled || anchor.job?.isIslandJob;
     const rawAdjustment = specialPayEnabled
       ? money(anchor.hourlyRateAdjustment ?? anchor.job?.hourlyRateAdjustment ?? 0)
@@ -139,15 +143,7 @@ function calculateStatus(completedRevenue: number) {
 }
 
 function normalizeSource(source: string | null | undefined) {
-  const value = source?.trim();
-  if (!value) return "Unknown";
-  const lower = value.toLowerCase();
-  if (lower === "google") return "Google";
-  if (lower === "meta") return "Meta";
-  if (lower === "website") return "Website";
-  if (lower === "referral") return "Referral";
-  if (lower === "property manager" || lower === "property_manager") return "Property Manager";
-  return value;
+  return normalizeLeadSourceForReport(source);
 }
 
 type TrendSourceRow = {
@@ -177,6 +173,7 @@ type TrendSnapshot = {
 
 async function buildTrendSnapshot(prisma: any, year: number, month: number): Promise<TrendSnapshot> {
   const range = monthRangeFromParts(year, month);
+  const maRange = businessRangeInMassachusetts(new Date(Date.UTC(year, month - 1, 1, 12)), new Date(Date.UTC(year, month, 0, 12)));
   const [opportunities, proposals]: [
     Array<{ source: string | null; createdAt: Date }>,
     Array<{
@@ -190,7 +187,10 @@ async function buildTrendSnapshot(prisma: any, year: number, month: number): Pro
     }>,
   ] = await Promise.all([
     prisma.opportunity.findMany({
-      where: { createdAt: { gte: range.start, lt: range.end } },
+      where: { OR: [
+        { leadReceivedAt: { gte: maRange.start, lt: maRange.end } },
+        { leadReceivedAt: null, createdAt: { gte: maRange.start, lt: maRange.end } },
+      ] },
       select: { source: true, createdAt: true },
     }),
     prisma.proposal.findMany({
@@ -306,6 +306,7 @@ export const reportsRouter = router({
     .query(async ({ ctx, input }) => {
       const now = new Date();
       const month = monthRange(now);
+      const completionRange = businessRangeInMassachusetts(month.start, new Date(month.end.getTime() - 1));
       const payPeriod = getBiweeklyPeriod(now);
       const trendMonth = input?.month ?? now.getMonth() + 1;
       const trendYear = input?.year ?? now.getFullYear();
@@ -322,9 +323,9 @@ export const reportsRouter = router({
               deletedAt: null,
               status: { in: ["approved", "active", "completed"] },
               OR: [
-                { updatedAt: { gte: month.start, lt: month.end } },
-                { startDate: { gte: month.start, lt: month.end } },
-                { endDate: { gte: month.start, lt: month.end } },
+                { status: "completed" },
+                { status: { in: ["approved", "active"] }, startDate: { gte: month.start, lt: month.end } },
+                { status: { in: ["approved", "active"] }, endDate: { gte: month.start, lt: month.end } },
               ],
             },
             select: {
@@ -333,7 +334,9 @@ export const reportsRouter = router({
               contractAmount: true,
               startDate: true,
               endDate: true,
-              updatedAt: true,
+              leadReceivedAt: true,
+              workStartedAt: true,
+              completedAt: true,
             },
           }),
           ctx.prisma.proposal.findMany({
@@ -359,6 +362,7 @@ export const reportsRouter = router({
               isIslandJob: true,
               specialPayEnabled: true,
               hourlyRateAdjustment: true,
+              hourlyRateSnapshot: true,
               user: { select: { hourlyRate: true } },
               job: {
                 select: {
@@ -376,8 +380,9 @@ export const reportsRouter = router({
         ]);
 
       const completedRevenueThisMonth = completedAndScheduledJobs
-        .filter((job) => job.status === "completed")
+        .filter((job) => isJobCompletedInRange(job, completionRange.start, completionRange.end))
         .reduce((sum, job) => sum + jobValue(job), 0);
+      const completionDurations = averageJobCompletionDurations(completedAndScheduledJobs, completionRange.start, completionRange.end);
 
       const scheduledRevenueThisMonth = completedAndScheduledJobs
         .filter((job) => job.status === "approved" || job.status === "active")
@@ -487,6 +492,8 @@ export const reportsRouter = router({
           completedRevenueThisMonth,
           scheduledRevenueThisMonth,
           totalProjectedProduction,
+          ...completionDurations,
+          ...summarizeCompletedJobs(completedAndScheduledJobs),
           target: PRODUCTION_GOAL,
           progressPercent: productionProgressPercent,
         },
@@ -539,7 +546,7 @@ export const reportsRouter = router({
         }),
       ]);
       const laborCost = time.reduce(
-        (s, t) => s + Number(t.hoursWorked ?? 0) * Number(t.user.hourlyRate ?? 0),
+        (s, t) => s + Number(t.hoursWorked ?? 0) * Number(t.hourlyRateSnapshot ?? t.user.hourlyRate ?? 0),
         0
       );
       const expenseCost = Number(expenses._sum.amount ?? 0);
