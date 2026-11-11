@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateEmployeePayroll } from "@/lib/employee-payroll";
+import { calculateEmployeeGrossPay } from "@/lib/employee-payroll";
 import { buildPayrollSummaries, type PayrollEntry } from "@/lib/payroll-preview";
 
 function entry(id: number, hours: number, rateType: PayrollEntry["rateType"] = "regular"): PayrollEntry {
@@ -45,11 +45,11 @@ describe("straight-time payroll", () => {
     expect(result.regularHours).toBe(5);
     expect(result.overtimeHours).toBe(0);
     expect(result.estimatedCheck).toBe(100);
-    expect(result.details[0].rateLabel).toBe("Regular $20.00");
+    expect(result.details[0].rateLabel).toBe("Regular 20.00");
   });
 
   it("ignores legacy overtime configuration in employee previews", () => {
-    const result = calculateEmployeePayroll({
+    const result = calculateEmployeeGrossPay({
       regularHours: 40,
       specialHours: 0,
       travelHours: 0,
@@ -58,7 +58,6 @@ describe("straight-time payroll", () => {
       specialAdjustment: 0,
       overtimeMultiplier: 2,
       overtimeRate: 50,
-      travelPayEnabled: false,
       travelRateType: "regular",
       customTravelRate: null,
     });
