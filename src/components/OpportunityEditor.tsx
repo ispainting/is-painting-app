@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "@/server/api/root";
@@ -11,6 +11,7 @@ import { formatOpportunityDate, opportunityDateInput, shouldRecordOpportunitySta
 import { startOfBusinessDayInMassachusetts, todayDateInputValueInMassachusetts } from "@/lib/employee-rate-resolver";
 import { isTerminalStage, opportunityStageLabel } from "@/lib/pipeline-sync";
 import { toast } from "sonner";
+import type { LeadAttribution } from "@/lib/orion-attribution";
 
 export type OpportunityCardData = inferRouterOutputs<AppRouter>["opportunities"]["list"][number];
 
@@ -38,13 +39,26 @@ export function OpportunityEditor({ opportunity, onClose, onSaved }: {
   });
   const [customerSearch, setCustomerSearch] = useState(opportunity?.customer.name ?? "");
   const [customerResultsOpen, setCustomerResultsOpen] = useState(false);
-  const [tab, setTab] = useState<"details" | "pipeline" | "links" | "history">("details");
+  const [tab, setTab] = useState<"details" | "pipeline" | "marketing" | "links" | "history">("details");
+  const [marketing, setMarketing] = useState<LeadAttribution>({});
+  const [marketingLoaded, setMarketingLoaded] = useState(false);
   const customers = api.customers.list.useQuery({ search: customerSearch || undefined });
   const candidates = api.opportunities.linkCandidates.useQuery({ customerId: form.customerId }, { enabled: form.customerId > 0 });
   const history = api.opportunities.byId.useQuery({ id: opportunity?.id ?? 0 }, { enabled: !!opportunity });
+  const attribution = api.opportunities.marketingAttribution.useQuery({ id: opportunity?.id ?? 0 }, { enabled: !!opportunity });
   const saved = async () => { await onSaved(); toast.success(opportunity ? "Opportunity updated" : "Opportunity created"); onClose(); };
   const update = api.opportunities.update.useMutation({ onSuccess: saved, onError: (e) => toast.error(e.message) });
   const create = api.opportunities.create.useMutation({ onSuccess: saved, onError: (e) => toast.error(e.message) });
+  const saveAttribution = api.opportunities.updateMarketingAttribution.useMutation({
+    onSuccess: async () => { await attribution.refetch(); toast.success("Marketing attribution saved"); },
+    onError: (e) => toast.error(e.message),
+  });
+  useEffect(() => {
+    if (!marketingLoaded && attribution.data) {
+      setMarketing(attribution.data);
+      setMarketingLoaded(true);
+    }
+  }, [attribution.data, marketingLoaded]);
   const date = (value: string) => value ? startOfBusinessDayInMassachusetts(value) : null;
   const patch = (key: keyof typeof form, value: string) => setForm((previous) => ({ ...previous, [key]: value }));
 
@@ -89,7 +103,7 @@ export function OpportunityEditor({ opportunity, onClose, onSaved }: {
           {([
             ["details", "Details"],
             ["pipeline", "Pipeline & Dates"],
-            ...(opportunity ? [["links", "Links"], ["history", "History"]] as const : []),
+            ...(opportunity ? [["marketing", "Marketing Attribution"], ["links", "Links"], ["history", "History"]] as const : []),
           ] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={tab === value} className={`rounded px-3 py-2 text-sm ${tab === value ? "bg-brand-700 text-white" : "bg-slate-100"}`} onClick={() => setTab(value)}>{label}</button>)}
         </nav>
         {tab === "details" && <>
@@ -131,6 +145,33 @@ export function OpportunityEditor({ opportunity, onClose, onSaved }: {
         </label>}
         {(form.stage === "follow_up" || form.stage === "on_hold" || !!form.followUpAt) && <label>Follow-up Date<input type="date" className="input" value={form.followUpAt} onChange={(e) => patch("followUpAt", e.target.value)} /></label>}
         <label className="col-span-2">Notes<textarea className="input" value={form.notes} onChange={(e) => patch("notes", e.target.value)} /></label>
+        </>}
+        {opportunity && tab === "marketing" && <>
+          <div className="col-span-2 rounded bg-blue-50 p-3 text-sm text-blue-900">
+            Structured campaign data used by Marketing analysis. Saving here does not replace Notes, lead dates, or stage history.
+          </div>
+          {attribution.isLoading ? <p className="col-span-2 text-slate-500">Loading marketing attribution...</p> : <>
+            {([
+              ["platform", "Platform"], ["trafficSource", "Traffic Source"],
+              ["campaignId", "Campaign ID"], ["campaignName", "Campaign Name"],
+              ["adSetId", "Ad Set ID"], ["adSetName", "Ad Set Name"],
+              ["adId", "Ad ID"], ["adName", "Ad Name"],
+              ["formId", "Form ID"], ["formName", "Form Name"],
+              ["utmSource", "UTM Source"], ["utmMedium", "UTM Medium"],
+              ["utmCampaign", "UTM Campaign"], ["utmContent", "UTM Content"],
+              ["gclid", "GCLID"], ["fbclid", "FBCLID"],
+              ["landingPage", "Landing Page URL"], ["idealTiming", "Ideal Timing"],
+              ["externalLeadId", "External Lead ID"],
+            ] as const).map(([key, label]) => <label key={key} className={key === "landingPage" ? "col-span-2" : ""}>{label}
+              <input className="input" value={marketing[key] ?? ""} onChange={(e) => setMarketing((current) => ({ ...current, [key]: e.target.value }))} />
+            </label>)}
+            <div className="col-span-2 flex justify-end">
+              <button type="button" className="btn btn-primary" disabled={saveAttribution.isPending}
+                onClick={() => saveAttribution.mutate({ id: opportunity.id, attribution: marketing })}>
+                {saveAttribution.isPending ? "Saving..." : "Save Marketing Attribution"}
+              </button>
+            </div>
+          </>}
         </>}
         {opportunity && tab === "links" && <>
           <div className="col-span-2 rounded bg-slate-50 p-3 text-sm">

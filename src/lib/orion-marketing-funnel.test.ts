@@ -38,4 +38,13 @@ describe("summarizeMarketingFunnel", () => {
     expect(result.byAd).toEqual([]);
     expect(result.byPlatform[0].name).toBe("Referral");
   });
+
+  it("uses UTM attribution when platform campaign and ad ids are unavailable", () => {
+    const result = summarizeMarketingFunnel([lead({
+      attribution: { trafficSource: "Google Ads", utmCampaign: "interior_search", utmContent: "claude" },
+    })]);
+    expect(result.byPlatform[0].name).toBe("Google Ads");
+    expect(result.byCampaign[0]).toMatchObject({ key: "Google Ads:interior_search", name: "interior_search" });
+    expect(result.byAd[0]).toMatchObject({ key: "Google Ads:claude", name: "claude" });
+  });
 });

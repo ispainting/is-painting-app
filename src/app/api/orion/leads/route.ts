@@ -56,12 +56,21 @@ const LeadInput = z.object({
   adName: z.string().trim().max(300).optional(),
   formId: z.string().trim().max(191).optional(),
   formName: z.string().trim().max(300).optional(),
+  trafficSource: z.string().trim().max(100).optional(),
+  utmSource: z.string().trim().max(300).optional(),
+  utmMedium: z.string().trim().max(300).optional(),
+  utmCampaign: z.string().trim().max(300).optional(),
+  utmContent: z.string().trim().max(500).optional(),
+  gclid: z.string().trim().max(500).optional(),
+  fbclid: z.string().trim().max(500).optional(),
+  landingPage: z.string().trim().max(1000).optional(),
+  idealTiming: z.string().trim().max(300).optional(),
   // Any other answers from the form, label → value, kept on the lead's first note.
   details: z.record(z.string().max(5000)).optional(),
 });
 type LeadInput = z.infer<typeof LeadInput>;
 
-const KNOWN_FIELDS = new Set(["leadId", "source", "receivedAt", "name", "email", "phone", "address", "city", "state", "zipCode", "service", "message", "platform", "campaignId", "campaignName", "adSetId", "adSetName", "adId", "adName", "formId", "formName", "details"]);
+const KNOWN_FIELDS = new Set(["leadId", "source", "receivedAt", "name", "email", "phone", "address", "city", "state", "zipCode", "service", "message", "platform", "campaignId", "campaignName", "adSetId", "adSetName", "adId", "adName", "formId", "formName", "trafficSource", "utmSource", "utmMedium", "utmCampaign", "utmContent", "gclid", "fbclid", "landingPage", "idealTiming", "details"]);
 
 // The owner's Make scenario already shapes each Facebook lead for Viktor ("Lead ID", "Created time",
 // "Full name", "Phone", "Email", "Service", "Form ID", "Ad ID"). Accepting those names lets the CRM
@@ -100,6 +109,15 @@ const ALIASES: Record<string, string> = {
   adname: "adName",
   formid: "formId",
   formname: "formName",
+  trafficsource: "trafficSource",
+  utmsource: "utmSource",
+  utmmedium: "utmMedium",
+  utmcampaign: "utmCampaign",
+  utmcontent: "utmContent",
+  gclid: "gclid",
+  fbclid: "fbclid",
+  landingpage: "landingPage",
+  idealtiming: "idealTiming",
   details: "details",
 };
 // Fields only a Facebook lead carries — their presence means the source is Meta.
@@ -174,6 +192,16 @@ function leadAttribution(lead: LeadInput): LeadAttribution | null {
     adName: lead.adName,
     formId: lead.formId,
     formName: lead.formName,
+    trafficSource: lead.trafficSource,
+    utmSource: lead.utmSource,
+    utmMedium: lead.utmMedium,
+    utmCampaign: lead.utmCampaign,
+    utmContent: lead.utmContent,
+    gclid: lead.gclid,
+    fbclid: lead.fbclid,
+    landingPage: lead.landingPage,
+    idealTiming: lead.idealTiming,
+    externalLeadId: lead.leadId,
   });
 }
 
