@@ -138,7 +138,7 @@ function DurationFields({ label, value, onChange }: { label: string; value: stri
         options={options.hours}
       />
       <FieldSelect
-        label="Minutes (5-minute steps)"
+        label="Minutes"
         value={parts.minutes}
         onChange={(next) => onChange(updateDurationPart(value, "minutes", next))}
         options={options.minutes}
@@ -190,7 +190,7 @@ function ClockTimeFields({ label, value, onChange }: { label: string; value: str
         options={hourOptions}
       />
       <FieldSelect
-        label="Minute (5-minute steps)"
+        label="Minute"
         value={parts.minute}
         onChange={(next) => onChange(updateClockTimePart(value, "minute", next))}
         options={minuteOptions}
