@@ -31,6 +31,7 @@ type TimeEntryRecord = {
   specialPayEnabled: boolean;
   hourlyRateAdjustment?: number | string | null;
   notes: string | null;
+  managerNotes?: string | null;
   notAtJobsiteReason: string | null;
   clockInLatitude: number | string | null;
   clockInLongitude: number | string | null;
@@ -53,6 +54,7 @@ type EntryEditorState = {
   notes: string;
   managerNotes: string;
   rateType: "regular" | "island" | "special" | "travel" | "overtime";
+  leaveOpen: boolean;
 };
 
 function toDateInput(date: Date) {
@@ -106,12 +108,13 @@ function buildEditor(entry?: TimeEntryRecord | null): EntryEditorState {
       jobId: null,
       date: toDateInput(now),
       clockInTime: "08:00",
-      clockOutTime: "17:00",
+      clockOutTime: "",
       totalHours: "",
       travelHours: "",
       notes: "",
       managerNotes: "",
       rateType: "regular",
+      leaveOpen: true,
     };
   }
 
@@ -127,8 +130,9 @@ function buildEditor(entry?: TimeEntryRecord | null): EntryEditorState {
     totalHours: entry.hoursWorked ? String(toNumber(entry.hoursWorked)) : "",
     travelHours: String(toNumber(entry.travelHours ?? entry.job?.defaultTravelHours ?? 0)),
     notes: entry.notes || "",
-    managerNotes: "",
+    managerNotes: entry.managerNotes || "",
     rateType: (entry.rateType === "island" ? "special" : entry.rateType) || (hasSpecialPay(entry) ? "special" : "regular"),
+    leaveOpen: !outAt,
   };
 }
 
@@ -269,6 +273,13 @@ export default function TimePage() {
     setEditorOpen(true);
   };
 
+  const openCompletedHours = () => {
+    const next = buildEditor();
+    setEditorTouchedTravelHours(false);
+    setEditor({ ...next, leaveOpen: false, clockOutTime: "17:00" });
+    setEditorOpen(true);
+  };
+
   const openEdit = (entry: TimeEntryRecord) => {
     setEditorTouchedTravelHours(true);
     setEditor(buildEditor(entry));
@@ -277,10 +288,12 @@ export default function TimePage() {
 
   const submitEditor = () => {
     if (!editor.userId) return toast.error("Select an employee.");
+    if (editor.leaveOpen && !editor.managerNotes.trim()) return toast.error("Enter why you are clocking in for the employee.");
 
     const inAt = new Date(`${editor.date}T${editor.clockInTime}:00`);
     const hasTotalHours = editor.totalHours.trim().length > 0;
-    const outAt = hasTotalHours ? null : editor.clockOutTime ? new Date(`${editor.date}T${editor.clockOutTime}:00`) : null;
+    const outAt = editor.leaveOpen ? null : hasTotalHours ? null : editor.clockOutTime ? new Date(`${editor.date}T${editor.clockOutTime}:00`) : null;
+    if (!editor.leaveOpen && !hasTotalHours && !outAt) return toast.error("Enter clock-out time or total hours.");
 
     saveEntry.mutate({
       id: editor.id ?? undefined,
@@ -289,7 +302,7 @@ export default function TimePage() {
         jobId: editor.jobId,
         clockIn: inAt.toISOString(),
         clockOut: outAt ? outAt.toISOString() : null,
-        totalHours: hasTotalHours ? toNumber(editor.totalHours) : null,
+        totalHours: editor.leaveOpen ? null : hasTotalHours ? toNumber(editor.totalHours) : null,
         travelHours: editor.travelHours.trim() ? toNumber(editor.travelHours) : null,
         rateType: editor.rateType,
         breakMinutes: 0,
@@ -322,7 +335,8 @@ export default function TimePage() {
               ],
             })} />
             <button className="btn btn-secondary" onClick={printSummary}><Printer className="mr-1 h-4 w-4" /> Print Payroll Summary</button>
-            <button className="btn btn-primary" onClick={openCreate}><Plus className="mr-1 h-4 w-4" /> Add Manual Hours</button>
+            <button className="btn btn-secondary" onClick={openCompletedHours}><Plus className="mr-1 h-4 w-4" /> Add Completed Hours</button>
+            <button className="btn btn-primary" onClick={openCreate}><Clock3 className="mr-1 h-4 w-4" /> Clock In for Employee</button>
           </div>
         }
       />
@@ -564,8 +578,10 @@ export default function TimePage() {
           <div className="card w-full max-w-3xl p-6">
             <div className="mb-4 flex items-center justify-between">
               <div>
-                <div className="text-lg font-semibold">{editor.id ? "Edit Hours" : "Add Manual Hours"}</div>
-                <div className="text-sm text-slate-500">Clock in/out or total hours.</div>
+                <div className="text-lg font-semibold">{editor.id ? "Edit Time Entry" : editor.leaveOpen ? "Clock In for Employee" : "Add Completed Hours"}</div>
+                <div className="text-sm text-slate-500">
+                  {editor.leaveOpen ? "Set the real start time. The employee will clock out normally from their phone." : "Enter a completed time period."}
+                </div>
               </div>
               <button className="btn btn-secondary" onClick={() => setEditorOpen(false)}>Close</button>
             </div>
@@ -579,8 +595,22 @@ export default function TimePage() {
               }} options={[{ value: "", label: "No project" }, ...(jobs.data || []).map((j) => ({ value: String(j.id), label: j.name }))]} />
               <FieldInput label="Date" type="date" value={editor.date} onChange={(value) => setEditor((s) => ({ ...s, date: value }))} />
               <FieldInput label="Clock In" type="time" value={editor.clockInTime} onChange={(value) => setEditor((s) => ({ ...s, clockInTime: value }))} />
-              <FieldInput label="Clock Out" type="time" value={editor.clockOutTime} onChange={(value) => setEditor((s) => ({ ...s, clockOutTime: value }))} />
-              <FieldInput label="Total Hours (optional)" type="number" value={editor.totalHours} onChange={(value) => setEditor((s) => ({ ...s, totalHours: value }))} />
+              <div className="flex items-end pb-2">
+                <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                  <input type="checkbox" checked={editor.leaveOpen} onChange={(event) => setEditor((s) => ({ ...s, leaveOpen: event.target.checked, clockOutTime: event.target.checked ? "" : s.clockOutTime || "17:00", totalHours: event.target.checked ? "" : s.totalHours }))} />
+                  Leave shift open for employee clock-out
+                </label>
+              </div>
+              {!editor.leaveOpen ? (
+                <>
+                  <FieldInput label="Clock Out" type="time" value={editor.clockOutTime} onChange={(value) => setEditor((s) => ({ ...s, clockOutTime: value }))} />
+                  <FieldInput label="Total Hours (optional)" type="number" value={editor.totalHours} onChange={(value) => setEditor((s) => ({ ...s, totalHours: value }))} />
+                </>
+              ) : (
+                <div className="md:col-span-2 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+                  The effective clock-in time above is used for hours and job cost. The system separately records when you created this entry for audit purposes.
+                </div>
+              )}
               <FieldSelect
                 label="Rate Type"
                 value={editor.rateType}
@@ -611,7 +641,7 @@ export default function TimePage() {
                 </div>
               ) : null}
               <FieldTextArea label="Notes" value={editor.notes} onChange={(value) => setEditor((s) => ({ ...s, notes: value }))} />
-              <FieldTextArea label="Manager Notes" value={editor.managerNotes} onChange={(value) => setEditor((s) => ({ ...s, managerNotes: value }))} />
+              <FieldTextArea label={editor.leaveOpen ? "Manager reason (required)" : "Manager Notes"} value={editor.managerNotes} onChange={(value) => setEditor((s) => ({ ...s, managerNotes: value }))} />
             </div>
 
             <div className="mt-4 flex justify-end gap-2">
