@@ -14,6 +14,7 @@ const CATEGORY_OPTIONS = [
 ] as const;
 
 type Category = (typeof CATEGORY_OPTIONS)[number];
+type CategorySelection = Category | "";
 type Attachment = { id: number; originalFilename: string; mimeType: string; sizeBytes: number };
 type ExtractedValue<T> = { value: T | null; confidence: number };
 type ReceiptData = {
@@ -45,6 +46,7 @@ export default function EmployeeReceiptsPage() {
   const metaQuery = api.expenses.meta.useQuery();
   const meQuery = api.auth.me.useQuery();
   const extractReceipt = api.expenses.extractReceipt.useMutation();
+  const deleteAttachment = api.expenses.deleteAttachment.useMutation();
   const createExpense = api.expenses.create.useMutation({
     onSuccess: async () => {
       toast.success("Receipt submitted for review");
@@ -69,7 +71,7 @@ export default function EmployeeReceiptsPage() {
     vendor: "",
     expenseDate: todayInput(),
     amount: "",
-    category: "materials" as Category,
+    category: "" as CategorySelection,
     description: "",
     paymentMethod: "",
   });
@@ -86,7 +88,7 @@ export default function EmployeeReceiptsPage() {
       vendor: "",
       expenseDate: todayInput(),
       amount: "",
-      category: "materials",
+      category: "",
       description: "",
       paymentMethod: "",
     });
@@ -95,6 +97,14 @@ export default function EmployeeReceiptsPage() {
 
   async function handleFile(fileToUpload?: File) {
     if (!fileToUpload) return;
+    if (attachment) {
+      try {
+        await deleteAttachment.mutateAsync({ id: attachment.id });
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not discard the previous upload.");
+        return;
+      }
+    }
     setFile(fileToUpload);
     setAttachment(null);
     setReceiptData(null);
@@ -147,6 +157,7 @@ export default function EmployeeReceiptsPage() {
     const amount = Number(form.amount);
     if (!attachment) return toast.error("Upload a receipt first.");
     if (!form.jobId) return toast.error("Choose the job this purchase belongs to.");
+    if (!form.category) return toast.error("Choose a category.");
     if (!Number.isFinite(amount) || amount <= 0) return toast.error("Enter the receipt total.");
     if (!form.description.trim()) return toast.error("Enter what the purchase was for.");
 
@@ -173,6 +184,7 @@ export default function EmployeeReceiptsPage() {
     attachment
     && form.jobId
     && form.description.trim()
+    && form.category
     && Number(form.amount) > 0
     && !uploading
     && !extracting
@@ -202,7 +214,7 @@ export default function EmployeeReceiptsPage() {
           className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-3 text-base"
           value={form.jobId}
           onChange={(event) => setForm((current) => ({ ...current, jobId: event.target.value }))}
-          disabled={uploading || extracting || createExpense.isPending}
+          disabled={uploading || extracting || deleteAttachment.isPending || createExpense.isPending}
         >
           <option value="">Choose the job for this purchase</option>
           {jobs.map((job) => <option key={job.id} value={job.id}>{job.name}</option>)}
@@ -228,8 +240,8 @@ export default function EmployeeReceiptsPage() {
             onClick={() => fileInput.current?.click()}
             disabled={uploading || extracting || createExpense.isPending}
           >
-            {uploading || extracting ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <Camera className="h-5 w-5" />}
-            {uploading ? "Uploading…" : extracting ? "Reading receipt…" : file ? "Choose a different receipt" : "Take photo or choose file"}
+            {uploading || extracting || deleteAttachment.isPending ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <Camera className="h-5 w-5" />}
+            {uploading ? "Uploading…" : extracting ? "Reading receipt…" : deleteAttachment.isPending ? "Replacing receipt…" : file ? "Choose a different receipt" : "Take photo or choose file"}
           </button>
           {file && <p className="mt-2 break-all text-sm text-slate-600">{file.name}</p>}
           {message && (
@@ -262,7 +274,8 @@ export default function EmployeeReceiptsPage() {
           </div>
           <label className="block text-sm font-semibold text-slate-700">
             Category
-            <select className="mt-2 min-h-12 w-full rounded-xl border border-slate-300 bg-white px-3 text-base font-normal" value={form.category} onChange={(event) => setForm((current) => ({ ...current, category: event.target.value as Category }))}>
+            <select className="mt-2 min-h-12 w-full rounded-xl border border-slate-300 bg-white px-3 text-base font-normal" value={form.category} onChange={(event) => setForm((current) => ({ ...current, category: event.target.value as CategorySelection }))}>
+              <option value="">Choose category</option>
               {CATEGORY_OPTIONS.map((category) => <option key={category} value={category}>{categoryLabel(category)}</option>)}
             </select>
           </label>
