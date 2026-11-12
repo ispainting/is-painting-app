@@ -2,7 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { computeEntry } from "../../../lib/payroll";
 import { resolveEffectiveHourlyRate, shouldRecomputeHourlyRateSnapshot } from "../../../lib/employee-rate-resolver";
-import { liveShiftCutoff } from "../../../lib/clock";
+import { distanceMeters, formatOffsiteReason, isOutsideJobsite, liveShiftCutoff } from "../../../lib/clock";
 import { router, protectedProcedure, adminProcedure } from "../trpc";
 
 /**
@@ -252,6 +252,8 @@ export const timeRouter = router({
         lat: z.number().min(-90).max(90),
         lng: z.number().min(-180).max(180),
         accuracy: z.number().min(0).optional(),
+        offsiteAuthorized: z.boolean().default(false),
+        offsiteReason: z.string().trim().max(500).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -293,9 +295,33 @@ export const timeRouter = router({
               isIslandJob: true,
               specialPayEnabled: true,
               hourlyRateAdjustment: true,
+              latitude: true,
+              longitude: true,
             },
           })
         : null;
+      const hasJobCoordinates = selectedJob?.latitude != null && selectedJob?.longitude != null;
+      const distanceFromJobsite = hasJobCoordinates
+        ? distanceMeters(
+            { lat: input.lat, lng: input.lng },
+            { lat: Number(selectedJob!.latitude), lng: Number(selectedJob!.longitude) }
+          )
+        : null;
+      const isOffsite = !selectedJobId
+        || (distanceFromJobsite != null && isOutsideJobsite(
+          { lat: input.lat, lng: input.lng },
+          { lat: Number(selectedJob!.latitude), lng: Number(selectedJob!.longitude) }
+        ));
+      if (isOffsite && (!input.offsiteAuthorized || !input.offsiteReason?.trim())) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Confirm authorization and enter a reason to clock in away from the jobsite.",
+        });
+      }
+      const notAtJobsiteReason = isOffsite
+        ? formatOffsiteReason(input.offsiteReason!, distanceFromJobsite)
+        : null;
+
       const effectiveSpecialPayEnabled = Boolean(selectedJob?.specialPayEnabled || selectedJob?.isIslandJob);
       const effectiveHourlyRateAdjustment = effectiveSpecialPayEnabled
         ? (Number(selectedJob?.hourlyRateAdjustment || 0) > 0 ? Number(selectedJob?.hourlyRateAdjustment || 0) : 2)
@@ -319,6 +345,7 @@ export const timeRouter = router({
           clockInLatitude: input.lat,
           clockInLongitude: input.lng,
           clockInAccuracy: input.accuracy,
+          notAtJobsiteReason,
           isIslandJob: effectiveSpecialPayEnabled,
           specialPayEnabled: effectiveSpecialPayEnabled,
           hourlyRateAdjustment: effectiveHourlyRateAdjustment,
