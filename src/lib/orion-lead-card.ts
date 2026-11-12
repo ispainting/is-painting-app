@@ -61,8 +61,22 @@ export function leadCardNote(lead: LeadCardFields): string {
   return leadCardLines(lead).join("\n");
 }
 
-export function leadOpportunityName(lead: Pick<LeadCardFields, "service" | "city">): string {
-  return [lead.service ? readable(lead.service) : "Quote request", lead.city].filter(Boolean).join(" — ");
+export function leadService(lead: Pick<LeadCardFields, "service">): string | null {
+  return lead.service?.trim() ? readable(lead.service) : null;
+}
+
+export function leadOpportunityName(lead: Pick<LeadCardFields, "name" | "service" | "city">): string {
+  const name = lead.name?.trim();
+  const service = leadService(lead);
+  if (name) return `${name} - ${service ?? "Quote request"}`;
+  return [service ?? "Quote request", lead.city?.trim()].filter(Boolean).join(" — ");
+}
+
+export function customerTagsWithService(tags: string[] | null | undefined, lead: Pick<LeadCardFields, "service">): string[] {
+  const current = (tags ?? []).map((tag) => tag.trim()).filter(Boolean);
+  const service = leadService(lead);
+  if (!service || current.some((tag) => tag.toLocaleLowerCase() === service.toLocaleLowerCase())) return current;
+  return [...current, service];
 }
 
 /** What a later delivery can add to the customer: only fields that are still empty. */
@@ -90,9 +104,17 @@ export function replacesNote(current: string | null, touchpointBody: string | nu
 }
 
 /** A better title for the opportunity, or null to keep it: only the automatic title ever changes. */
-export function betterOpportunityName(current: string, lead: Pick<LeadCardFields, "service" | "city">): string | null {
+export function betterOpportunityName(current: string, lead: Pick<LeadCardFields, "name" | "service" | "city">): string | null {
   const next = leadOpportunityName(lead);
   if (next === current) return null;
-  if (next.startsWith("Quote request") && !current.startsWith("Quote request")) return null;
-  return current.startsWith("Quote request") || next.startsWith(`${current} — `) ? next : null;
+
+  const service = leadService(lead);
+  const city = lead.city?.trim();
+  const automaticNames = new Set([
+    "Quote request",
+    ...(service ? [service] : []),
+    ...(service && city ? [`${service} — ${city}`] : []),
+  ]);
+  if (!automaticNames.has(current)) return null;
+  return next;
 }
