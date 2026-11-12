@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api } from "@/trpc/react";
 import { formatDateTime } from "@/lib/utils";
 import { CLOCK_IN_NOT_AT_JOBSITE, CLOCKABLE_REFETCH_INTERVAL_MS, formatClockDuration, isOutsideJobsite, normalizeClockInJobId } from "@/lib/clock";
 import { toast } from "sonner";
 import { InstallPrompt } from "@/components/employee/InstallPrompt";
-import { BadgeCheck, BriefcaseBusiness, Clock3, Coffee, LogIn, LogOut, PlayCircle, TimerReset } from "lucide-react";
+import { BadgeCheck, BriefcaseBusiness, Camera, Clock3, Coffee, LogIn, LogOut, PlayCircle, TimerReset } from "lucide-react";
 
 function getCoords(): Promise<GeolocationPosition | null> {
   return new Promise((resolve) => {
@@ -329,6 +330,14 @@ export default function ClockPage() {
             </div>
           </div>
         )}
+
+        <Link
+          href="/receipts"
+          className="flex min-h-16 items-center justify-center gap-2 rounded-2xl bg-blue-700 px-4 py-4 text-base font-semibold text-white shadow-sm"
+        >
+          <Camera className="h-5 w-5" />
+          Upload a receipt
+        </Link>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
