@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   betterOpportunityName,
   blankCustomerFields,
+  customerTagsWithService,
   leadCardLines,
   leadCardNote,
   leadOpportunityName,
@@ -68,10 +69,18 @@ describe("leadCardLines", () => {
 });
 
 describe("leadOpportunityName", () => {
-  it("names the opportunity after the service and town", () => {
+  it("names the opportunity after the customer and selected service", () => {
+    expect(leadOpportunityName({ name: "Roosevelt Haibara de Carvalho", service: "interior", city: "Falmouth" })).toBe("Roosevelt Haibara de Carvalho - Interior");
     expect(leadOpportunityName({ service: "interior", city: "Falmouth" })).toBe("Interior — Falmouth");
-    expect(leadOpportunityName({ service: "Exterior Painting" })).toBe("Exterior Painting");
     expect(leadOpportunityName({})).toBe("Quote request");
+  });
+});
+
+describe("customerTagsWithService", () => {
+  it("adds the selected service without losing or duplicating existing tags", () => {
+    expect(customerTagsWithService(null, { service: "interior" })).toEqual(["Interior"]);
+    expect(customerTagsWithService(["vip", "Interior"], { service: "interior" })).toEqual(["vip", "Interior"]);
+    expect(customerTagsWithService(["vip"], {})).toEqual(["vip"]);
   });
 });
 
@@ -118,11 +127,11 @@ describe("replacesNote", () => {
 
 describe("betterOpportunityName", () => {
   it("replaces the automatic title once the service is known", () => {
-    expect(betterOpportunityName("Quote request", { service: "interior" })).toBe("Interior");
+    expect(betterOpportunityName("Quote request", { name: "Roosevelt Haibara de Carvalho", service: "interior" })).toBe("Roosevelt Haibara de Carvalho - Interior");
   });
 
   it("adds the town to a title that only had the service", () => {
-    expect(betterOpportunityName("Interior", { service: "interior", city: "Falmouth" })).toBe("Interior — Falmouth");
+    expect(betterOpportunityName("Interior", { name: "Roosevelt Haibara de Carvalho", service: "interior", city: "Falmouth" })).toBe("Roosevelt Haibara de Carvalho - Interior");
   });
 
   it("keeps a title someone wrote", () => {

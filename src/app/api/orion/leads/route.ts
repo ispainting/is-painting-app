@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { checkLeadIntakeAuth, classifyWordPressLead, type LeadIntakeCaller } from "@/lib/orion-auth";
-import { betterOpportunityName, blankCustomerFields, leadCardNote, leadOpportunityName, replacesNote } from "@/lib/orion-lead-card";
+import { betterOpportunityName, blankCustomerFields, customerTagsWithService, leadCardNote, leadOpportunityName, leadService, replacesNote } from "@/lib/orion-lead-card";
 import { attributionFromMetadata, compactAttribution, mergeAttribution, type LeadAttribution } from "@/lib/orion-attribution";
 
 // Lead intake from ORION, the marketing platform. Every quote request it receives — the website
@@ -242,7 +242,7 @@ async function findCustomer(lead: LeadInput) {
   if (lead.email) {
     const byEmail = await prisma.customer.findFirst({
       where: { deletedAt: null, email: { equals: lead.email, mode: "insensitive" } },
-      select: { id: true },
+      select: { id: true, tags: true },
     });
     if (byEmail) return byEmail;
   }
@@ -252,11 +252,11 @@ async function findCustomer(lead: LeadInput) {
     // digits in SQL and compare the full number in code.
     const candidates = await prisma.customer.findMany({
       where: { deletedAt: null, phone: { contains: phone.slice(-4) } },
-      select: { id: true, phone: true },
+      select: { id: true, phone: true, tags: true },
       take: 50,
     });
     const match = candidates.find((c) => c.phone && digits(c.phone) === phone);
-    if (match) return { id: match.id };
+    if (match) return { id: match.id, tags: match.tags };
   }
   return null;
 }
@@ -267,7 +267,7 @@ async function findCustomer(lead: LeadInput) {
 async function completeExistingLead(opportunityId: number, lead: LeadInput, caller: LeadIntakeCaller | null): Promise<string[]> {
   const opportunity = await prisma.opportunity.findUnique({
     where: { id: opportunityId },
-    select: { name: true, notes: true, customerId: true, customer: { select: { email: true, phone: true, address: true, city: true, state: true, zipCode: true } } },
+    select: { name: true, notes: true, serviceType: true, customerId: true, customer: { select: { email: true, phone: true, address: true, city: true, state: true, zipCode: true, tags: true } } },
   });
   if (!opportunity) return [];
 
@@ -283,14 +283,19 @@ async function completeExistingLead(opportunityId: number, lead: LeadInput, call
         })
       : null;
   const newNote = !!touchpoint && replacesNote(opportunity.notes, touchpoint.body, note);
-  const newName = caller === "ORION" ? betterOpportunityName(opportunity.name, lead) : null;
+  const newName = betterOpportunityName(opportunity.name, lead);
+  const serviceType = !opportunity.serviceType ? leadService(lead) : null;
+  const tags = customerTagsWithService(opportunity.customer.tags, lead);
+  const tagsChanged = JSON.stringify(tags) !== JSON.stringify(opportunity.customer.tags ?? []);
   if (newNote) filled.push("card");
   if (newName) filled.push("title");
+  if (serviceType) filled.push("serviceType");
+  if (tagsChanged) filled.push("serviceTag");
   if (filled.length === 0) return [];
 
   await prisma.$transaction(async (tx) => {
-    if (Object.keys(contact).length) await tx.customer.update({ where: { id: opportunity.customerId }, data: contact });
-    if (newNote || newName) await tx.opportunity.update({ where: { id: opportunityId }, data: { ...(newNote ? { notes: note } : {}), ...(newName ? { name: newName } : {}) } });
+    if (Object.keys(contact).length || tagsChanged) await tx.customer.update({ where: { id: opportunity.customerId }, data: { ...contact, ...(tagsChanged ? { tags } : {}) } });
+    if (newNote || newName || serviceType) await tx.opportunity.update({ where: { id: opportunityId }, data: { ...(newNote ? { notes: note } : {}), ...(newName ? { name: newName } : {}), ...(serviceType ? { serviceType } : {}) } });
     if (newNote && touchpoint) await tx.customerTouchpoint.update({ where: { id: touchpoint.id }, data: { body: note } });
   });
   return filled;
@@ -352,12 +357,20 @@ export async function POST(req: Request) {
               leadSource: CRM_SOURCE[lead.source].leadSource,
               source: CRM_SOURCE[lead.source].source,
               status: "Lead",
+              tags: customerTagsWithService([], lead),
               lastContactAt: receivedAt,
               createdAt: receivedAt,
             },
             select: { id: true },
           })
         ).id;
+
+      if (matched) {
+        const tags = customerTagsWithService(matched.tags, lead);
+        if (JSON.stringify(tags) !== JSON.stringify(matched.tags ?? [])) {
+          await tx.customer.update({ where: { id: customerId }, data: { tags } });
+        }
+      }
 
       const opportunity = await tx.opportunity.create({
         data: {
@@ -367,6 +380,7 @@ export async function POST(req: Request) {
           stage: "new_lead",
           status: "open",
           source: CRM_SOURCE[lead.source].leadSource,
+          serviceType: leadService(lead),
           notes: body,
           leadReceivedAt: receivedAt,
           lastStageChangedAt: receivedAt,
