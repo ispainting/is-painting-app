@@ -6,7 +6,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { getTimeListState } from "@/lib/time-list-state";
 import { isWithinLiveShiftWindow } from "@/lib/clock";
 import { formatDateTime } from "@/lib/utils";
-import { Clock3, Copy, Pencil, Plus, Printer, Trash2 } from "lucide-react";
+import { Clock3, Copy, MapPin, Pencil, Plus, Printer, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { buildPayrollSummaries } from "@/lib/payroll-preview";
 import { ExportPdfButton } from "@/components/ExportPdfButton";
@@ -31,6 +31,10 @@ type TimeEntryRecord = {
   specialPayEnabled: boolean;
   hourlyRateAdjustment?: number | string | null;
   notes: string | null;
+  notAtJobsiteReason: string | null;
+  clockInLatitude: number | string | null;
+  clockInLongitude: number | string | null;
+  clockInAccuracy: number | string | null;
   reviewStatus: ReviewStatus;
   workType: string | null;
   user?: { id: number; name: string; hourlyRate: number | string | null };
@@ -198,6 +202,7 @@ export default function TimePage() {
   });
 
   const rows = (listQuery.data || []) as unknown as TimeEntryRecord[];
+  const offsiteAlerts = rows.filter((entry) => !entry.isManual && entry.notAtJobsiteReason);
   const listState = getTimeListState({
     isLoading: listQuery.isLoading,
     isError: listQuery.isError,
@@ -327,6 +332,36 @@ export default function TimePage() {
         <button className={["rounded-md px-3 py-2 text-sm font-medium", tab === "overview" ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-700"].join(" ")} onClick={() => setTab("overview")}>Overview</button>
         <button className={["rounded-md px-3 py-2 text-sm font-medium", tab === "log" ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-700"].join(" ")} onClick={() => setTab("log")}>Check In / Out</button>
       </div>
+
+      {offsiteAlerts.length > 0 ? (
+        <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-4">
+          <div className="flex items-center gap-2 font-semibold text-amber-950">
+            <MapPin className="h-5 w-5" />
+            Authorized offsite clock-ins ({offsiteAlerts.length})
+          </div>
+          <div className="mt-3 space-y-2">
+            {offsiteAlerts.map((entry) => (
+              <div key={entry.id} className="rounded-lg border border-amber-200 bg-white p-3 text-sm">
+                <div className="font-medium text-slate-900">
+                  {entry.user?.name || "Employee"} · {formatDateTime(entry.clockIn)}
+                </div>
+                <div className="text-slate-700">{entry.job?.name || "No job selected"}</div>
+                <div className="mt-1 text-amber-900">{entry.notAtJobsiteReason}</div>
+                {entry.clockInLatitude != null && entry.clockInLongitude != null ? (
+                  <a
+                    className="mt-2 inline-flex items-center gap-1 font-medium text-blue-700 underline"
+                    href={`https://www.google.com/maps?q=${entry.clockInLatitude},${entry.clockInLongitude}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    View clock-in location
+                  </a>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="card mb-4 p-4">
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
