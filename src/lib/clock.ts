@@ -47,3 +47,29 @@ export function normalizeClockInJobId(selection: string | null | undefined): num
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+
+export const JOBSITE_RADIUS_METERS = 402.336; // 0.25 mile
+
+export type Coordinates = { lat: number; lng: number };
+
+export function distanceMeters(from: Coordinates, to: Coordinates): number {
+  const radians = (degrees: number) => degrees * Math.PI / 180;
+  const earthRadiusMeters = 6_371_000;
+  const lat1 = radians(from.lat);
+  const lat2 = radians(to.lat);
+  const deltaLat = radians(to.lat - from.lat);
+  const deltaLng = radians(to.lng - from.lng);
+  const a = Math.sin(deltaLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLng / 2) ** 2;
+  return earthRadiusMeters * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+export function isOutsideJobsite(employee: Coordinates, job: Coordinates, radiusMeters = JOBSITE_RADIUS_METERS): boolean {
+  return distanceMeters(employee, job) > radiusMeters;
+}
+
+export function formatOffsiteReason(reason: string, distance: number | null): string {
+  const prefix = distance == null
+    ? "Authorized away from jobsite"
+    : `Authorized ${(distance / 1609.344).toFixed(2)} mi from jobsite`;
+  return `${prefix}: ${reason.trim()}`;
+}
