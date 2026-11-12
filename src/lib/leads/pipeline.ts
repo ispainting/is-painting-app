@@ -77,7 +77,7 @@ async function preserveAttribution(opportunityId: number, customerId: number, le
   const incoming = lead.attribution;
   if (!incoming) return false;
   const existing = await prisma.customerTouchpoint.findFirst({
-    where: { customerId, deletedAt: null, metadata: { path: ["opportunityId"], equals: opportunityId } },
+    where: { customerId, deletedAt: null, subject: "Marketing attribution", metadata: { path: ["opportunityId"], equals: opportunityId } },
     orderBy: { createdAt: "asc" },
     select: { id: true, metadata: true },
   });
