@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { timeEntryRangeError, timeRangesOverlap } from "./time-entry-validation";
+import { roundHoursToFiveMinutes, roundToFiveMinutes, timeEntryRangeError, timeRangesOverlap } from "./time-entry-validation";
 
 describe("timeEntryRangeError", () => {
   const now = new Date("2026-11-12T15:00:00.000Z");
@@ -27,5 +27,17 @@ describe("timeRangesOverlap", () => {
       { clockIn: new Date("2026-11-12T13:00:00.000Z"), clockOut: new Date("2026-11-12T14:00:00.000Z") },
       { clockIn: new Date("2026-11-12T14:00:00.000Z"), clockOut: new Date("2026-11-12T17:00:00.000Z") },
     )).toBe(false);
+  });
+});
+
+describe("five-minute manual time increments", () => {
+  it("rounds timestamps to the nearest five minutes", () => {
+    expect(roundToFiveMinutes(new Date("2026-11-12T13:22:00.000Z")).toISOString()).toBe("2026-11-12T13:20:00.000Z");
+    expect(roundToFiveMinutes(new Date("2026-11-12T13:23:00.000Z")).toISOString()).toBe("2026-11-12T13:25:00.000Z");
+  });
+
+  it("rounds decimal hours to five-minute increments", () => {
+    expect(roundHoursToFiveMinutes(82 / 60)).toBeCloseTo(80 / 60);
+    expect(roundHoursToFiveMinutes(83 / 60)).toBeCloseTo(85 / 60);
   });
 });

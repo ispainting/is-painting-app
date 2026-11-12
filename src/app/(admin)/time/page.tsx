@@ -594,7 +594,7 @@ export default function TimePage() {
                 setEditor((s) => ({ ...s, jobId, rateType: s.rateType === "travel" ? "regular" : s.rateType }));
               }} options={[{ value: "", label: "No project" }, ...(jobs.data || []).map((j) => ({ value: String(j.id), label: j.name }))]} />
               <FieldInput label="Date" type="date" value={editor.date} onChange={(value) => setEditor((s) => ({ ...s, date: value }))} />
-              <FieldInput label="Clock In" type="time" value={editor.clockInTime} onChange={(value) => setEditor((s) => ({ ...s, clockInTime: value }))} />
+              <FieldInput label="Clock In" type="time" step="300" value={editor.clockInTime} onChange={(value) => setEditor((s) => ({ ...s, clockInTime: value }))} />
               <div className="flex items-end pb-2">
                 <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
                   <input type="checkbox" checked={editor.leaveOpen} onChange={(event) => setEditor((s) => ({ ...s, leaveOpen: event.target.checked, clockOutTime: event.target.checked ? "" : s.clockOutTime || "17:00", totalHours: event.target.checked ? "" : s.totalHours }))} />
@@ -603,8 +603,8 @@ export default function TimePage() {
               </div>
               {!editor.leaveOpen ? (
                 <>
-                  <FieldInput label="Clock Out" type="time" value={editor.clockOutTime} onChange={(value) => setEditor((s) => ({ ...s, clockOutTime: value }))} />
-                  <FieldInput label="Total Hours (optional)" type="number" value={editor.totalHours} onChange={(value) => setEditor((s) => ({ ...s, totalHours: value }))} />
+                  <FieldInput label="Clock Out" type="time" step="300" value={editor.clockOutTime} onChange={(value) => setEditor((s) => ({ ...s, clockOutTime: value }))} />
+                  <FieldInput label="Total Hours (optional, rounded to 5 min)" type="number" step="0.083333" value={editor.totalHours} onChange={(value) => setEditor((s) => ({ ...s, totalHours: value }))} />
                 </>
               ) : (
                 <div className="md:col-span-2 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
@@ -696,11 +696,11 @@ function FieldSelect({ label, value, onChange, options }: { label: string; value
   );
 }
 
-function FieldInput({ label, type, value, onChange }: { label: string; type: string; value: string; onChange: (value: string) => void }) {
+function FieldInput({ label, type, value, onChange, step }: { label: string; type: string; value: string; onChange: (value: string) => void; step?: string }) {
   return (
     <div>
       <label className="label">{label}</label>
-      <input className="input" type={type} value={value} onChange={(e) => onChange(e.target.value)} />
+      <input className="input" type={type} value={value} step={step} onChange={(e) => onChange(e.target.value)} />
     </div>
   );
 }

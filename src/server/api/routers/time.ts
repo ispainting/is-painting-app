@@ -3,7 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { computeEntry } from "../../../lib/payroll";
 import { resolveEffectiveHourlyRate, shouldRecomputeHourlyRateSnapshot } from "../../../lib/employee-rate-resolver";
 import { distanceMeters, formatOffsiteReason, isOutsideJobsite, liveShiftCutoff } from "../../../lib/clock";
-import { timeEntryRangeError } from "../../../lib/time-entry-validation";
+import { roundHoursToFiveMinutes, roundToFiveMinutes, timeEntryRangeError } from "../../../lib/time-entry-validation";
 import { router, protectedProcedure, adminProcedure } from "../trpc";
 
 /**
@@ -483,9 +483,10 @@ export const timeRouter = router({
     }),
 
   saveEntry: adminProcedure.input(z.object({ id: z.number().optional(), data: timeEntryUpsertInput })).mutation(async ({ ctx, input }) => {
-    const clockIn = parseDate(input.data.clockIn);
-    const explicitClockOut = input.data.clockOut ? parseDate(input.data.clockOut) : null;
-    const clockOut = explicitClockOut ?? (input.data.totalHours != null ? new Date(clockIn.getTime() + input.data.totalHours * 3_600_000) : null);
+    const clockIn = roundToFiveMinutes(parseDate(input.data.clockIn));
+    const explicitClockOut = input.data.clockOut ? roundToFiveMinutes(parseDate(input.data.clockOut)) : null;
+    const roundedTotalHours = input.data.totalHours != null ? roundHoursToFiveMinutes(input.data.totalHours) : null;
+    const clockOut = explicitClockOut ?? (roundedTotalHours != null ? new Date(clockIn.getTime() + roundedTotalHours * 3_600_000) : null);
     const rangeError = timeEntryRangeError(clockIn, clockOut);
     if (rangeError) throw new TRPCError({ code: "BAD_REQUEST", message: rangeError });
     if (!clockOut && !input.data.managerNotes?.trim()) {

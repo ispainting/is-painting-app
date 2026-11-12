@@ -15,3 +15,13 @@ export function timeRangesOverlap(
   const secondEnd = second.clockOut?.getTime() ?? Number.POSITIVE_INFINITY;
   return first.clockIn.getTime() < secondEnd && second.clockIn.getTime() < firstEnd;
 }
+
+const FIVE_MINUTES_MS = 5 * 60 * 1000;
+
+export function roundToFiveMinutes(date: Date) {
+  return new Date(Math.round(date.getTime() / FIVE_MINUTES_MS) * FIVE_MINUTES_MS);
+}
+
+export function roundHoursToFiveMinutes(hours: number) {
+  return Math.round(hours * 12) / 12;
+}
