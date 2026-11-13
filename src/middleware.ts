@@ -9,6 +9,8 @@ const PUBLIC = [
   "/api/orion",
   // Lead webhooks from Meta, Google and the website; each route checks its own signature or key.
   "/api/webhooks",
+  // Scheduled report generator; the route validates CRON_SECRET itself.
+  "/api/cron",
   "/_next",
   "/favicon.ico",
 ];

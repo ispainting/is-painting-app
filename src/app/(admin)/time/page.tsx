@@ -138,68 +138,10 @@ function DurationFields({ label, value, onChange }: { label: string; value: stri
         options={options.hours}
       />
       <FieldSelect
-        label="Minutes"
+        label="Minutes (5-minute steps)"
         value={parts.minutes}
         onChange={(next) => onChange(updateDurationPart(value, "minutes", next))}
         options={options.minutes}
-      />
-    </div>
-  );
-}
-
-function getClockTimeParts(value: string) {
-  const [rawHour, rawMinute] = value.split(":").map(Number);
-  const totalMinutes = Math.max(0, ((rawHour || 0) * 60 + (rawMinute || 0)) % (24 * 60));
-  const roundedMinutes = Math.round(totalMinutes / 5) * 5;
-  const normalizedMinutes = roundedMinutes % (24 * 60);
-  const hour24 = Math.floor(normalizedMinutes / 60);
-  return {
-    hour: String(hour24 % 12 || 12).padStart(2, "0"),
-    minute: String(normalizedMinutes % 60).padStart(2, "0"),
-    period: hour24 < 12 ? "AM" : "PM",
-  };
-}
-
-function updateClockTimePart(value: string, part: "hour" | "minute" | "period", nextValue: string) {
-  const current = getClockTimeParts(value);
-  const hour = Number(part === "hour" ? nextValue : current.hour) % 12;
-  const minute = Number(part === "minute" ? nextValue : current.minute);
-  const period = part === "period" ? nextValue : current.period;
-  const hour24 = hour + (period === "PM" ? 12 : 0);
-  return `${String(hour24).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
-}
-
-function ClockTimeFields({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
-  const parts = getClockTimeParts(value);
-  const hourOptions = Array.from({ length: 12 }, (_, index) => {
-    const hour = String(index + 1).padStart(2, "0");
-    return { value: hour, label: hour };
-  });
-  const minuteOptions = Array.from({ length: 12 }, (_, index) => {
-    const minute = String(index * 5).padStart(2, "0");
-    return { value: minute, label: minute };
-  });
-  const periodOptions = ["AM", "PM"].map((period) => ({ value: period, label: period }));
-
-  return (
-    <div className="grid grid-cols-3 gap-2">
-      <FieldSelect
-        label={`${label} hour`}
-        value={parts.hour}
-        onChange={(next) => onChange(updateClockTimePart(value, "hour", next))}
-        options={hourOptions}
-      />
-      <FieldSelect
-        label="Minute"
-        value={parts.minute}
-        onChange={(next) => onChange(updateClockTimePart(value, "minute", next))}
-        options={minuteOptions}
-      />
-      <FieldSelect
-        label="AM/PM"
-        value={parts.period}
-        onChange={(next) => onChange(updateClockTimePart(value, "period", next))}
-        options={periodOptions}
       />
     </div>
   );
@@ -708,7 +650,7 @@ export default function TimePage() {
                 setEditor((s) => ({ ...s, jobId, rateType: s.rateType === "travel" ? "regular" : s.rateType }));
               }} options={[{ value: "", label: "No project" }, ...(jobs.data || []).map((j) => ({ value: String(j.id), label: j.name }))]} />
               <FieldInput label="Date" type="date" value={editor.date} onChange={(value) => setEditor((s) => ({ ...s, date: value }))} />
-              <ClockTimeFields label="Clock In" value={editor.clockInTime} onChange={(value) => setEditor((s) => ({ ...s, clockInTime: value }))} />
+              <FieldInput label="Clock In" type="time" step="300" value={editor.clockInTime} onChange={(value) => setEditor((s) => ({ ...s, clockInTime: value }))} />
               <div className="flex items-end pb-2">
                 <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
                   <input type="checkbox" checked={editor.leaveOpen} onChange={(event) => setEditor((s) => ({ ...s, leaveOpen: event.target.checked, clockOutTime: event.target.checked ? "" : s.clockOutTime || "17:00", totalHours: event.target.checked ? "" : s.totalHours }))} />
@@ -717,7 +659,7 @@ export default function TimePage() {
               </div>
               {!editor.leaveOpen ? (
                 <>
-                  <ClockTimeFields label="Clock Out" value={editor.clockOutTime} onChange={(value) => setEditor((s) => ({ ...s, clockOutTime: value }))} />
+                  <FieldInput label="Clock Out" type="time" step="300" value={editor.clockOutTime} onChange={(value) => setEditor((s) => ({ ...s, clockOutTime: value }))} />
                   <DurationFields label="Total Hours (optional)" value={editor.totalHours} onChange={(value) => setEditor((s) => ({ ...s, totalHours: value }))} />
                 </>
               ) : (

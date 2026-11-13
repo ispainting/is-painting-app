@@ -442,6 +442,7 @@ model User {
   opportunityStageChanges    OpportunityStageHistory[]
   jobAssignments             EmployeeJobAssignment[]
   ExpenseReceiptUpload       ExpenseReceiptUpload[]
+  notifications              AppNotification[]
 
   @@index([role])
   @@index([isActive])
@@ -1693,4 +1694,22 @@ model Config {
   defaultWorkDayHours               Decimal               @default(8) @db.Decimal(5, 2)
 
   updatedAt DateTime @updatedAt
+}
+
+model AppNotification {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  kind       String   @db.VarChar(60)
+  title      String   @db.VarChar(180)
+  body       String   @db.Text
+  href       String?  @db.VarChar(500)
+  dedupeKey  String   @unique @db.VarChar(200)
+  payload    Json?
+  createdAt  DateTime @default(now())
+  readAt     DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
 }

@@ -19,6 +19,7 @@ import { reviewsRouter } from "./routers/reviews";
 import { leadsRouter } from "./routers/leads";
 import { productionRatesRouter } from "./routers/productionRates";
 import { estimatingTemplatesRouter } from "./routers/estimatingTemplates";
+import { notificationsRouter } from "./routers/notifications";
 
 export const appRouter = router({
   auth: authRouter,
@@ -41,6 +42,7 @@ export const appRouter = router({
   leads: leadsRouter,
   productionRates: productionRatesRouter,
   estimatingTemplates: estimatingTemplatesRouter,
+  notifications: notificationsRouter,
 });
 
 export type AppRouter = typeof appRouter;
