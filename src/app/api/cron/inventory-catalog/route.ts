@@ -10,7 +10,8 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const MATERIAL_EXPENSE_CATEGORIES = ["paint", "materials", "tools", "equipment", "rentals"] as const;
-const BACKFILL_BATCH_SIZE = 3;
+const BACKFILL_BATCH_SIZE = 15;
+const BACKFILL_CONCURRENCY = 5;
 const HISTORY_WINDOW_MS = 183 * 24 * 60 * 60 * 1000;
 
 function isAuthorized(request: Request) {
@@ -61,69 +62,74 @@ async function backfillReceiptLines(now: Date) {
   let newLines = 0;
   let processed = 0;
 
-  for (const attachment of pending) {
-    if (!attachment.expense) continue;
-    try {
-      await prisma.expenseAttachment.update({ where: { id: attachment.id }, data: { extractionStatus: "processing", extractionError: null, extractionStartedAt: now, extractionAttemptCount: { increment: 1 } } });
-      const prior = attachment.extractionStructured as { items?: unknown[] } | null;
-      const hasSavedItems = Array.isArray(prior?.items) && prior.items.length > 0;
-      const extracted = hasSavedItems ? null : await extractReceipt({
-        attachmentId: attachment.id,
-        originalFilename: attachment.originalFilename,
-        mimeType: attachment.mimeType,
-        fileData: (await provider.download(attachment.storagePath)).data,
-        jobOptions: jobs,
-      });
-      const normalized = hasSavedItems
-        ? normalizedReceiptExtractionSchema.parse(attachment.extractionStructured)
-        : extracted!.normalized;
-      const needsReview = extracted?.needsReview ?? attachment.extractionStatus === "needs_review";
-      const providerName = extracted?.provider ?? attachment.extractionProvider ?? "historical";
-      const modelName = extracted?.model ?? attachment.extractionModel ?? "historical";
-      const marker = { ...normalized, catalogBackfillProcessedAt: now.toISOString() };
-      const lines = normalized.items.filter((item) => item.confidence >= 0.65);
+  for (let offset = 0; offset < pending.length; offset += BACKFILL_CONCURRENCY) {
+    const batch = pending.slice(offset, offset + BACKFILL_CONCURRENCY);
+    const results = await Promise.all(batch.map(async (attachment) => {
+      if (!attachment.expense) return { processed: false, newLines: 0 };
+      try {
+        await prisma.expenseAttachment.update({ where: { id: attachment.id }, data: { extractionStatus: "processing", extractionError: null, extractionStartedAt: now, extractionAttemptCount: { increment: 1 } } });
+        const prior = attachment.extractionStructured as { items?: unknown[] } | null;
+        const hasSavedItems = Array.isArray(prior?.items) && prior.items.length > 0;
+        const extracted = hasSavedItems ? null : await extractReceipt({
+          attachmentId: attachment.id,
+          originalFilename: attachment.originalFilename,
+          mimeType: attachment.mimeType,
+          fileData: (await provider.download(attachment.storagePath)).data,
+          jobOptions: jobs,
+        });
+        const normalized = hasSavedItems
+          ? normalizedReceiptExtractionSchema.parse(attachment.extractionStructured)
+          : extracted!.normalized;
+        const needsReview = extracted?.needsReview ?? attachment.extractionStatus === "needs_review";
+        const providerName = extracted?.provider ?? attachment.extractionProvider ?? "historical";
+        const modelName = extracted?.model ?? attachment.extractionModel ?? "historical";
+        const marker = { ...normalized, catalogBackfillProcessedAt: now.toISOString() };
+        const lines = normalized.items.filter((item) => item.confidence >= 0.65);
 
-      await prisma.$transaction(async (tx) => {
-        await tx.expenseAttachment.update({
-          where: { id: attachment.id },
-          data: {
-            extractionStatus: needsReview ? "needs_review" : "completed",
-            extractionRawText: normalized.rawText,
-            extractionStructured: marker,
-            extractionConfidence: normalized.overallConfidence,
-            extractionConfidenceByField: buildConfidenceByField(normalized),
-            extractionProvider: providerName,
-            extractionModel: modelName,
-            extractionProcessedAt: now,
-            extractionError: null,
-          },
-        });
-        await tx.expense.update({
-          where: { id: attachment.expense!.id },
-          data: { ocrRawText: normalized.rawText, ocrStructured: marker, ocrConfidence: normalized.overallConfidence },
-        });
-        if (lines.length) {
-          await tx.expenseLineItem.createMany({
-            data: lines.map((item) => ({
-              expenseId: attachment.expense!.id,
-              description: item.description,
-              quantity: item.quantity,
-              unitPrice: item.unitPrice,
-              total: item.totalPrice,
-            })),
+        await prisma.$transaction(async (tx) => {
+          await tx.expenseAttachment.update({
+            where: { id: attachment.id },
+            data: {
+              extractionStatus: needsReview ? "needs_review" : "completed",
+              extractionRawText: normalized.rawText,
+              extractionStructured: marker,
+              extractionConfidence: normalized.overallConfidence,
+              extractionConfidenceByField: buildConfidenceByField(normalized),
+              extractionProvider: providerName,
+              extractionModel: modelName,
+              extractionProcessedAt: now,
+              extractionError: null,
+            },
           });
-        }
-      });
-      newLines += lines.length;
-      processed += 1;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Receipt scan failed";
-      console.error("[cron/inventory-catalog] Receipt backfill failed", { attachmentId: attachment.id, message });
-      await prisma.expenseAttachment.update({
-        where: { id: attachment.id },
-        data: { extractionStatus: "failed", extractionError: message.slice(0, 1000), extractionProcessedAt: now },
-      }).catch(() => undefined);
-    }
+          await tx.expense.update({
+            where: { id: attachment.expense!.id },
+            data: { ocrRawText: normalized.rawText, ocrStructured: marker, ocrConfidence: normalized.overallConfidence },
+          });
+          if (lines.length) {
+            await tx.expenseLineItem.createMany({
+              data: lines.map((item) => ({
+                expenseId: attachment.expense!.id,
+                description: item.description,
+                quantity: item.quantity,
+                unitPrice: item.unitPrice,
+                total: item.totalPrice,
+              })),
+            });
+          }
+        });
+        return { processed: true, newLines: lines.length };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Receipt scan failed";
+        console.error("[cron/inventory-catalog] Receipt backfill failed", { attachmentId: attachment.id, message });
+        await prisma.expenseAttachment.update({
+          where: { id: attachment.id },
+          data: { extractionStatus: "failed", extractionError: message.slice(0, 1000), extractionProcessedAt: now },
+        }).catch(() => undefined);
+        return { processed: false, newLines: 0 };
+      }
+    }));
+    processed += results.filter((result) => result.processed).length;
+    newLines += results.reduce((sum, result) => sum + result.newLines, 0);
   }
 
   const after = await prisma.expenseAttachment.findMany({
