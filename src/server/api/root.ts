@@ -16,6 +16,7 @@ import { businessRouter } from "./routers/business";
 import { reportsRouter } from "./routers/reports";
 import { configRouter } from "./routers/config";
 import { reviewsRouter } from "./routers/reviews";
+import { leadsRouter } from "./routers/leads";
 import { productionRatesRouter } from "./routers/productionRates";
 import { estimatingTemplatesRouter } from "./routers/estimatingTemplates";
 import { notificationsRouter } from "./routers/notifications";
@@ -38,6 +39,7 @@ export const appRouter = router({
   reports: reportsRouter,
   config: configRouter,
   reviews: reviewsRouter,
+  leads: leadsRouter,
   productionRates: productionRatesRouter,
   estimatingTemplates: estimatingTemplatesRouter,
   notifications: notificationsRouter,

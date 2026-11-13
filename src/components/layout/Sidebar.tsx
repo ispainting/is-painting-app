@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, Briefcase, Users, Workflow, Clock, Package,
-  Receipt, FileText, Bot, UserCog, BarChart3, Settings, LogOut, Bell,
+  Receipt, FileText, Bot, UserCog, BarChart3, Settings, LogOut, Inbox, Bell,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/trpc/react";
@@ -13,6 +13,7 @@ import { useRouter } from "next/navigation";
 const NAV = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/jobs", label: "Jobs", icon: Briefcase },
+  { href: "/leads", label: "Pedidos", icon: Inbox },
   { href: "/customers", label: "Customers", icon: Users },
   { href: "/opportunities", label: "Opportunities", icon: Workflow },
   { href: "/proposals", label: "Proposals", icon: FileText },

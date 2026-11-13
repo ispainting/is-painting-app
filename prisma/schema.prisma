@@ -69,6 +69,23 @@ enum OpportunityStatus {
   lost
 }
 
+enum LeadSource {
+  META
+  GOOGLE_ADS
+  WEBSITE
+  MANUAL
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  REAL
+  NOT_REAL
+  NO_ANSWER
+  WON
+  LOST
+}
+
 enum ProposalStatus {
   draft
   ready
@@ -806,6 +823,7 @@ model Opportunity {
   proposals      Proposal[]
   assignedTo     User?                     @relation(fields: [assignedToId], references: [id])
   automationRuns AutomationRun[]
+  leads          Lead[]
   stageHistory   OpportunityStageHistory[]
 
   @@index([customerId])
@@ -829,6 +847,75 @@ model OpportunityStageHistory {
   changedBy     User?             @relation(fields: [changedById], references: [id], onDelete: SetNull)
 
   @@index([opportunityId, effectiveAt])
+}
+
+/// One request for a quote in the Leads Inbox, whichever door it came through. Same phone within 30
+/// days is one Lead: the later arrivals are LeadRepeat rows (src/lib/leads/record-lead.ts).
+model Lead {
+  id            Int        @id @default(autoincrement())
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  source        LeadSource
+  /// The lead's id on its platform. Unique per source, so a repeated delivery is never a new lead.
+  externalId    String?    @db.VarChar(191)
+  /// Empty only when the form didn't give one: a lead without a name or phone is still a lead.
+  fullName      String?    @db.VarChar(200)
+  /// E.164. Empty when the number typed can't be read as one; the typed value stays in notes.
+  phone         String?    @db.VarChar(20)
+  email         String?    @db.VarChar(200)
+  /// Cabinets, Interior, Exterior or Commercial; any other answer is kept as the customer gave it.
+  serviceType   String?    @db.VarChar(120)
+  city          String?    @db.VarChar(100)
+  zipCode       String?    @db.VarChar(20)
+  /// Boston metro (CLAUDE.md hard rule 1): marked on the screen and left out of the counters.
+  outOfMap      Boolean    @default(false)
+  campaignId    String?    @db.VarChar(100)
+  campaignName  String?    @db.VarChar(255)
+  adsetId       String?    @db.VarChar(100)
+  adId          String?    @db.VarChar(100)
+  adName        String?    @db.VarChar(255)
+  formId        String?    @db.VarChar(100)
+  gclid         String?    @db.VarChar(255)
+  fbclid        String?    @db.VarChar(255)
+  utmSource     String?    @db.VarChar(255)
+  utmCampaign   String?    @db.VarChar(255)
+  utmContent    String?    @db.VarChar(255)
+  status        LeadStatus @default(NEW)
+  /// What the job was worth, set when the lead is marked WON.
+  jobValue      Decimal?   @db.Decimal(12, 2)
+  /// The whole form, as the same card the pipeline shows.
+  notes         String?    @db.Text
+  rawPayload    Json?
+  repeatCount   Int        @default(0)
+  lastRepeatAt  DateTime?
+  /// The pipeline card this lead created or joined.
+  opportunityId Int?
+
+  opportunity Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  repeats     LeadRepeat[]
+
+  @@unique([source, externalId])
+  @@index([phone, createdAt])
+  @@index([status, createdAt])
+  @@index([createdAt])
+  @@index([opportunityId])
+}
+
+/// A later arrival of a Lead's phone within 30 days. Unique per source and id, so a webhook retry of
+/// the same arrival isn't counted twice.
+model LeadRepeat {
+  id         Int        @id @default(autoincrement())
+  leadId     Int
+  source     LeadSource
+  externalId String     @db.VarChar(191)
+  receivedAt DateTime
+  rawPayload Json?
+  createdAt  DateTime   @default(now())
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@unique([source, externalId])
+  @@index([leadId, receivedAt])
 }
 
 model Proposal {
