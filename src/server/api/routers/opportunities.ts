@@ -2,7 +2,8 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, adminProcedure } from "../trpc";
 import { TERMINAL_PIPELINE_STAGES } from "@/lib/pipeline-stages";
-import { isReferralSource } from "@/lib/lead-source";
+import { isReferralSource, normalizeLeadSourceForReport } from "@/lib/lead-source";
+import { startOfBusinessDayInMassachusetts } from "@/lib/employee-rate-resolver";
 import { OpportunityStage, Prisma } from "@prisma/client";
 import { isTerminalStage, opportunityStatusForStage } from "@/lib/pipeline-sync";
 import { opportunityValues } from "@/lib/opportunity-values";
@@ -14,6 +15,10 @@ const PipelineZ = z.enum(["sales", "not_interested"]);
 const StageZ = z.nativeEnum(OpportunityStage);
 const StatusZ = z.enum(["open", "won", "lost"]);
 const AttributionZ = z.object(Object.fromEntries(leadAttributionFields.map((field) => [field, z.string().trim().max(1000).optional()])) as Record<typeof leadAttributionFields[number], z.ZodOptional<z.ZodString>>);
+const DateInputZ = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+  const parsed = new Date(`${value}T12:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}, { message: "Enter a valid calendar date." });
 const editable = z.object({
   customerId: z.number().int().positive().optional(),
   name: z.string().trim().min(1).optional(),
@@ -96,6 +101,45 @@ async function editOpportunity(tx: Prisma.TransactionClient, id: number, input: 
 }
 
 export const opportunitiesRouter = router({
+  leadSourceCounts: protectedProcedure
+    .input(z.object({
+      from: DateInputZ,
+      to: DateInputZ,
+    }).refine((range) => range.from <= range.to, { message: "Start date must be on or before end date." }))
+    .query(async ({ ctx, input }) => {
+      // Match the Opportunity board and monthly reports: use the lead-received
+      // timestamp, falling back to creation time for older records without it.
+      const dayAfterEnd = new Date(`${input.to}T12:00:00Z`);
+      dayAfterEnd.setUTCDate(dayAfterEnd.getUTCDate() + 1);
+      const range = {
+        start: startOfBusinessDayInMassachusetts(input.from),
+        end: startOfBusinessDayInMassachusetts(dayAfterEnd.toISOString().slice(0, 10)),
+      };
+      const leads = await ctx.prisma.opportunity.findMany({
+        where: {
+          OR: [
+            { leadReceivedAt: { gte: range.start, lt: range.end } },
+            { leadReceivedAt: null, createdAt: { gte: range.start, lt: range.end } },
+          ],
+        },
+        select: {
+          source: true,
+          customer: { select: { leadSource: true, source: true } },
+        },
+      });
+      const bySource = new Map<string, number>();
+      for (const lead of leads) {
+        const source = normalizeLeadSourceForReport(lead.source ?? lead.customer.leadSource ?? lead.customer.source);
+        bySource.set(source, (bySource.get(source) ?? 0) + 1);
+      }
+      return {
+        total: leads.length,
+        bySource: [...bySource.entries()]
+          .map(([source, count]) => ({ source, count }))
+          .sort((a, b) => b.count - a.count || a.source.localeCompare(b.source)),
+      };
+    }),
+
   list: protectedProcedure
     .input(z.object({ visibility: z.enum(["active", "archived", "all"]) }).optional())
     .query(({ ctx, input }) =>
