@@ -61,6 +61,86 @@ const paintColorInput = z.object({
 });
 
 export const jobsRouter = router({
+  budgetTracking: adminProcedure
+    .input(z.object({ jobId: z.number().int().positive().optional() }).optional())
+    .query(async ({ ctx, input }) => {
+      const where = input?.jobId
+        ? { id: input.jobId, deletedAt: null }
+        : { status: "active" as const, deletedAt: null };
+      const [jobs, jobOptions] = await Promise.all([
+        ctx.prisma.job.findMany({
+          where,
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            contractAmount: true,
+            totalEstimate: true,
+            laborBudget: true,
+            materialsBudget: true,
+            subcontractorBudget: true,
+            timeEntries: {
+              select: {
+                userId: true,
+                jobId: true,
+                clockIn: true,
+                clockOut: true,
+                hoursWorked: true,
+                grossHours: true,
+                paidHours: true,
+                breakMinutes: true,
+                breakDeductionMinutes: true,
+                hourlyRateSnapshot: true,
+                user: { select: { name: true, hourlyRate: true } },
+              },
+            },
+            expenses: {
+              where: { status: { not: "rejected" } },
+              select: { category: true, amount: true },
+            },
+          },
+          orderBy: { name: "asc" },
+        }),
+        ctx.prisma.job.findMany({
+          where: { deletedAt: null },
+          select: { id: true, name: true, status: true },
+          orderBy: { name: "asc" },
+        }),
+      ]);
+
+      return {
+        jobOptions,
+        jobs: jobs.map((job) => {
+          const tracking = calculateJobTracking(job.timeEntries, job.id);
+          const materialsAndExpensesCost = job.expenses
+            .filter((expense) => expense.category !== "labor" && expense.category !== "subcontractor")
+            .reduce((sum, expense) => sum + Number(expense.amount), 0);
+          const subcontractorCost = job.expenses
+            .filter((expense) => expense.category === "subcontractor")
+            .reduce((sum, expense) => sum + Number(expense.amount), 0);
+
+          return {
+            job: {
+              id: job.id,
+              name: job.name,
+              status: job.status,
+              subcontractorBudgetPending: job.subcontractorBudget == null,
+            },
+            estimated: {
+              laborCost: Number(job.laborBudget ?? 0),
+              materialsCost: Number(job.materialsBudget ?? 0),
+              subcontractorCost: Number(job.subcontractorBudget ?? 0),
+            },
+            tracking: {
+              laborCost: tracking.totalLaborCost,
+              materialsAndExpensesCost,
+              subcontractorCost,
+            },
+          };
+        }),
+      };
+    }),
+
   list: protectedProcedure
     .input(z.object({ status: JobStatusZ.optional(), visibility: JobVisibilityZ.optional(), search: z.string().trim().max(200).optional() }).optional())
     .query(async ({ ctx, input }) => {
