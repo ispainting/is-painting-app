@@ -91,6 +91,62 @@ function toNumber(value: unknown) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function getDurationParts(value: string) {
+  if (!value.trim()) return { hours: "", minutes: "" };
+  const totalMinutes = Math.max(0, Math.round((toNumber(value) * 60) / 5) * 5);
+  return {
+    hours: String(Math.floor(totalMinutes / 60)),
+    minutes: String(totalMinutes % 60).padStart(2, "0"),
+  };
+}
+
+function updateDurationPart(currentValue: string, part: "hours" | "minutes", nextValue: string) {
+  const current = getDurationParts(currentValue);
+  if (!nextValue && !current[part === "hours" ? "minutes" : "hours"]) return "";
+
+  const hours = part === "hours" ? Number(nextValue || 0) : Number(current.hours || 0);
+  const minutes = part === "minutes" ? Number(nextValue || 0) : Number(current.minutes || 0);
+  const totalMinutes = hours >= 24 ? 24 * 60 : hours * 60 + minutes;
+  return totalMinutes ? String(totalMinutes / 60) : "";
+}
+
+function durationOptions() {
+  return {
+    hours: [
+      { value: "", label: "—" },
+      ...Array.from({ length: 25 }, (_, hours) => ({ value: String(hours), label: String(hours) })),
+    ],
+    minutes: [
+      { value: "", label: "—" },
+      ...Array.from({ length: 12 }, (_, index) => {
+        const minutes = index * 5;
+        return { value: String(minutes), label: String(minutes).padStart(2, "0") };
+      }),
+    ],
+  };
+}
+
+function DurationFields({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  const parts = getDurationParts(value);
+  const options = durationOptions();
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      <FieldSelect
+        label={`${label} (hours)`}
+        value={parts.hours}
+        onChange={(next) => onChange(updateDurationPart(value, "hours", next))}
+        options={options.hours}
+      />
+      <FieldSelect
+        label="Minutes (5-minute steps)"
+        value={parts.minutes}
+        onChange={(next) => onChange(updateDurationPart(value, "minutes", next))}
+        options={options.minutes}
+      />
+    </div>
+  );
+}
+
 function entryHours(entry: TimeEntryRecord) {
   return toNumber(entry.paidHours ?? entry.hoursWorked ?? entry.grossHours ?? 0);
 }
@@ -604,7 +660,7 @@ export default function TimePage() {
               {!editor.leaveOpen ? (
                 <>
                   <FieldInput label="Clock Out" type="time" step="300" value={editor.clockOutTime} onChange={(value) => setEditor((s) => ({ ...s, clockOutTime: value }))} />
-                  <FieldInput label="Total Hours (optional, rounded to 5 min)" type="number" step="0.083333" value={editor.totalHours} onChange={(value) => setEditor((s) => ({ ...s, totalHours: value }))} />
+                  <DurationFields label="Total Hours (optional)" value={editor.totalHours} onChange={(value) => setEditor((s) => ({ ...s, totalHours: value }))} />
                 </>
               ) : (
                 <div className="md:col-span-2 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
@@ -621,9 +677,8 @@ export default function TimePage() {
                   { value: "travel", label: "Travel" },
                 ]}
               />
-              <FieldInput
+              <DurationFields
                 label="Travel Hours"
-                type="number"
                 value={editor.travelHours}
                 onChange={(value) => {
                   setEditorTouchedTravelHours(true);
