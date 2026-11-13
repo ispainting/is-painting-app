@@ -110,7 +110,6 @@ export default function OpportunitiesPage() {
   function card(o: OpportunityCardData) {
     const values = opportunityValues(o);
     const proposal = latestOpportunityProposal(o.proposals);
-    const safeToDelete = !o.job && !o.proposals.length && !o._count.automationRuns;
     return <article key={o.id} className="card mb-2 p-3 text-sm">
       <div className="font-semibold">{o.name} {o.archivedAt && <span className="text-slate-500">(Archived)</span>}</div>
       <Link href={`/customers/${o.customerId}`} className="text-brand-700">{o.customer.name}</Link>
@@ -134,7 +133,7 @@ export default function OpportunitiesPage() {
           <summary className="cursor-pointer text-slate-700">Actions</summary>
           <div className="absolute right-0 z-10 mt-1 min-w-40 rounded border bg-white p-2 shadow">
             <button className="block w-full p-2 text-left" disabled={archive.isPending} onClick={() => archive.mutate({ id: o.id, archived: !o.archivedAt })}>{o.archivedAt ? "Restore" : "Archive"}</button>
-            {safeToDelete && <button className="block w-full p-2 text-left text-red-600" onClick={() => setDeleteTarget(o)}>Delete</button>}
+            <button className="block w-full p-2 text-left text-red-600" onClick={() => setDeleteTarget(o)}>Delete</button>
           </div>
         </details>
       </div>
@@ -235,6 +234,6 @@ export default function OpportunitiesPage() {
       </details>
     </>}
     {editor && <OpportunityEditor opportunity={editor === "new" ? undefined : editor} onClose={() => setEditor(null)} onSaved={refresh} />}
-    <ConfirmDialog open={!!deleteTarget} title="Delete disposable Opportunity" message="Only an Opportunity with no linked Proposals, Job, or protected automation data can be deleted. Its stage history will be removed with it. Archive historical records instead." confirmLabel="Delete" destructive isPending={remove.isPending} onCancel={() => setDeleteTarget(null)} onConfirm={() => deleteTarget && remove.mutate({ id: deleteTarget.id })} />
+    <ConfirmDialog open={!!deleteTarget} title="Delete Opportunity" message="This permanently deletes the Opportunity and its stage history. Linked Jobs and Proposals are kept but unlinked. Pending automation follow-ups stop; submitted review records and customer touchpoints are kept." confirmLabel="Delete permanently" destructive isPending={remove.isPending} onCancel={() => setDeleteTarget(null)} onConfirm={() => deleteTarget && remove.mutate({ id: deleteTarget.id })} />
   </>;
 }
