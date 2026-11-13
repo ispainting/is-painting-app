@@ -1085,8 +1085,8 @@ export default function JobDetailPage() {
             <div className="px-6 pt-6 pb-3 border-b border-slate-200">
               <div className="text-lg font-semibold">Edit Job</div>
             </div>
-            <div className="grid grid-cols-2 gap-3 overflow-y-auto px-6 py-4 pr-5 flex-1">
-              <div className="col-span-2">
+            <div className="grid grid-cols-1 gap-3 overflow-y-auto px-4 py-4 sm:grid-cols-2 sm:px-6">
+              <div className="col-span-full">
                 <label className="label">Job name</label>
                 <input
                   className="input"
@@ -1149,7 +1149,7 @@ export default function JobDetailPage() {
                   </div>
               </div>
 
-              <div className="col-span-2">
+              <div className="col-span-full">
                 <label className="label">Scope of work</label>
                 <textarea
                   className="input min-h-24"
@@ -1158,7 +1158,7 @@ export default function JobDetailPage() {
                 />
               </div>
 
-              <div className="col-span-2">
+              <div className="col-span-full">
                 <label className="label">Job Notes</label>
                 <textarea
                   className="input min-h-24"
@@ -1167,7 +1167,7 @@ export default function JobDetailPage() {
                 />
               </div>
 
-              <div className="col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="col-span-full rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Payroll Settings</div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
                   <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
@@ -1202,7 +1202,7 @@ export default function JobDetailPage() {
               <Field label="Total amount" value={editForm.totalEstimate} onChange={(v) => setEditForm((f) => ({ ...f, totalEstimate: v }))} />
               <Field label="Contract amount" value={editForm.contractAmount} onChange={(v) => setEditForm((f) => ({ ...f, contractAmount: v }))} />
 
-              <div className="col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="col-span-full rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Lifecycle Dates</div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
