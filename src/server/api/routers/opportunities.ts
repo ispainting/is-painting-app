@@ -332,30 +332,51 @@ export const opportunitiesRouter = router({
   }),
 
   remove: adminProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
-    const opportunity = await ctx.prisma.opportunity.findUnique({
-      where: { id: input.id },
-      select: {
-        id: true,
-        name: true,
-        customer: { select: { name: true } },
-        job: { select: { id: true } },
-        _count: { select: { proposals: true, automationRuns: true } },
-      },
-    });
-    if (!opportunity) throw new TRPCError({ code: "NOT_FOUND", message: "Opportunity not found." });
-
-    const blockers: string[] = [];
-    if (opportunity._count.proposals > 0) blockers.push(`${opportunity._count.proposals} linked proposal(s)`);
-    if (opportunity.job) blockers.push("a linked job");
-    if (opportunity._count.automationRuns > 0) blockers.push("automation history");
-    if (blockers.length > 0) {
-      throw new TRPCError({
-        code: "PRECONDITION_FAILED",
-        message: `Cannot delete this opportunity: it has ${blockers.join(", ")}. Archive it instead.`,
+    return ctx.prisma.$transaction(async (tx) => {
+      const opportunity = await tx.opportunity.findUnique({
+        where: { id: input.id },
+        select: {
+          id: true,
+          customerId: true,
+          automationRuns: { select: { id: true } },
+        },
       });
-    }
+      if (!opportunity) throw new TRPCError({ code: "NOT_FOUND", message: "Opportunity not found." });
 
-    await ctx.prisma.opportunity.delete({ where: { id: input.id } });
-    return { ok: true };
+      const automationRunIds = opportunity.automationRuns.map((run) => run.id);
+      if (automationRunIds.length > 0) {
+        // Keep submitted review history while removing the automation runs and
+        // any pending follow-ups that belong to this Opportunity.
+        await tx.reviewSubmission.updateMany({
+          where: { automationRunId: { in: automationRunIds } },
+          data: { automationRunId: null },
+        });
+        await tx.automationRun.deleteMany({ where: { id: { in: automationRunIds } } });
+      }
+
+      // Preserve Jobs and Proposals as independent business records while
+      // removing their optional link to the deleted Opportunity.
+      await tx.proposal.updateMany({ where: { opportunityId: input.id }, data: { opportunityId: null } });
+      await tx.job.updateMany({ where: { opportunityId: input.id }, data: { opportunityId: null } });
+
+      // Marketing attribution is stored on customer touchpoints. Keep the
+      // touchpoint data, but remove the reference to the deleted record.
+      const touchpoints = await tx.customerTouchpoint.findMany({
+        where: {
+          customerId: opportunity.customerId,
+          metadata: { path: ["opportunityId"], equals: input.id },
+        },
+        select: { id: true, metadata: true },
+      });
+      for (const touchpoint of touchpoints) {
+        if (!touchpoint.metadata || typeof touchpoint.metadata !== "object" || Array.isArray(touchpoint.metadata)) continue;
+        const metadata = { ...(touchpoint.metadata as Prisma.JsonObject) };
+        delete metadata.opportunityId;
+        await tx.customerTouchpoint.update({ where: { id: touchpoint.id }, data: { metadata } });
+      }
+
+      await tx.opportunity.delete({ where: { id: input.id } });
+      return { ok: true };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }),
 });
