@@ -173,6 +173,18 @@ function serializeTemplateDraft(draft: TemplateDraft) {
 export default function SettingsPage() {
   const utils = api.useUtils();
   const { data } = api.config.get.useQuery();
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const changePassword = api.auth.changePassword.useMutation({
+    onSuccess: () => {
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmNewPassword("");
+      toast.success("Password updated. Use your new password next time you sign in.");
+    },
+    onError: (error) => toast.error(error.message),
+  });
   const update = api.config.update.useMutation({
     onSuccess: () => {
       utils.config.get.invalidate();
@@ -335,6 +347,33 @@ export default function SettingsPage() {
           {update.isPending ? "Saving…" : "Save settings"}
         </button>
       </div>
+
+      <section className="card mt-6 max-w-2xl p-5" aria-labelledby="change-password-heading">
+        <div className="mb-4">
+          <h2 id="change-password-heading" className="text-base font-semibold">Change your password</h2>
+          <p className="mt-1 text-sm text-slate-500">Enter your current password, then choose a new one with at least 8 characters.</p>
+        </div>
+        <div className="grid gap-3">
+          <label className="text-sm font-medium text-slate-700">Current password
+            <input className="input mt-1" type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
+          </label>
+          <label className="text-sm font-medium text-slate-700">New password
+            <input className="input mt-1" type="password" autoComplete="new-password" minLength={8} maxLength={128} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+          </label>
+          <label className="text-sm font-medium text-slate-700">Confirm new password
+            <input className="input mt-1" type="password" autoComplete="new-password" minLength={8} maxLength={128} value={confirmNewPassword} onChange={(event) => setConfirmNewPassword(event.target.value)} />
+          </label>
+        </div>
+        {confirmNewPassword && newPassword !== confirmNewPassword ? <p className="mt-2 text-sm text-red-700" role="alert">The new passwords do not match.</p> : null}
+        <button
+          className="btn btn-primary mt-4"
+          type="button"
+          disabled={changePassword.isPending || currentPassword.length === 0 || newPassword.length < 8 || newPassword !== confirmNewPassword || newPassword === currentPassword}
+          onClick={() => changePassword.mutate({ currentPassword, newPassword })}
+        >
+          {changePassword.isPending ? "Updating…" : "Update password"}
+        </button>
+      </section>
 
       <div className="card p-5 max-w-4xl mt-6">
         <div className="mb-4">
