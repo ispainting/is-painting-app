@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { router, protectedProcedure, adminProcedure } from "../trpc";
 import { employeeAssignmentFilter } from "@/lib/job-filters";
+import { syncReceiptLineItemsToInventory } from "@/lib/inventory/receipt-catalog";
 
 const CategoryZ = z.enum(["paint", "primer", "caulk", "tape", "tools", "supplies", "other"]);
 
@@ -22,6 +23,7 @@ const itemInput = z.object({
 });
 
 export const inventoryRouter = router({
+  syncFromReceipts: adminProcedure.mutation(({ ctx }) => syncReceiptLineItemsToInventory(ctx.prisma)),
   list: protectedProcedure
     .input(z.object({ search: z.string().optional() }).optional())
     .query(({ ctx, input }) =>

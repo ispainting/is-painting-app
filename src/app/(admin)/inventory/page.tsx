@@ -47,6 +47,14 @@ export default function InventoryPage() {
     onError: (e) => toast.error(e.message),
   });
 
+  const syncFromReceipts = api.inventory.syncFromReceipts.useMutation({
+    onSuccess: (result) => {
+      utils.inventory.list.invalidate();
+      toast.success(`Receipt catalog synced: ${result.created} added, ${result.updated} prices updated.`);
+    },
+    onError: (e) => toast.error(e.message || "Could not sync the receipt catalog"),
+  });
+
   const resetForm = () => {
     setForm({ name: "", category: "paint", unit: "gallon", costPerUnit: 0, coveragePerUnit: 0, defaultWastePercent: 0, defaultMarkupPercent: 0, sku: "", supplier: "" });
     setEditingId(null);
@@ -88,6 +96,9 @@ export default function InventoryPage() {
         description="Reusable materials used for inventory tracking and Proposal material estimating"
         actions={
           <div className="flex flex-wrap gap-2">
+          <button className="btn btn-secondary" onClick={() => syncFromReceipts.mutate()} disabled={syncFromReceipts.isPending}>
+            {syncFromReceipts.isPending ? "Syncing receipts…" : "Sync receipt prices"}
+          </button>
           <ExportPdfButton disabled={isFetching || isError || !data} build={() => inventoryPdf(data ?? [], { filters: [["Visibility", "Active materials"]] })} />
           <button className="btn btn-primary" onClick={() => openEditor()}>
             Add Material
@@ -95,6 +106,7 @@ export default function InventoryPage() {
           </div>
         }
       />
+      <p className="mb-4 text-sm text-slate-500">Prices refresh automatically from reviewed receipts. Recent receipts are being rescanned in small daily batches; new scans save product lines for proposals.</p>
       <div className="card overflow-hidden">
         <div className="overflow-x-auto">
         <table className="min-w-[980px] w-full text-sm">
