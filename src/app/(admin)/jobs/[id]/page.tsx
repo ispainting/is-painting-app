@@ -29,12 +29,81 @@ const WORKSPACE_TABS = [
 
 type WorkspaceTab = (typeof WORKSPACE_TABS)[number]["id"];
 
+function BudgetActualBar({
+  label,
+  actual,
+  budget,
+  budgetPending = false,
+}: {
+  label: string;
+  actual: number;
+  budget: number;
+  budgetPending?: boolean;
+}) {
+  const percent = budget > 0 ? (actual / budget) * 100 : actual > 0 ? 100 : 0;
+  const overBy = Math.max(0, actual - budget);
+  let color = "bg-emerald-500";
+  let textColor = "text-emerald-700";
+  let status = "On track";
+
+  if (budgetPending) {
+    color = actual > 0 ? "bg-slate-400" : "bg-slate-300";
+    textColor = "text-slate-600";
+    status = "Budget pending";
+  } else if (budget <= 0) {
+    color = actual > 0 ? "bg-red-600" : "bg-slate-300";
+    textColor = actual > 0 ? "text-red-700" : "text-slate-500";
+    status = actual > 0 ? "No budget set" : "No budget or spending";
+  } else if (percent >= 100) {
+    color = "bg-red-600";
+    textColor = "text-red-700";
+    status = percent > 100 ? `Over by ${formatCurrency(overBy)}` : "At budget limit";
+  } else if (percent >= 90) {
+    color = "bg-orange-500";
+    textColor = "text-orange-700";
+    status = "Very close to budget";
+  } else if (percent >= 75) {
+    color = "bg-amber-400";
+    textColor = "text-amber-700";
+    status = "Approaching budget";
+  }
+
+  return (
+    <div>
+      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-sm">
+        <span className="font-medium text-slate-800">{label}</span>
+        <span className="text-slate-600">{formatCurrency(actual)} / {budgetPending ? "Pending budget" : formatCurrency(budget)}</span>
+      </div>
+      <div
+        className="h-3 overflow-hidden rounded-full bg-slate-100 ring-1 ring-inset ring-slate-200"
+        role="progressbar"
+        aria-label={`${label} budget used`}
+        aria-valuemin={0}
+        aria-valuemax={budget > 0 ? budget : undefined}
+        aria-valuenow={actual}
+      >
+        <div className={`h-full rounded-full transition-[width] duration-500 ${color}`} style={{ width: `${Math.min(percent, 100)}%` }} />
+      </div>
+      <div className="mt-1 flex justify-between gap-3 text-xs">
+        <span className={textColor}>{status}</span>
+        {!budgetPending && budget > 0 ? <span className="text-slate-500">{percent.toFixed(0)}% used</span> : null}
+      </div>
+    </div>
+  );
+}
+
 export default function JobDetailPage() {
   const params = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const id = Number(params.id);
   const utils = api.useUtils();
-  const { data: job, isLoading } = api.jobs.byId.useQuery({ id });
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>(() =>
+    searchParams.get("tab") === "financials" ? "financials" : "overview"
+  );
+  const { data: job, isLoading } = api.jobs.byId.useQuery(
+    { id },
+    { refetchInterval: activeTab === "tracking" ? 30_000 : false },
+  );
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustomerResults, setShowCustomerResults] = useState(false);
@@ -44,9 +113,6 @@ export default function JobDetailPage() {
     { enabled: isEditOpen }
   );
 
-  const [activeTab, setActiveTab] = useState<WorkspaceTab>(() =>
-    searchParams.get("tab") === "financials" ? "financials" : "overview"
-  );
   const [editForm, setEditForm] = useState({
     customerId: 0,
     name: "",
@@ -824,6 +890,28 @@ export default function JobDetailPage() {
 
       {activeTab === "tracking" && (
         <div className="space-y-4">
+          <section className="card p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">Budget vs. actual cost</h2>
+                <p className="mt-1 text-sm text-slate-500">Actual tracked spending compared with this job’s budget. Refreshes every 30 seconds while this tab is open.</p>
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
+                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />Under 75%</span>
+                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-amber-400" />75–89%</span>
+                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-orange-500" />90–99%</span>
+                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-red-600" />At or over budget</span>
+              </div>
+            </div>
+            <div className="mt-5 grid gap-x-8 gap-y-5 md:grid-cols-2">
+              <BudgetActualBar label="Total tracked cost" actual={actualTotalCost} budget={estimatedTotalCost} budgetPending={estimatedSubcontractorPending} />
+              <BudgetActualBar label="Labor" actual={actualLaborCost} budget={estimatedLabor} />
+              <BudgetActualBar label="Materials & expenses" actual={actualExpensesTotal} budget={estimatedMaterials} />
+              <BudgetActualBar label="Subcontractors" actual={actualSubcontractorCost} budget={estimatedSubcontractor} budgetPending={estimatedSubcontractorPending} />
+            </div>
+            {estimatedSubcontractorPending ? <p className="mt-4 rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600">The total budget comparison is partial until the subcontractor budget is entered.</p> : null}
+          </section>
+
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <div className="card p-5">
               <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Total Hours</p>
