@@ -193,7 +193,8 @@ export default function JobsPage() {
       </div>
 
       <div className="card overflow-hidden">
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="min-w-[860px] w-full text-sm">
           <thead className="bg-slate-50 text-left">
             <tr>
               <th className="px-4 py-2 font-medium">Estimate #</th>
@@ -297,6 +298,7 @@ export default function JobsPage() {
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       {open && (
@@ -305,8 +307,8 @@ export default function JobsPage() {
             <div className="px-6 pt-6 pb-3 border-b border-slate-200">
               <div className="text-lg font-semibold">New job</div>
             </div>
-            <div className="grid grid-cols-2 gap-3 overflow-y-auto px-6 py-4 pr-5 flex-1">
-              <div className="col-span-2">
+            <div className="grid grid-cols-1 gap-3 overflow-y-auto px-4 py-4 sm:grid-cols-2 sm:px-6">
+              <div className="col-span-full">
                 <label className="label">Customer</label>
                 <div className="relative">
                   <input
@@ -343,18 +345,18 @@ export default function JobsPage() {
                   )}
                 </div>
               </div>
-              <div className="col-span-2">
+              <div className="col-span-full">
                 <label className="label">Job name</label>
                 <input className="input" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
               </div>
-              <div className="col-span-2">
+              <div className="col-span-full">
                 <label className="label">Street</label>
                 <input className="input" value={form.address} onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))} />
               </div>
               <FieldText label="City" value={form.city} onChange={(v) => setForm((f) => ({ ...f, city: v }))} />
               <FieldText label="State" value={form.state} onChange={(v) => setForm((f) => ({ ...f, state: v }))} />
               <FieldText label="Zip" value={form.zipCode} onChange={(v) => setForm((f) => ({ ...f, zipCode: v }))} />
-              <div className="col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="col-span-full rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Payroll Settings</div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
                   <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
