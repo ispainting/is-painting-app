@@ -103,7 +103,7 @@ export const jobsRouter = router({
         }),
         ctx.prisma.job.findMany({
           where: { deletedAt: null },
-          select: { id: true, name: true, status: true },
+          select: { id: true, name: true, status: true, customer: { select: { name: true } } },
           orderBy: { name: "asc" },
         }),
       ]);
