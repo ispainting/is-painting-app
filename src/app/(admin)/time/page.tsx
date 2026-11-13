@@ -6,7 +6,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { getTimeListState } from "@/lib/time-list-state";
 import { isWithinLiveShiftWindow } from "@/lib/clock";
 import { formatDateTime } from "@/lib/utils";
-import { Clock3, Copy, Pencil, Plus, Printer, Trash2 } from "lucide-react";
+import { Clock3, Copy, MapPin, Pencil, Plus, Printer, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { buildPayrollSummaries } from "@/lib/payroll-preview";
 import { ExportPdfButton } from "@/components/ExportPdfButton";
@@ -31,6 +31,11 @@ type TimeEntryRecord = {
   specialPayEnabled: boolean;
   hourlyRateAdjustment?: number | string | null;
   notes: string | null;
+  managerNotes?: string | null;
+  notAtJobsiteReason: string | null;
+  clockInLatitude: number | string | null;
+  clockInLongitude: number | string | null;
+  clockInAccuracy: number | string | null;
   reviewStatus: ReviewStatus;
   workType: string | null;
   user?: { id: number; name: string; hourlyRate: number | string | null };
@@ -49,6 +54,7 @@ type EntryEditorState = {
   notes: string;
   managerNotes: string;
   rateType: "regular" | "island" | "special" | "travel" | "overtime";
+  leaveOpen: boolean;
 };
 
 function toDateInput(date: Date) {
@@ -85,6 +91,120 @@ function toNumber(value: unknown) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function getDurationParts(value: string) {
+  if (!value.trim()) return { hours: "", minutes: "" };
+  const totalMinutes = Math.max(0, Math.round((toNumber(value) * 60) / 5) * 5);
+  return {
+    hours: String(Math.floor(totalMinutes / 60)),
+    minutes: String(totalMinutes % 60).padStart(2, "0"),
+  };
+}
+
+function updateDurationPart(currentValue: string, part: "hours" | "minutes", nextValue: string) {
+  const current = getDurationParts(currentValue);
+  if (!nextValue && !current[part === "hours" ? "minutes" : "hours"]) return "";
+
+  const hours = part === "hours" ? Number(nextValue || 0) : Number(current.hours || 0);
+  const minutes = part === "minutes" ? Number(nextValue || 0) : Number(current.minutes || 0);
+  const totalMinutes = hours >= 24 ? 24 * 60 : hours * 60 + minutes;
+  return totalMinutes ? String(totalMinutes / 60) : "";
+}
+
+function durationOptions() {
+  return {
+    hours: [
+      { value: "", label: "—" },
+      ...Array.from({ length: 25 }, (_, hours) => ({ value: String(hours), label: String(hours) })),
+    ],
+    minutes: [
+      { value: "", label: "—" },
+      ...Array.from({ length: 12 }, (_, index) => {
+        const minutes = index * 5;
+        return { value: String(minutes), label: String(minutes).padStart(2, "0") };
+      }),
+    ],
+  };
+}
+
+function DurationFields({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  const parts = getDurationParts(value);
+  const options = durationOptions();
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      <FieldSelect
+        label={`${label} (hours)`}
+        value={parts.hours}
+        onChange={(next) => onChange(updateDurationPart(value, "hours", next))}
+        options={options.hours}
+      />
+      <FieldSelect
+        label="Minutes"
+        value={parts.minutes}
+        onChange={(next) => onChange(updateDurationPart(value, "minutes", next))}
+        options={options.minutes}
+      />
+    </div>
+  );
+}
+
+function getClockTimeParts(value: string) {
+  const [rawHour, rawMinute] = value.split(":").map(Number);
+  const totalMinutes = Math.max(0, ((rawHour || 0) * 60 + (rawMinute || 0)) % (24 * 60));
+  const roundedMinutes = Math.round(totalMinutes / 5) * 5;
+  const normalizedMinutes = roundedMinutes % (24 * 60);
+  const hour24 = Math.floor(normalizedMinutes / 60);
+  return {
+    hour: String(hour24 % 12 || 12).padStart(2, "0"),
+    minute: String(normalizedMinutes % 60).padStart(2, "0"),
+    period: hour24 < 12 ? "AM" : "PM",
+  };
+}
+
+function updateClockTimePart(value: string, part: "hour" | "minute" | "period", nextValue: string) {
+  const current = getClockTimeParts(value);
+  const hour = Number(part === "hour" ? nextValue : current.hour) % 12;
+  const minute = Number(part === "minute" ? nextValue : current.minute);
+  const period = part === "period" ? nextValue : current.period;
+  const hour24 = hour + (period === "PM" ? 12 : 0);
+  return `${String(hour24).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function ClockTimeFields({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  const parts = getClockTimeParts(value);
+  const hourOptions = Array.from({ length: 12 }, (_, index) => {
+    const hour = String(index + 1).padStart(2, "0");
+    return { value: hour, label: hour };
+  });
+  const minuteOptions = Array.from({ length: 12 }, (_, index) => {
+    const minute = String(index * 5).padStart(2, "0");
+    return { value: minute, label: minute };
+  });
+  const periodOptions = ["AM", "PM"].map((period) => ({ value: period, label: period }));
+
+  return (
+    <div className="grid grid-cols-3 gap-2">
+      <FieldSelect
+        label={`${label} hour`}
+        value={parts.hour}
+        onChange={(next) => onChange(updateClockTimePart(value, "hour", next))}
+        options={hourOptions}
+      />
+      <FieldSelect
+        label="Minute"
+        value={parts.minute}
+        onChange={(next) => onChange(updateClockTimePart(value, "minute", next))}
+        options={minuteOptions}
+      />
+      <FieldSelect
+        label="AM/PM"
+        value={parts.period}
+        onChange={(next) => onChange(updateClockTimePart(value, "period", next))}
+        options={periodOptions}
+      />
+    </div>
+  );
+}
+
 function entryHours(entry: TimeEntryRecord) {
   return toNumber(entry.paidHours ?? entry.hoursWorked ?? entry.grossHours ?? 0);
 }
@@ -102,12 +222,13 @@ function buildEditor(entry?: TimeEntryRecord | null): EntryEditorState {
       jobId: null,
       date: toDateInput(now),
       clockInTime: "08:00",
-      clockOutTime: "17:00",
+      clockOutTime: "",
       totalHours: "",
       travelHours: "",
       notes: "",
       managerNotes: "",
       rateType: "regular",
+      leaveOpen: true,
     };
   }
 
@@ -123,8 +244,9 @@ function buildEditor(entry?: TimeEntryRecord | null): EntryEditorState {
     totalHours: entry.hoursWorked ? String(toNumber(entry.hoursWorked)) : "",
     travelHours: String(toNumber(entry.travelHours ?? entry.job?.defaultTravelHours ?? 0)),
     notes: entry.notes || "",
-    managerNotes: "",
+    managerNotes: entry.managerNotes || "",
     rateType: (entry.rateType === "island" ? "special" : entry.rateType) || (hasSpecialPay(entry) ? "special" : "regular"),
+    leaveOpen: !outAt,
   };
 }
 
@@ -198,6 +320,7 @@ export default function TimePage() {
   });
 
   const rows = (listQuery.data || []) as unknown as TimeEntryRecord[];
+  const offsiteAlerts = rows.filter((entry) => !entry.isManual && entry.notAtJobsiteReason);
   const listState = getTimeListState({
     isLoading: listQuery.isLoading,
     isError: listQuery.isError,
@@ -264,6 +387,13 @@ export default function TimePage() {
     setEditorOpen(true);
   };
 
+  const openCompletedHours = () => {
+    const next = buildEditor();
+    setEditorTouchedTravelHours(false);
+    setEditor({ ...next, leaveOpen: false, clockOutTime: "17:00" });
+    setEditorOpen(true);
+  };
+
   const openEdit = (entry: TimeEntryRecord) => {
     setEditorTouchedTravelHours(true);
     setEditor(buildEditor(entry));
@@ -272,10 +402,12 @@ export default function TimePage() {
 
   const submitEditor = () => {
     if (!editor.userId) return toast.error("Select an employee.");
+    if (editor.leaveOpen && !editor.managerNotes.trim()) return toast.error("Enter why you are clocking in for the employee.");
 
     const inAt = new Date(`${editor.date}T${editor.clockInTime}:00`);
     const hasTotalHours = editor.totalHours.trim().length > 0;
-    const outAt = hasTotalHours ? null : editor.clockOutTime ? new Date(`${editor.date}T${editor.clockOutTime}:00`) : null;
+    const outAt = editor.leaveOpen ? null : hasTotalHours ? null : editor.clockOutTime ? new Date(`${editor.date}T${editor.clockOutTime}:00`) : null;
+    if (!editor.leaveOpen && !hasTotalHours && !outAt) return toast.error("Enter clock-out time or total hours.");
 
     saveEntry.mutate({
       id: editor.id ?? undefined,
@@ -284,7 +416,7 @@ export default function TimePage() {
         jobId: editor.jobId,
         clockIn: inAt.toISOString(),
         clockOut: outAt ? outAt.toISOString() : null,
-        totalHours: hasTotalHours ? toNumber(editor.totalHours) : null,
+        totalHours: editor.leaveOpen ? null : hasTotalHours ? toNumber(editor.totalHours) : null,
         travelHours: editor.travelHours.trim() ? toNumber(editor.travelHours) : null,
         rateType: editor.rateType,
         breakMinutes: 0,
@@ -317,7 +449,8 @@ export default function TimePage() {
               ],
             })} />
             <button className="btn btn-secondary" onClick={printSummary}><Printer className="mr-1 h-4 w-4" /> Print Payroll Summary</button>
-            <button className="btn btn-primary" onClick={openCreate}><Plus className="mr-1 h-4 w-4" /> Add Manual Hours</button>
+            <button className="btn btn-secondary" onClick={openCompletedHours}><Plus className="mr-1 h-4 w-4" /> Add Completed Hours</button>
+            <button className="btn btn-primary" onClick={openCreate}><Clock3 className="mr-1 h-4 w-4" /> Clock In for Employee</button>
           </div>
         }
       />
@@ -327,6 +460,36 @@ export default function TimePage() {
         <button className={["rounded-md px-3 py-2 text-sm font-medium", tab === "overview" ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-700"].join(" ")} onClick={() => setTab("overview")}>Overview</button>
         <button className={["rounded-md px-3 py-2 text-sm font-medium", tab === "log" ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-700"].join(" ")} onClick={() => setTab("log")}>Check In / Out</button>
       </div>
+
+      {offsiteAlerts.length > 0 ? (
+        <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-4">
+          <div className="flex items-center gap-2 font-semibold text-amber-950">
+            <MapPin className="h-5 w-5" />
+            Authorized offsite clock-ins ({offsiteAlerts.length})
+          </div>
+          <div className="mt-3 space-y-2">
+            {offsiteAlerts.map((entry) => (
+              <div key={entry.id} className="rounded-lg border border-amber-200 bg-white p-3 text-sm">
+                <div className="font-medium text-slate-900">
+                  {entry.user?.name || "Employee"} · {formatDateTime(entry.clockIn)}
+                </div>
+                <div className="text-slate-700">{entry.job?.name || "No job selected"}</div>
+                <div className="mt-1 text-amber-900">{entry.notAtJobsiteReason}</div>
+                {entry.clockInLatitude != null && entry.clockInLongitude != null ? (
+                  <a
+                    className="mt-2 inline-flex items-center gap-1 font-medium text-blue-700 underline"
+                    href={`https://www.google.com/maps?q=${entry.clockInLatitude},${entry.clockInLongitude}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    View clock-in location
+                  </a>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="card mb-4 p-4">
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -529,8 +692,10 @@ export default function TimePage() {
           <div className="card w-full max-w-3xl p-6">
             <div className="mb-4 flex items-center justify-between">
               <div>
-                <div className="text-lg font-semibold">{editor.id ? "Edit Hours" : "Add Manual Hours"}</div>
-                <div className="text-sm text-slate-500">Clock in/out or total hours.</div>
+                <div className="text-lg font-semibold">{editor.id ? "Edit Time Entry" : editor.leaveOpen ? "Clock In for Employee" : "Add Completed Hours"}</div>
+                <div className="text-sm text-slate-500">
+                  {editor.leaveOpen ? "Set the real start time. The employee will clock out normally from their phone." : "Enter a completed time period."}
+                </div>
               </div>
               <button className="btn btn-secondary" onClick={() => setEditorOpen(false)}>Close</button>
             </div>
@@ -543,9 +708,23 @@ export default function TimePage() {
                 setEditor((s) => ({ ...s, jobId, rateType: s.rateType === "travel" ? "regular" : s.rateType }));
               }} options={[{ value: "", label: "No project" }, ...(jobs.data || []).map((j) => ({ value: String(j.id), label: j.name }))]} />
               <FieldInput label="Date" type="date" value={editor.date} onChange={(value) => setEditor((s) => ({ ...s, date: value }))} />
-              <FieldInput label="Clock In" type="time" value={editor.clockInTime} onChange={(value) => setEditor((s) => ({ ...s, clockInTime: value }))} />
-              <FieldInput label="Clock Out" type="time" value={editor.clockOutTime} onChange={(value) => setEditor((s) => ({ ...s, clockOutTime: value }))} />
-              <FieldInput label="Total Hours (optional)" type="number" value={editor.totalHours} onChange={(value) => setEditor((s) => ({ ...s, totalHours: value }))} />
+              <ClockTimeFields label="Clock In" value={editor.clockInTime} onChange={(value) => setEditor((s) => ({ ...s, clockInTime: value }))} />
+              <div className="flex items-end pb-2">
+                <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                  <input type="checkbox" checked={editor.leaveOpen} onChange={(event) => setEditor((s) => ({ ...s, leaveOpen: event.target.checked, clockOutTime: event.target.checked ? "" : s.clockOutTime || "17:00", totalHours: event.target.checked ? "" : s.totalHours }))} />
+                  Leave shift open for employee clock-out
+                </label>
+              </div>
+              {!editor.leaveOpen ? (
+                <>
+                  <ClockTimeFields label="Clock Out" value={editor.clockOutTime} onChange={(value) => setEditor((s) => ({ ...s, clockOutTime: value }))} />
+                  <DurationFields label="Total Hours (optional)" value={editor.totalHours} onChange={(value) => setEditor((s) => ({ ...s, totalHours: value }))} />
+                </>
+              ) : (
+                <div className="md:col-span-2 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+                  The effective clock-in time above is used for hours and job cost. The system separately records when you created this entry for audit purposes.
+                </div>
+              )}
               <FieldSelect
                 label="Rate Type"
                 value={editor.rateType}
@@ -556,9 +735,8 @@ export default function TimePage() {
                   { value: "travel", label: "Travel" },
                 ]}
               />
-              <FieldInput
+              <DurationFields
                 label="Travel Hours"
-                type="number"
                 value={editor.travelHours}
                 onChange={(value) => {
                   setEditorTouchedTravelHours(true);
@@ -576,7 +754,7 @@ export default function TimePage() {
                 </div>
               ) : null}
               <FieldTextArea label="Notes" value={editor.notes} onChange={(value) => setEditor((s) => ({ ...s, notes: value }))} />
-              <FieldTextArea label="Manager Notes" value={editor.managerNotes} onChange={(value) => setEditor((s) => ({ ...s, managerNotes: value }))} />
+              <FieldTextArea label={editor.leaveOpen ? "Manager reason (required)" : "Manager Notes"} value={editor.managerNotes} onChange={(value) => setEditor((s) => ({ ...s, managerNotes: value }))} />
             </div>
 
             <div className="mt-4 flex justify-end gap-2">
@@ -631,11 +809,11 @@ function FieldSelect({ label, value, onChange, options }: { label: string; value
   );
 }
 
-function FieldInput({ label, type, value, onChange }: { label: string; type: string; value: string; onChange: (value: string) => void }) {
+function FieldInput({ label, type, value, onChange, step }: { label: string; type: string; value: string; onChange: (value: string) => void; step?: string }) {
   return (
     <div>
       <label className="label">{label}</label>
-      <input className="input" type={type} value={value} onChange={(e) => onChange(e.target.value)} />
+      <input className="input" type={type} value={value} step={step} onChange={(e) => onChange(e.target.value)} />
     </div>
   );
 }

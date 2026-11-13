@@ -127,6 +127,8 @@ export const jobsRouter = router({
         city: true,
         state: true,
         zipCode: true,
+        latitude: true,
+        longitude: true,
         scopeOfWork: true,
         notes: true,
         customer: { select: { name: true } },
