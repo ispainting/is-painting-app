@@ -458,7 +458,7 @@ export default function TimePage() {
       {tab === "payroll" && (
         <div className="card overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="min-w-[900px] w-full text-sm">
               <thead className="bg-slate-50 text-left">
                 <tr>
                   <th className="px-3 py-2 font-medium">Employee</th>
@@ -532,7 +532,8 @@ export default function TimePage() {
 
       {tab === "overview" && (
         <div className="card overflow-hidden">
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="min-w-[680px] w-full text-sm">
             <thead className="bg-slate-50 text-left">
               <tr>
                 <th className="px-3 py-2 font-medium">Employee</th>
@@ -558,13 +559,14 @@ export default function TimePage() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
       {tab === "log" && (
         <div className="card overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="min-w-[900px] w-full text-sm">
               <thead className="bg-slate-50 text-left">
                 <tr>
                   <th className="px-3 py-2 font-medium">Employee</th>
