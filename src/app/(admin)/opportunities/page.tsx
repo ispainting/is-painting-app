@@ -208,7 +208,7 @@ export default function OpportunitiesPage() {
         {leadCountSource ? <button type="button" className="px-2 text-sm text-brand-700 hover:underline" onClick={() => setLeadCountSource("")}>Clear platform</button> : null}
       </div> : null}
     </section>
-    <div className="card mb-4 grid grid-cols-2 gap-3 p-4 md:grid-cols-4">
+    <div className="card mb-4 grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 md:grid-cols-4">
       <label>Search<input className="input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Project or customer" /></label>
       <label>Lead Source<select className="input" value={source} onChange={(e) => setSource(e.target.value)}><option value="">All sources</option>{sources.map((s) => <option key={s}>{s}</option>)}</select></label>
       <label>Service<select className="input" value={service} onChange={(e) => setService(e.target.value)}><option value="">All services</option>{services.map((s) => <option key={s}>{s}</option>)}</select></label>
