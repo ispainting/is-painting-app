@@ -2,16 +2,23 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, adminProcedure } from "../trpc";
 import { TERMINAL_PIPELINE_STAGES } from "@/lib/pipeline-stages";
-import { isReferralSource } from "@/lib/lead-source";
+import { isReferralSource, normalizeLeadSourceForReport } from "@/lib/lead-source";
+import { startOfBusinessDayInMassachusetts } from "@/lib/employee-rate-resolver";
 import { OpportunityStage, Prisma } from "@prisma/client";
 import { isTerminalStage, opportunityStatusForStage } from "@/lib/pipeline-sync";
 import { opportunityValues } from "@/lib/opportunity-values";
 import { linkJobOpportunity } from "@/lib/opportunity-links";
 import { synchronizeInitialOpportunityHistory } from "@/lib/opportunity-history";
+import { attributionFromLeadNote, attributionFromMetadata, compactAttribution, leadAttributionFields, mergeAttribution, type LeadAttribution } from "@/lib/orion-attribution";
 
 const PipelineZ = z.enum(["sales", "not_interested"]);
 const StageZ = z.nativeEnum(OpportunityStage);
 const StatusZ = z.enum(["open", "won", "lost"]);
+const AttributionZ = z.object(Object.fromEntries(leadAttributionFields.map((field) => [field, z.string().trim().max(1000).optional()])) as Record<typeof leadAttributionFields[number], z.ZodOptional<z.ZodString>>);
+const DateInputZ = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+  const parsed = new Date(`${value}T12:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}, { message: "Enter a valid calendar date." });
 const editable = z.object({
   customerId: z.number().int().positive().optional(),
   name: z.string().trim().min(1).optional(),
@@ -94,6 +101,45 @@ async function editOpportunity(tx: Prisma.TransactionClient, id: number, input: 
 }
 
 export const opportunitiesRouter = router({
+  leadSourceCounts: protectedProcedure
+    .input(z.object({
+      from: DateInputZ,
+      to: DateInputZ,
+    }).refine((range) => range.from <= range.to, { message: "Start date must be on or before end date." }))
+    .query(async ({ ctx, input }) => {
+      // Match the Opportunity board and monthly reports: use the lead-received
+      // timestamp, falling back to creation time for older records without it.
+      const dayAfterEnd = new Date(`${input.to}T12:00:00Z`);
+      dayAfterEnd.setUTCDate(dayAfterEnd.getUTCDate() + 1);
+      const range = {
+        start: startOfBusinessDayInMassachusetts(input.from),
+        end: startOfBusinessDayInMassachusetts(dayAfterEnd.toISOString().slice(0, 10)),
+      };
+      const leads = await ctx.prisma.opportunity.findMany({
+        where: {
+          OR: [
+            { leadReceivedAt: { gte: range.start, lt: range.end } },
+            { leadReceivedAt: null, createdAt: { gte: range.start, lt: range.end } },
+          ],
+        },
+        select: {
+          source: true,
+          customer: { select: { leadSource: true, source: true } },
+        },
+      });
+      const bySource = new Map<string, number>();
+      for (const lead of leads) {
+        const source = normalizeLeadSourceForReport(lead.source ?? lead.customer.leadSource ?? lead.customer.source);
+        bySource.set(source, (bySource.get(source) ?? 0) + 1);
+      }
+      return {
+        total: leads.length,
+        bySource: [...bySource.entries()]
+          .map(([source, count]) => ({ source, count }))
+          .sort((a, b) => b.count - a.count || a.source.localeCompare(b.source)),
+      };
+    }),
+
   list: protectedProcedure
     .input(z.object({ visibility: z.enum(["active", "archived", "all"]) }).optional())
     .query(({ ctx, input }) =>
@@ -121,6 +167,53 @@ export const opportunitiesRouter = router({
         stageHistory: { include: { changedBy: { select: { id: true, name: true } } }, orderBy: [{ recordedAt: "desc" }, { id: "desc" }] } },
     })
   ),
+
+  marketingAttribution: protectedProcedure.input(z.object({ id: z.number().int().positive() })).query(async ({ ctx, input }) => {
+    const opportunity = await ctx.prisma.opportunity.findUnique({
+      where: { id: input.id },
+      select: { id: true, customerId: true, notes: true },
+    });
+    if (!opportunity) throw new TRPCError({ code: "NOT_FOUND", message: "Opportunity not found." });
+    const touchpoints = await ctx.prisma.customerTouchpoint.findMany({
+      where: { customerId: opportunity.customerId, deletedAt: null, metadata: { path: ["opportunityId"], equals: opportunity.id } },
+      orderBy: { createdAt: "asc" },
+      select: { metadata: true },
+    });
+    let structured: LeadAttribution | null = null;
+    for (const touchpoint of touchpoints) structured = mergeAttribution(structured, attributionFromMetadata(touchpoint.metadata));
+    return mergeAttribution(structured, attributionFromLeadNote(opportunity.notes)) ?? {};
+  }),
+
+  updateMarketingAttribution: adminProcedure
+    .input(z.object({ id: z.number().int().positive(), attribution: AttributionZ }))
+    .mutation(async ({ ctx, input }) => ctx.prisma.$transaction(async (tx) => {
+      const opportunity = await tx.opportunity.findUnique({ where: { id: input.id }, select: { id: true, customerId: true, leadReceivedAt: true, createdAt: true } });
+      if (!opportunity) throw new TRPCError({ code: "NOT_FOUND", message: "Opportunity not found." });
+      const existing = await tx.customerTouchpoint.findFirst({
+        where: { customerId: opportunity.customerId, deletedAt: null, metadata: { path: ["opportunityId"], equals: opportunity.id } },
+        orderBy: { createdAt: "asc" },
+        select: { id: true, metadata: true },
+      });
+      const attribution = compactAttribution(input.attribution);
+      const base = existing?.metadata && typeof existing.metadata === "object" && !Array.isArray(existing.metadata)
+        ? { ...(existing.metadata as Prisma.JsonObject) }
+        : {};
+      for (const field of leadAttributionFields) delete base[field];
+      const metadata = { ...base, type: "marketing_attribution", opportunityId: opportunity.id, ...(attribution ?? {}) };
+      if (existing) {
+        await tx.customerTouchpoint.update({ where: { id: existing.id }, data: { metadata } });
+      } else {
+        await tx.customerTouchpoint.create({ data: {
+          customerId: opportunity.customerId,
+          type: "note",
+          subject: "Marketing attribution",
+          body: "Marketing attribution entered or confirmed in the Opportunity editor.",
+          occurredAt: opportunity.leadReceivedAt ?? opportunity.createdAt,
+          metadata,
+        } });
+      }
+      return attribution ?? {};
+    })),
 
   create: adminProcedure
     .input(z.object({
@@ -239,30 +332,51 @@ export const opportunitiesRouter = router({
   }),
 
   remove: adminProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
-    const opportunity = await ctx.prisma.opportunity.findUnique({
-      where: { id: input.id },
-      select: {
-        id: true,
-        name: true,
-        customer: { select: { name: true } },
-        job: { select: { id: true } },
-        _count: { select: { proposals: true, automationRuns: true } },
-      },
-    });
-    if (!opportunity) throw new TRPCError({ code: "NOT_FOUND", message: "Opportunity not found." });
-
-    const blockers: string[] = [];
-    if (opportunity._count.proposals > 0) blockers.push(`${opportunity._count.proposals} linked proposal(s)`);
-    if (opportunity.job) blockers.push("a linked job");
-    if (opportunity._count.automationRuns > 0) blockers.push("automation history");
-    if (blockers.length > 0) {
-      throw new TRPCError({
-        code: "PRECONDITION_FAILED",
-        message: `Cannot delete this opportunity: it has ${blockers.join(", ")}. Archive it instead.`,
+    return ctx.prisma.$transaction(async (tx) => {
+      const opportunity = await tx.opportunity.findUnique({
+        where: { id: input.id },
+        select: {
+          id: true,
+          customerId: true,
+          automationRuns: { select: { id: true } },
+        },
       });
-    }
+      if (!opportunity) throw new TRPCError({ code: "NOT_FOUND", message: "Opportunity not found." });
 
-    await ctx.prisma.opportunity.delete({ where: { id: input.id } });
-    return { ok: true };
+      const automationRunIds = opportunity.automationRuns.map((run) => run.id);
+      if (automationRunIds.length > 0) {
+        // Keep submitted review history while removing the automation runs and
+        // any pending follow-ups that belong to this Opportunity.
+        await tx.reviewSubmission.updateMany({
+          where: { automationRunId: { in: automationRunIds } },
+          data: { automationRunId: null },
+        });
+        await tx.automationRun.deleteMany({ where: { id: { in: automationRunIds } } });
+      }
+
+      // Preserve Jobs and Proposals as independent business records while
+      // removing their optional link to the deleted Opportunity.
+      await tx.proposal.updateMany({ where: { opportunityId: input.id }, data: { opportunityId: null } });
+      await tx.job.updateMany({ where: { opportunityId: input.id }, data: { opportunityId: null } });
+
+      // Marketing attribution is stored on customer touchpoints. Keep the
+      // touchpoint data, but remove the reference to the deleted record.
+      const touchpoints = await tx.customerTouchpoint.findMany({
+        where: {
+          customerId: opportunity.customerId,
+          metadata: { path: ["opportunityId"], equals: input.id },
+        },
+        select: { id: true, metadata: true },
+      });
+      for (const touchpoint of touchpoints) {
+        if (!touchpoint.metadata || typeof touchpoint.metadata !== "object" || Array.isArray(touchpoint.metadata)) continue;
+        const metadata = { ...(touchpoint.metadata as Prisma.JsonObject) };
+        delete metadata.opportunityId;
+        await tx.customerTouchpoint.update({ where: { id: touchpoint.id }, data: { metadata } });
+      }
+
+      await tx.opportunity.delete({ where: { id: input.id } });
+      return { ok: true };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }),
 });

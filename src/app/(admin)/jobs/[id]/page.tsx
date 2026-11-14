@@ -15,6 +15,7 @@ import { toast } from "sonner";
 import { JobExpenseEntry } from "@/components/expenses/JobExpenseEntry";
 import { JobFinancials } from "@/components/jobs/JobFinancials";
 import { JobOpportunityLink } from "@/components/jobs/JobOpportunityLink";
+import { BudgetActualBar } from "@/components/jobs/BudgetActualBar";
 import { calculateJobTracking, calculateEntryMinutes, formatMinutesToHours } from "@/lib/job-tracking";
 
 const STATUSES = ["estimate", "sent", "approved", "active", "completed", "on_hold", "cancelled"] as const;
@@ -34,7 +35,13 @@ export default function JobDetailPage() {
   const searchParams = useSearchParams();
   const id = Number(params.id);
   const utils = api.useUtils();
-  const { data: job, isLoading } = api.jobs.byId.useQuery({ id });
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>(() =>
+    WORKSPACE_TABS.find((tab) => tab.id === searchParams.get("tab"))?.id ?? "overview"
+  );
+  const { data: job, isLoading } = api.jobs.byId.useQuery(
+    { id },
+    { refetchInterval: activeTab === "tracking" ? 30_000 : false },
+  );
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustomerResults, setShowCustomerResults] = useState(false);
@@ -44,9 +51,6 @@ export default function JobDetailPage() {
     { enabled: isEditOpen }
   );
 
-  const [activeTab, setActiveTab] = useState<WorkspaceTab>(() =>
-    searchParams.get("tab") === "financials" ? "financials" : "overview"
-  );
   const [editForm, setEditForm] = useState({
     customerId: 0,
     name: "",
@@ -824,6 +828,28 @@ export default function JobDetailPage() {
 
       {activeTab === "tracking" && (
         <div className="space-y-4">
+          <section className="card p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">Budget vs. actual cost</h2>
+                <p className="mt-1 text-sm text-slate-500">Actual tracked spending compared with this job’s budget. Refreshes every 30 seconds while this tab is open.</p>
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
+                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />Under 75%</span>
+                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-amber-400" />75–89%</span>
+                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-orange-500" />90–99%</span>
+                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-red-600" />At or over budget</span>
+              </div>
+            </div>
+            <div className="mt-5 grid gap-x-8 gap-y-5 md:grid-cols-2">
+              <BudgetActualBar label="Total tracked cost" actual={actualTotalCost} budget={estimatedTotalCost} budgetPending={estimatedSubcontractorPending} />
+              <BudgetActualBar label="Labor" actual={actualLaborCost} budget={estimatedLabor} />
+              <BudgetActualBar label="Materials & expenses" actual={actualExpensesTotal} budget={estimatedMaterials} />
+              <BudgetActualBar label="Subcontractors" actual={actualSubcontractorCost} budget={estimatedSubcontractor} budgetPending={estimatedSubcontractorPending} />
+            </div>
+            {estimatedSubcontractorPending ? <p className="mt-4 rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600">The total budget comparison is partial until the subcontractor budget is entered.</p> : null}
+          </section>
+
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <div className="card p-5">
               <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Total Hours</p>
@@ -1059,8 +1085,8 @@ export default function JobDetailPage() {
             <div className="px-6 pt-6 pb-3 border-b border-slate-200">
               <div className="text-lg font-semibold">Edit Job</div>
             </div>
-            <div className="grid grid-cols-2 gap-3 overflow-y-auto px-6 py-4 pr-5 flex-1">
-              <div className="col-span-2">
+            <div className="grid grid-cols-1 gap-3 overflow-y-auto px-4 py-4 sm:grid-cols-2 sm:px-6">
+              <div className="col-span-full">
                 <label className="label">Job name</label>
                 <input
                   className="input"
@@ -1123,7 +1149,7 @@ export default function JobDetailPage() {
                   </div>
               </div>
 
-              <div className="col-span-2">
+              <div className="col-span-full">
                 <label className="label">Scope of work</label>
                 <textarea
                   className="input min-h-24"
@@ -1132,7 +1158,7 @@ export default function JobDetailPage() {
                 />
               </div>
 
-              <div className="col-span-2">
+              <div className="col-span-full">
                 <label className="label">Job Notes</label>
                 <textarea
                   className="input min-h-24"
@@ -1141,7 +1167,7 @@ export default function JobDetailPage() {
                 />
               </div>
 
-              <div className="col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="col-span-full rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Payroll Settings</div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
                   <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
@@ -1176,7 +1202,7 @@ export default function JobDetailPage() {
               <Field label="Total amount" value={editForm.totalEstimate} onChange={(v) => setEditForm((f) => ({ ...f, totalEstimate: v }))} />
               <Field label="Contract amount" value={editForm.contractAmount} onChange={(v) => setEditForm((f) => ({ ...f, contractAmount: v }))} />
 
-              <div className="col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="col-span-full rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Lifecycle Dates</div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>

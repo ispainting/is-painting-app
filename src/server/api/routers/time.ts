@@ -2,7 +2,8 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { computeEntry } from "../../../lib/payroll";
 import { resolveEffectiveHourlyRate, shouldRecomputeHourlyRateSnapshot } from "../../../lib/employee-rate-resolver";
-import { liveShiftCutoff } from "../../../lib/clock";
+import { distanceMeters, formatOffsiteReason, isOutsideJobsite, liveShiftCutoff } from "../../../lib/clock";
+import { roundHoursToFiveMinutes, roundToFiveMinutes, timeEntryRangeError } from "../../../lib/time-entry-validation";
 import { router, protectedProcedure, adminProcedure } from "../trpc";
 
 /**
@@ -252,6 +253,8 @@ export const timeRouter = router({
         lat: z.number().min(-90).max(90),
         lng: z.number().min(-180).max(180),
         accuracy: z.number().min(0).optional(),
+        offsiteAuthorized: z.boolean().default(false),
+        offsiteReason: z.string().trim().max(500).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -293,9 +296,33 @@ export const timeRouter = router({
               isIslandJob: true,
               specialPayEnabled: true,
               hourlyRateAdjustment: true,
+              latitude: true,
+              longitude: true,
             },
           })
         : null;
+      const hasJobCoordinates = selectedJob?.latitude != null && selectedJob?.longitude != null;
+      const distanceFromJobsite = hasJobCoordinates
+        ? distanceMeters(
+            { lat: input.lat, lng: input.lng },
+            { lat: Number(selectedJob!.latitude), lng: Number(selectedJob!.longitude) }
+          )
+        : null;
+      const isOffsite = !selectedJobId
+        || (distanceFromJobsite != null && isOutsideJobsite(
+          { lat: input.lat, lng: input.lng },
+          { lat: Number(selectedJob!.latitude), lng: Number(selectedJob!.longitude) }
+        ));
+      if (isOffsite && (!input.offsiteAuthorized || !input.offsiteReason?.trim())) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Confirm authorization and enter a reason to clock in away from the jobsite.",
+        });
+      }
+      const notAtJobsiteReason = isOffsite
+        ? formatOffsiteReason(input.offsiteReason!, distanceFromJobsite)
+        : null;
+
       const effectiveSpecialPayEnabled = Boolean(selectedJob?.specialPayEnabled || selectedJob?.isIslandJob);
       const effectiveHourlyRateAdjustment = effectiveSpecialPayEnabled
         ? (Number(selectedJob?.hourlyRateAdjustment || 0) > 0 ? Number(selectedJob?.hourlyRateAdjustment || 0) : 2)
@@ -319,6 +346,7 @@ export const timeRouter = router({
           clockInLatitude: input.lat,
           clockInLongitude: input.lng,
           clockInAccuracy: input.accuracy,
+          notAtJobsiteReason,
           isIslandJob: effectiveSpecialPayEnabled,
           specialPayEnabled: effectiveSpecialPayEnabled,
           hourlyRateAdjustment: effectiveHourlyRateAdjustment,
@@ -455,9 +483,18 @@ export const timeRouter = router({
     }),
 
   saveEntry: adminProcedure.input(z.object({ id: z.number().optional(), data: timeEntryUpsertInput })).mutation(async ({ ctx, input }) => {
-    const clockIn = parseDate(input.data.clockIn);
-    const explicitClockOut = input.data.clockOut ? parseDate(input.data.clockOut) : null;
-    const clockOut = explicitClockOut ?? (input.data.totalHours != null ? new Date(clockIn.getTime() + input.data.totalHours * 3_600_000) : null);
+    const clockIn = roundToFiveMinutes(parseDate(input.data.clockIn));
+    const explicitClockOut = input.data.clockOut ? roundToFiveMinutes(parseDate(input.data.clockOut)) : null;
+    const roundedTotalHours = input.data.totalHours != null ? roundHoursToFiveMinutes(input.data.totalHours) : null;
+    const clockOut = explicitClockOut ?? (roundedTotalHours != null ? new Date(clockIn.getTime() + roundedTotalHours * 3_600_000) : null);
+    const rangeError = timeEntryRangeError(clockIn, clockOut);
+    if (rangeError) throw new TRPCError({ code: "BAD_REQUEST", message: rangeError });
+    if (!clockOut && !input.data.managerNotes?.trim()) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Enter a manager reason when clocking in for an employee",
+      });
+    }
     const selectedJob = input.data.jobId
       ? await ctx.prisma.job.findUnique({
           where: { id: input.data.jobId },
@@ -489,6 +526,30 @@ export const timeRouter = router({
     const existing = input.id ? await ctx.prisma.timeEntry.findUnique({ where: { id: input.id } }) : null;
     if (input.id && !existing) {
       throw new TRPCError({ code: "NOT_FOUND", message: "Time entry not found" });
+    }
+
+    const overlapping = await ctx.prisma.timeEntry.findFirst({
+      where: {
+        userId: input.data.userId,
+        id: input.id ? { not: input.id } : undefined,
+        OR: [
+          { clockOut: null, clockIn: { gte: liveShiftCutoff() } },
+          {
+            clockOut: { gt: clockIn },
+            ...(clockOut ? { clockIn: { lt: clockOut } } : {}),
+          },
+        ],
+      },
+      select: { id: true, clockIn: true, clockOut: true },
+      orderBy: { clockIn: "desc" },
+    });
+    if (overlapping) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: overlapping.clockOut
+          ? "This time overlaps another entry for the employee"
+          : "This employee already has an open clock-in",
+      });
     }
 
     // Recompute the rate snapshot only when the employee or clock-in date changes;
@@ -526,21 +587,42 @@ export const timeRouter = router({
       ...payroll,
     };
 
-    if (input.id) {
-      return ctx.prisma.timeEntry.update({
-        where: { id: input.id },
+    return ctx.prisma.$transaction(async (tx) => {
+      const saved = input.id
+        ? await tx.timeEntry.update({
+            where: { id: input.id },
+            data: { ...baseData, ...reviewState },
+          })
+        : await tx.timeEntry.create({
+            data: { ...baseData, ...reviewState },
+          });
+
+      await tx.auditLog.create({
         data: {
-          ...baseData,
-          ...reviewState,
+          userId: ctx.session!.userId,
+          action: input.id ? "time_entry_updated" : clockOut ? "time_entry_created" : "employee_clock_in_created",
+          entityType: "TimeEntry",
+          entityId: saved.id,
+          before: existing
+            ? {
+                userId: existing.userId,
+                jobId: existing.jobId,
+                clockIn: existing.clockIn.toISOString(),
+                clockOut: existing.clockOut?.toISOString() ?? null,
+                managerNotes: existing.managerNotes,
+              }
+            : undefined,
+          after: {
+            userId: saved.userId,
+            jobId: saved.jobId,
+            clockIn: saved.clockIn.toISOString(),
+            clockOut: saved.clockOut?.toISOString() ?? null,
+            managerNotes: saved.managerNotes,
+          },
         },
       });
-    }
 
-    return ctx.prisma.timeEntry.create({
-      data: {
-        ...baseData,
-        ...reviewState,
-      },
+      return saved;
     });
   }),
 

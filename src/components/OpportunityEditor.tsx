@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "@/server/api/root";
@@ -11,6 +11,7 @@ import { formatOpportunityDate, opportunityDateInput, shouldRecordOpportunitySta
 import { startOfBusinessDayInMassachusetts, todayDateInputValueInMassachusetts } from "@/lib/employee-rate-resolver";
 import { isTerminalStage, opportunityStageLabel } from "@/lib/pipeline-sync";
 import { toast } from "sonner";
+import type { LeadAttribution } from "@/lib/orion-attribution";
 
 export type OpportunityCardData = inferRouterOutputs<AppRouter>["opportunities"]["list"][number];
 
@@ -38,13 +39,26 @@ export function OpportunityEditor({ opportunity, onClose, onSaved }: {
   });
   const [customerSearch, setCustomerSearch] = useState(opportunity?.customer.name ?? "");
   const [customerResultsOpen, setCustomerResultsOpen] = useState(false);
-  const [tab, setTab] = useState<"details" | "pipeline" | "links" | "history">("details");
+  const [tab, setTab] = useState<"details" | "pipeline" | "marketing" | "links" | "history">("details");
+  const [marketing, setMarketing] = useState<LeadAttribution>({});
+  const [marketingLoaded, setMarketingLoaded] = useState(false);
   const customers = api.customers.list.useQuery({ search: customerSearch || undefined });
   const candidates = api.opportunities.linkCandidates.useQuery({ customerId: form.customerId }, { enabled: form.customerId > 0 });
   const history = api.opportunities.byId.useQuery({ id: opportunity?.id ?? 0 }, { enabled: !!opportunity });
+  const attribution = api.opportunities.marketingAttribution.useQuery({ id: opportunity?.id ?? 0 }, { enabled: !!opportunity });
   const saved = async () => { await onSaved(); toast.success(opportunity ? "Opportunity updated" : "Opportunity created"); onClose(); };
   const update = api.opportunities.update.useMutation({ onSuccess: saved, onError: (e) => toast.error(e.message) });
   const create = api.opportunities.create.useMutation({ onSuccess: saved, onError: (e) => toast.error(e.message) });
+  const saveAttribution = api.opportunities.updateMarketingAttribution.useMutation({
+    onSuccess: async () => { await attribution.refetch(); toast.success("Marketing attribution saved"); },
+    onError: (e) => toast.error(e.message),
+  });
+  useEffect(() => {
+    if (!marketingLoaded && attribution.data) {
+      setMarketing(attribution.data);
+      setMarketingLoaded(true);
+    }
+  }, [attribution.data, marketingLoaded]);
   const date = (value: string) => value ? startOfBusinessDayInMassachusetts(value) : null;
   const patch = (key: keyof typeof form, value: string) => setForm((previous) => ({ ...previous, [key]: value }));
 
@@ -82,18 +96,18 @@ export function OpportunityEditor({ opportunity, onClose, onSaved }: {
   }
 
   return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" role="dialog" aria-modal="true" aria-label={opportunity ? "Edit Opportunity" : "New Opportunity"}>
-    <div className="card flex max-h-[90vh] w-full max-w-3xl flex-col">
+    <div className="card flex max-h-[90dvh] w-full max-w-3xl flex-col">
       <h2 className="border-b p-5 text-lg font-semibold">{opportunity ? "Edit Opportunity" : "New Opportunity"}</h2>
-      <div className="grid grid-cols-2 gap-4 overflow-y-auto p-5">
-        <nav className="col-span-2 flex gap-2 border-b pb-3" aria-label="Opportunity editor sections">
+      <div className="grid grid-cols-1 gap-4 overflow-y-auto p-4 sm:grid-cols-2 sm:p-5">
+        <nav className="col-span-full flex gap-2 overflow-x-auto border-b pb-3" aria-label="Opportunity editor sections">
           {([
             ["details", "Details"],
             ["pipeline", "Pipeline & Dates"],
-            ...(opportunity ? [["links", "Links"], ["history", "History"]] as const : []),
-          ] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={tab === value} className={`rounded px-3 py-2 text-sm ${tab === value ? "bg-brand-700 text-white" : "bg-slate-100"}`} onClick={() => setTab(value)}>{label}</button>)}
+            ...(opportunity ? [["marketing", "Marketing Attribution"], ["links", "Links"], ["history", "History"]] as const : []),
+          ] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={tab === value} className={`shrink-0 rounded px-3 py-2 text-sm ${tab === value ? "bg-brand-700 text-white" : "bg-slate-100"}`} onClick={() => setTab(value)}>{label}</button>)}
         </nav>
         {tab === "details" && <>
-        <div className="col-span-2 relative">
+        <div className="col-span-full relative">
           <label className="label" htmlFor="opportunity-customer">Customer</label>
           <input id="opportunity-customer" role="combobox" aria-autocomplete="list" aria-expanded={customerResultsOpen} aria-controls="opportunity-customer-results" className="input" value={customerSearch}
             onFocus={() => setCustomerResultsOpen(true)}
@@ -109,14 +123,14 @@ export function OpportunityEditor({ opportunity, onClose, onSaved }: {
           </div>}
           {form.customerId > 0 && <p className="mt-1 text-xs text-emerald-700">Customer selected</p>}
         </div>
-        <label className="col-span-2">Opportunity / Project Name<input className="input" value={form.name} onChange={(e) => patch("name", e.target.value)} /></label>
+        <label className="col-span-full">Opportunity / Project Name<input className="input" value={form.name} onChange={(e) => patch("name", e.target.value)} /></label>
         <label>Service Type<select className="input" value={form.serviceType} onChange={(e) => patch("serviceType", e.target.value)}>
           <option value="">Select service</option>{serviceTypeOptionsWithLegacy(form.serviceType).map((s) => <option key={s}>{s}</option>)}
         </select></label>
         <label>Lead Source<select className="input" value={form.source} onChange={(e) => patch("source", e.target.value)}>
           <option value="">Unknown</option>{leadSourceOptionsWithLegacy(form.source).map((s) => <option key={s}>{s}</option>)}
         </select></label>
-        {isReferralSource(form.source) && <label className="col-span-2">Referral Source / Name<input className="input" value={form.referralSource} onChange={(e) => patch("referralSource", e.target.value)} /></label>}
+        {isReferralSource(form.source) && <label className="col-span-full">Referral Source / Name<input className="input" value={form.referralSource} onChange={(e) => patch("referralSource", e.target.value)} /></label>}
         <label>Lead Received Date<input type="date" className="input" value={form.leadReceivedAt} onChange={(e) => patch("leadReceivedAt", e.target.value)} /></label>
         <label>Initial Estimated Value<input type="number" min="0" step="0.01" className="input" value={form.leadValue} onChange={(e) => patch("leadValue", e.target.value)} /></label>
         </>}
@@ -130,13 +144,40 @@ export function OpportunityEditor({ opportunity, onClose, onSaved }: {
           <datalist id="opportunity-reasons">{["Price", "Hired competitor", "Postponed indefinitely", "No response", "Outside service area", "Scheduling", "Other"].map((r) => <option key={r}>{r}</option>)}</datalist>
         </label>}
         {(form.stage === "follow_up" || form.stage === "on_hold" || !!form.followUpAt) && <label>Follow-up Date<input type="date" className="input" value={form.followUpAt} onChange={(e) => patch("followUpAt", e.target.value)} /></label>}
-        <label className="col-span-2">Notes<textarea className="input" value={form.notes} onChange={(e) => patch("notes", e.target.value)} /></label>
+        <label className="col-span-full">Notes<textarea className="input" value={form.notes} onChange={(e) => patch("notes", e.target.value)} /></label>
+        </>}
+        {opportunity && tab === "marketing" && <>
+          <div className="col-span-full rounded bg-blue-50 p-3 text-sm text-blue-900">
+            Structured campaign data used by Marketing analysis. Saving here does not replace Notes, lead dates, or stage history.
+          </div>
+          {attribution.isLoading ? <p className="col-span-full text-slate-500">Loading marketing attribution...</p> : <>
+            {([
+              ["platform", "Platform"], ["trafficSource", "Traffic Source"],
+              ["campaignId", "Campaign ID"], ["campaignName", "Campaign Name"],
+              ["adSetId", "Ad Set ID"], ["adSetName", "Ad Set Name"],
+              ["adId", "Ad ID"], ["adName", "Ad Name"],
+              ["formId", "Form ID"], ["formName", "Form Name"],
+              ["utmSource", "UTM Source"], ["utmMedium", "UTM Medium"],
+              ["utmCampaign", "UTM Campaign"], ["utmContent", "UTM Content"],
+              ["gclid", "GCLID"], ["fbclid", "FBCLID"],
+              ["landingPage", "Landing Page URL"], ["idealTiming", "Ideal Timing"],
+              ["externalLeadId", "External Lead ID"],
+            ] as const).map(([key, label]) => <label key={key} className={key === "landingPage" ? "col-span-full" : ""}>{label}
+              <input className="input" value={marketing[key] ?? ""} onChange={(e) => setMarketing((current) => ({ ...current, [key]: e.target.value }))} />
+            </label>)}
+            <div className="col-span-full flex justify-end">
+              <button type="button" className="btn btn-primary" disabled={saveAttribution.isPending}
+                onClick={() => saveAttribution.mutate({ id: opportunity.id, attribution: marketing })}>
+                {saveAttribution.isPending ? "Saving..." : "Save Marketing Attribution"}
+              </button>
+            </div>
+          </>}
         </>}
         {opportunity && tab === "links" && <>
-          <div className="col-span-2 rounded bg-slate-50 p-3 text-sm">
+          <div className="col-span-full rounded bg-slate-50 p-3 text-sm">
             Select only records for the selected customer. Multiple Proposal revisions are supported; linked records are never deleted when unlinked.
           </div>
-          <fieldset className="col-span-2 rounded border p-3"><legend>Linked Proposals / Revisions</legend>
+          <fieldset className="col-span-full rounded border p-3"><legend>Linked Proposals / Revisions</legend>
             {candidates.error && <p className="text-red-600">{candidates.error.message}</p>}
             {candidates.isLoading && <p className="py-2 text-slate-500">Loading customer Proposals...</p>}
             {!candidates.isLoading && !candidates.error && !candidates.data?.proposals.length && <p className="py-2 text-slate-500">No Proposals exist for this customer. Create one from the Proposals page.</p>}
@@ -148,7 +189,7 @@ export function OpportunityEditor({ opportunity, onClose, onSaved }: {
                 <Link href={`/proposals/${p.id}`} className="ml-auto text-brand-700">Open</Link>
               </label>)}
           </fieldset>
-          <label className="col-span-2">Linked Job (one per Opportunity)
+          <label className="col-span-full">Linked Job (one per Opportunity)
             <select className="input" value={form.jobId ?? ""} onChange={(e) => setForm((f) => ({ ...f, jobId: Number(e.target.value) || null }))}>
               <option value="">No linked Job / Unlink</option>
               {Array.from(new Map([...(opportunity.job ? [opportunity.job] : []), ...(candidates.data?.jobs ?? [])].map((j) => [j.id, j])).values()).map((j) => <option key={j.id} value={j.id} disabled={!!j.opportunityId && j.opportunityId !== opportunity.id}>{j.estimateNumber} - {j.name}</option>)}
@@ -158,9 +199,9 @@ export function OpportunityEditor({ opportunity, onClose, onSaved }: {
           </label>
         </>}
         {opportunity && tab === "history" && <>
-          <p className="col-span-2 text-sm text-slate-600">Effective date is when this happened. Recorded date is when it was entered into the system.</p>
-          <label className="col-span-2">History Note for next stage or outcome change<textarea className="input" value={form.historyNote} onChange={(e) => patch("historyNote", e.target.value)} /></label>
-          <section className="col-span-2"><h3 className="font-semibold">Stage History (never replaced)</h3>
+          <p className="col-span-full text-sm text-slate-600">Effective date is when this happened. Recorded date is when it was entered into the system.</p>
+          <label className="col-span-full">History Note for next stage or outcome change<textarea className="input" value={form.historyNote} onChange={(e) => patch("historyNote", e.target.value)} /></label>
+          <section className="col-span-full"><h3 className="font-semibold">Stage History (never replaced)</h3>
             {history.error && <p className="text-red-600">{history.error.message}</p>}
             {history.isLoading && <p className="py-2 text-slate-500">Loading history...</p>}
             {!history.isLoading && !history.error && !history.data?.stageHistory.length && <p className="py-2 text-slate-500">No stage history recorded yet.</p>}

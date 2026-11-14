@@ -5,6 +5,10 @@ const COOKIE = "is_session";
 const PUBLIC = [
   "/login",
   "/api/trpc",
+  // Server-to-server read for the ORION marketing platform; the route checks its own bearer secret.
+  "/api/orion",
+  // Scheduled report generator; the route validates CRON_SECRET itself.
+  "/api/cron",
   "/_next",
   "/favicon.ico",
 ];

@@ -17,6 +17,18 @@ import { toast } from "sonner";
 import { ExportPdfButton } from "@/components/ExportPdfButton";
 import { opportunitiesPdf } from "@/lib/pdf-export-data";
 
+function shiftDateInput(value: string, amount: number) {
+  const date = new Date(`${value}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + amount);
+  return date.toISOString().slice(0, 10);
+}
+
+function previousMonthRange(value: string) {
+  const currentMonthStart = `${value.slice(0, 7)}-01`;
+  const previousMonthEnd = shiftDateInput(currentMonthStart, -1);
+  return { from: `${previousMonthEnd.slice(0, 7)}-01`, to: previousMonthEnd };
+}
+
 export default function OpportunitiesPage() {
   const utils = api.useUtils();
   const [visibility, setVisibility] = useState<OpportunityVisibility>("active");
@@ -29,6 +41,13 @@ export default function OpportunitiesPage() {
   const [stage, setStage] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [leadCountFrom, setLeadCountFrom] = useState(() => {
+    const today = todayDateInputValueInMassachusetts();
+    return `${today.slice(0, 7)}-01`;
+  });
+  const [leadCountTo, setLeadCountTo] = useState(() => todayDateInputValueInMassachusetts());
+  const [leadCountSource, setLeadCountSource] = useState("");
+  const [leadCountPreset, setLeadCountPreset] = useState("this_month");
   const [followUp, setFollowUp] = useState("");
   const [view, setView] = useState<"kanban" | "table">("kanban");
   const [openedFromUrl, setOpenedFromUrl] = useState(false);
@@ -55,6 +74,33 @@ export default function OpportunitiesPage() {
   const archive = api.opportunities.setArchived.useMutation({ onSuccess: refresh, onError: (e) => toast.error(e.message) });
   const remove = api.opportunities.remove.useMutation({ onSuccess: async () => { await refresh(); setDeleteTarget(null); toast.success("Opportunity deleted"); }, onError: (e) => toast.error(e.message) });
   const today = todayDateInputValueInMassachusetts();
+  const leadCountsQuery = api.opportunities.leadSourceCounts.useQuery(
+    { from: leadCountFrom, to: leadCountTo },
+    { enabled: !!leadCountFrom && !!leadCountTo && leadCountFrom <= leadCountTo },
+  );
+  const leadCountSources = Array.from(new Set([
+    ...LEAD_SOURCE_OPTIONS,
+    ...(leadCountsQuery.data?.bySource.map((row) => row.source) ?? []),
+  ]));
+  const selectedLeadCount = leadCountSource
+    ? leadCountsQuery.data?.bySource.find((row) => row.source === leadCountSource)?.count ?? 0
+    : leadCountsQuery.data?.total ?? 0;
+  function setLeadCountPeriod(preset: string) {
+    setLeadCountPreset(preset);
+    if (preset === "custom") return;
+    if (preset === "this_month") {
+      setLeadCountFrom(`${today.slice(0, 7)}-01`);
+      setLeadCountTo(today);
+    } else if (preset === "last_month") {
+      const range = previousMonthRange(today);
+      setLeadCountFrom(range.from);
+      setLeadCountTo(range.to);
+    } else {
+      const days = preset === "last_7_days" ? 6 : 29;
+      setLeadCountFrom(shiftDateInput(today, -days));
+      setLeadCountTo(today);
+    }
+  }
   const filteredViews = filterOpportunityViews(query.data ?? [], {
     visibility, search, source, service, stage, from, to, followUp, today,
   });
@@ -64,7 +110,6 @@ export default function OpportunitiesPage() {
   function card(o: OpportunityCardData) {
     const values = opportunityValues(o);
     const proposal = latestOpportunityProposal(o.proposals);
-    const safeToDelete = !o.job && !o.proposals.length && !o._count.automationRuns;
     return <article key={o.id} className="card mb-2 p-3 text-sm">
       <div className="font-semibold">{o.name} {o.archivedAt && <span className="text-slate-500">(Archived)</span>}</div>
       <Link href={`/customers/${o.customerId}`} className="text-brand-700">{o.customer.name}</Link>
@@ -88,7 +133,7 @@ export default function OpportunitiesPage() {
           <summary className="cursor-pointer text-slate-700">Actions</summary>
           <div className="absolute right-0 z-10 mt-1 min-w-40 rounded border bg-white p-2 shadow">
             <button className="block w-full p-2 text-left" disabled={archive.isPending} onClick={() => archive.mutate({ id: o.id, archived: !o.archivedAt })}>{o.archivedAt ? "Restore" : "Archive"}</button>
-            {safeToDelete && <button className="block w-full p-2 text-left text-red-600" onClick={() => setDeleteTarget(o)}>Delete</button>}
+            <button className="block w-full p-2 text-left text-red-600" onClick={() => setDeleteTarget(o)}>Delete</button>
           </div>
         </details>
       </div>
@@ -122,7 +167,47 @@ export default function OpportunitiesPage() {
       })} />
       <button className="btn btn-primary" onClick={() => setEditor("new")}>New Opportunity</button>
     </div>} />
-    <div className="card mb-4 grid grid-cols-2 gap-3 p-4 md:grid-cols-4">
+    <section className="card mb-4 p-4" aria-label="Lead count by platform">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="font-semibold text-slate-900">Leads received by platform</h2>
+          <p className="mt-1 text-sm text-slate-500">Count leads by the date they were received, using Massachusetts local time.</p>
+        </div>
+        <div className="flex flex-wrap gap-2" aria-label="Quick date range">
+          {[["this_month", "This month"], ["last_7_days", "Last 7 days"], ["last_30_days", "Last 30 days"], ["last_month", "Last month"], ["custom", "Custom"]].map(([value, label]) => (
+            <button key={value} type="button" className={`rounded-md border px-3 py-1.5 text-sm ${leadCountPreset === value ? "border-brand-700 bg-brand-50 text-brand-700" : "border-slate-300 text-slate-700 hover:bg-slate-50"}`} onClick={() => setLeadCountPeriod(value)}>{label}</button>
+          ))}
+        </div>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        <label className="text-sm font-medium text-slate-700">From
+          <input type="date" className="input mt-1" value={leadCountFrom} onChange={(event) => { setLeadCountPreset("custom"); setLeadCountFrom(event.target.value); }} />
+        </label>
+        <label className="text-sm font-medium text-slate-700">Through
+          <input type="date" className="input mt-1" value={leadCountTo} onChange={(event) => { setLeadCountPreset("custom"); setLeadCountTo(event.target.value); }} />
+        </label>
+        <label className="text-sm font-medium text-slate-700">Platform
+          <select className="input mt-1" value={leadCountSource} onChange={(event) => setLeadCountSource(event.target.value)}>
+            <option value="">All platforms</option>
+            {leadCountSources.map((sourceOption) => <option key={sourceOption} value={sourceOption}>{sourceOption}</option>)}
+          </select>
+        </label>
+      </div>
+      {leadCountFrom > leadCountTo ? <p className="mt-3 text-sm text-red-700" role="alert">The start date must be on or before the end date.</p> : null}
+      <div className="mt-4 rounded-lg bg-blue-50 px-4 py-3" aria-live="polite">
+        {!leadCountFrom || !leadCountTo ? <p className="text-sm text-slate-600">Choose both dates to see lead counts.</p> : leadCountFrom > leadCountTo ? <p className="text-sm text-red-700">Select a valid date range to see lead counts.</p> : leadCountsQuery.isLoading || leadCountsQuery.isFetching ? <p className="text-sm text-slate-600">Updating lead count…</p> : leadCountsQuery.error ? <p role="alert" className="text-sm text-red-700">{leadCountsQuery.error.message}</p> : <p className="text-lg font-semibold text-slate-900">
+          {selectedLeadCount} {selectedLeadCount === 1 ? "lead" : "leads"} from {leadCountSource || "all platforms"}
+          <span className="ml-2 text-sm font-normal text-slate-600">{leadCountFrom} through {leadCountTo}</span>
+        </p>}
+      </div>
+      {leadCountFrom && leadCountTo && leadCountFrom <= leadCountTo && leadCountsQuery.data?.bySource.length ? <div className="mt-3 flex flex-wrap gap-2">
+        {leadCountsQuery.data.bySource.map(({ source: sourceName, count }) => <button key={sourceName} type="button" onClick={() => setLeadCountSource(sourceName)} className={`rounded-full border px-3 py-1 text-sm ${leadCountSource === sourceName ? "border-blue-700 bg-blue-700 text-white" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}>
+          {sourceName} <span className="ml-1 font-semibold">{count}</span>
+        </button>)}
+        {leadCountSource ? <button type="button" className="px-2 text-sm text-brand-700 hover:underline" onClick={() => setLeadCountSource("")}>Clear platform</button> : null}
+      </div> : null}
+    </section>
+    <div className="card mb-4 grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 md:grid-cols-4">
       <label>Search<input className="input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Project or customer" /></label>
       <label>Lead Source<select className="input" value={source} onChange={(e) => setSource(e.target.value)}><option value="">All sources</option>{sources.map((s) => <option key={s}>{s}</option>)}</select></label>
       <label>Service<select className="input" value={service} onChange={(e) => setService(e.target.value)}><option value="">All services</option>{services.map((s) => <option key={s}>{s}</option>)}</select></label>
@@ -149,6 +234,6 @@ export default function OpportunitiesPage() {
       </details>
     </>}
     {editor && <OpportunityEditor opportunity={editor === "new" ? undefined : editor} onClose={() => setEditor(null)} onSaved={refresh} />}
-    <ConfirmDialog open={!!deleteTarget} title="Delete disposable Opportunity" message="Only an Opportunity with no linked Proposals, Job, or protected automation data can be deleted. Its stage history will be removed with it. Archive historical records instead." confirmLabel="Delete" destructive isPending={remove.isPending} onCancel={() => setDeleteTarget(null)} onConfirm={() => deleteTarget && remove.mutate({ id: deleteTarget.id })} />
+    <ConfirmDialog open={!!deleteTarget} title="Delete Opportunity" message="This permanently deletes the Opportunity and its stage history. Linked Jobs and Proposals are kept but unlinked. Pending automation follow-ups stop; submitted review records and customer touchpoints are kept." confirmLabel="Delete permanently" destructive isPending={remove.isPending} onCancel={() => setDeleteTarget(null)} onConfirm={() => deleteTarget && remove.mutate({ id: deleteTarget.id })} />
   </>;
 }

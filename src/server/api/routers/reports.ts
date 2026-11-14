@@ -3,6 +3,8 @@ import { router, adminProcedure } from "../trpc";
 import { LEAD_SOURCE_OPTIONS, normalizeLeadSourceForReport } from "@/lib/lead-source";
 import { businessRangeInMassachusetts } from "@/lib/employee-rate-resolver";
 import { averageJobCompletionDurations, isJobCompletedInRange, summarizeCompletedJobs } from "@/lib/job-completion";
+import { calculateJobTracking } from "@/lib/job-tracking";
+import { jobCanonicalTotal } from "@/lib/job-total";
 
 const SURVIVAL_TARGET = 40_000;
 const PRODUCTION_GOAL = 65_000;
@@ -134,6 +136,60 @@ function estimatePayrollForPayPeriod(entries: Array<{
   }
 
   return total;
+}
+
+function buildJobProfitabilityReview(job: any) {
+  // Match Jobs → Tracking: contract value is the revenue basis; labor comes
+  // from tracked time (including the current payroll-engine hour fields);
+  // expenses exclude labor/subcontractor categories to avoid double counting.
+  const revenue = jobCanonicalTotal(job);
+  const tracking = calculateJobTracking(job.timeEntries, job.id);
+  const laborCost = tracking.totalLaborCost;
+  const subcontractorCost = job.expenses
+    .filter((expense: any) => expense.category === "subcontractor")
+    .reduce((sum: number, expense: any) => sum + Number(expense.amount), 0);
+  const materialsAndExpensesCost = job.expenses
+    .filter((expense: any) => expense.category !== "subcontractor" && expense.category !== "labor")
+    .reduce((sum: number, expense: any) => sum + Number(expense.amount), 0);
+  const totalCost = laborCost + materialsAndExpensesCost + subcontractorCost;
+  const profit = revenue - totalCost;
+  const collected = job.payments.reduce((sum: number, payment: any) => sum + Number(payment.amount), 0);
+  const estimatedLaborCost = Number(job.laborBudget);
+  const estimatedMaterialsCost = Number(job.materialsBudget);
+  const estimatedSubcontractorCost = Number(job.subcontractorBudget ?? 0);
+  const estimatedTotalCost = estimatedLaborCost + estimatedMaterialsCost + estimatedSubcontractorCost;
+
+  return {
+    job: {
+      id: job.id,
+      name: job.name,
+      estimateNumber: job.estimateNumber,
+      status: job.status,
+      completedAt: job.completedAt,
+      contractAmount: revenue,
+    },
+    revenue,
+    collected,
+    estimated: {
+      laborCost: estimatedLaborCost,
+      materialsCost: estimatedMaterialsCost,
+      subcontractorCost: estimatedSubcontractorCost,
+      totalCost: estimatedTotalCost,
+      profit: revenue - estimatedTotalCost,
+      marginPercent: revenue > 0 ? ((revenue - estimatedTotalCost) / revenue) * 100 : null,
+    },
+    tracking: {
+      laborCost,
+      materialsAndExpensesCost,
+      subcontractorCost,
+      totalCost,
+      profit,
+      marginPercent: revenue > 0 ? (profit / revenue) * 100 : null,
+      totalHours: tracking.totalHours,
+      laborCostPending: tracking.isLaborCostPending,
+      hasTrackedExpenses: job.expenses.length > 0,
+    },
+  };
 }
 
 function calculateStatus(completedRevenue: number) {
@@ -530,34 +586,43 @@ export const reportsRouter = router({
   jobProfitability: adminProcedure
     .input(z.object({ jobId: z.number() }))
     .query(async ({ ctx, input }) => {
-      const [job, expenses, payments, time] = await Promise.all([
-        ctx.prisma.job.findUnique({ where: { id: input.jobId } }),
-        ctx.prisma.expense.aggregate({
-          where: { jobId: input.jobId, status: "approved" },
-          _sum: { amount: true },
-        }),
-        ctx.prisma.payment.aggregate({
-          where: { jobId: input.jobId },
-          _sum: { amount: true },
-        }),
-        ctx.prisma.timeEntry.findMany({
-          where: { jobId: input.jobId, hoursWorked: { not: null } },
-          include: { user: true },
-        }),
-      ]);
-      const laborCost = time.reduce(
-        (s, t) => s + Number(t.hoursWorked ?? 0) * Number(t.hourlyRateSnapshot ?? t.user.hourlyRate ?? 0),
-        0
-      );
-      const expenseCost = Number(expenses._sum.amount ?? 0);
-      const revenue = Number(payments._sum.amount ?? 0);
+      const job = await ctx.prisma.job.findUnique({
+        where: { id: input.jobId },
+        include: {
+          expenses: { where: { status: { not: "rejected" } } },
+          payments: { select: { amount: true } },
+          timeEntries: { include: { user: true } },
+        },
+      });
+      if (!job) return null;
+      return buildJobProfitabilityReview(job);
+    }),
+
+  jobProfitabilityReview: adminProcedure
+    .input(z.object({ completedWithinDays: z.number().int().min(1).max(14).default(2) }).optional())
+    .query(async ({ ctx, input }) => {
+      const completedWithinDays = input?.completedWithinDays ?? 2;
+      const completedSince = new Date();
+      completedSince.setDate(completedSince.getDate() - completedWithinDays);
+      const jobs = await ctx.prisma.job.findMany({
+        where: {
+          deletedAt: null,
+          OR: [
+            { status: "active" },
+            { status: "completed", completedAt: { gte: completedSince } },
+          ],
+        },
+        include: {
+          expenses: { where: { status: { not: "rejected" } } },
+          payments: { select: { amount: true } },
+          timeEntries: { include: { user: true } },
+        },
+        orderBy: [{ status: "asc" }, { name: "asc" }],
+      });
       return {
-        job,
-        revenue,
-        laborCost,
-        expenseCost,
-        totalCost: laborCost + expenseCost,
-        profit: revenue - (laborCost + expenseCost),
+        generatedAt: new Date(),
+        completedWithinDays,
+        jobs: jobs.map(buildJobProfitabilityReview),
       };
     }),
 });

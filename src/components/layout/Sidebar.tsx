@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, Briefcase, Users, Workflow, Clock, Package,
-  Receipt, FileText, Bot, UserCog, BarChart3, Settings, LogOut,
+  Receipt, FileText, Bot, UserCog, BarChart3, Settings, LogOut, Bell,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/trpc/react";
@@ -24,8 +24,15 @@ const NAV = [
   { href: "/employees", label: "Employees", icon: UserCog },
   { href: "/analytics", label: "Business Analytics", icon: BarChart3 },
   { href: "/reports", label: "Reports", icon: BarChart3 },
+  { href: "/notifications", label: "Notifications", icon: Bell },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
+
+function UnreadBadge() {
+  const { data } = api.notifications.list.useQuery(undefined, { refetchInterval: 60_000 });
+  if (!data?.unreadCount) return null;
+  return <span className="ml-auto rounded-full bg-blue-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">{data.unreadCount > 99 ? "99+" : data.unreadCount}</span>;
+}
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -56,6 +63,7 @@ export function Sidebar() {
             >
               <Icon className="w-4 h-4" />
               {label}
+              {href === "/notifications" ? <UnreadBadge /> : null}
             </Link>
           );
         })}
@@ -99,6 +107,7 @@ export function SidebarDrawer({ onNavigate }: { onNavigate?: () => void }) {
           >
             <Icon className="w-4 h-4" />
             {label}
+            {href === "/notifications" ? <UnreadBadge /> : null}
           </button>
         );
       })}

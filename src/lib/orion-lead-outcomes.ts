@@ -1,0 +1,164 @@
+// What became of each lead ORION (or Make) delivered: its pipeline stage, the proposals sent to
+// that customer afterwards, and the job it turned into. Feeds /api/orion/lead-outcomes, which lets
+// the marketing platform tie an ad to a lead to a proposal to a signed job. Only ids, stages,
+// cities, dates, campaign attribution and amounts — never a customer's name, phone, email or address.
+
+import type { LeadAttribution } from "./orion-attribution";
+import { isQualifiedLead, isValidLead } from "./pipeline-sync";
+
+export interface StageHistoryRow {
+  previousStage: string | null;
+  newStage: string;
+  effectiveAt: Date;
+  reason: string | null;
+}
+
+export interface OpportunityRow {
+  id: number;
+  customerId: number;
+  stage: string;
+  status: string;
+  source: string | null;
+  serviceType: string | null;
+  outcomeAt: Date | null;
+  outcomeReason: string | null;
+  archivedAt: Date | null;
+  createdAt: Date;
+  leadReceivedAt: Date | null;
+  lastStageChangedAt: Date | null;
+  city: string | null;
+  stageHistory: StageHistoryRow[];
+  job: { status: string; contractAmount: unknown; totalEstimate: unknown } | null;
+}
+
+export interface ProposalRow {
+  customerId: number | null;
+  status: string;
+  totalAmount: unknown;
+  sentAt: Date | null;
+  approvedAt: Date | null;
+  createdAt: Date;
+}
+
+export interface LeadOutcome {
+  leadKey: string;
+  opportunityId: number;
+  receivedAt: string;
+  stage: string;
+  status: string;
+  lastStageChangedAt: string | null;
+  source: string | null;
+  city: string | null;
+  serviceType: string | null;
+  attribution: LeadAttribution | null;
+  classification: {
+    valid: boolean;
+    qualified: boolean;
+    quoted: boolean;
+    won: boolean;
+  };
+  outcome: {
+    at: string | null;
+    reason: string | null;
+    archived: boolean;
+  };
+  stageHistory: Array<{
+    previousStage: string | null;
+    stage: string;
+    effectiveAt: string;
+    reason: string | null;
+  }>;
+  proposals: {
+    count: number;
+    sent: number;
+    approved: number;
+    sentAmount: number;
+    approvedAmount: number;
+    firstSentAt: string | null;
+    firstApprovedAt: string | null;
+  };
+  job: { status: string; value: number } | null;
+}
+
+// A proposal has no link to an opportunity, only to a customer. One made for the same customer
+// from a day before the lead onwards is counted as this lead's — a customer whose older work
+// predates the lead keeps that older work out.
+const PROPOSAL_GRACE_MS = 86_400_000;
+const SENT = new Set(["sent", "viewed", "approved", "declined", "follow_up", "converted"]);
+const APPROVED = new Set(["approved", "converted"]);
+
+function money(value: unknown): number {
+  const n = Number(value ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+export function buildLeadOutcomes(
+  maps: { legacyId: string; newId: number }[],
+  opportunities: OpportunityRow[],
+  proposals: ProposalRow[],
+  attributionByOpportunity = new Map<number, LeadAttribution>(),
+): LeadOutcome[] {
+  const byOpportunity = new Map(opportunities.map((o) => [o.id, o]));
+  const proposalsByCustomer = new Map<number, ProposalRow[]>();
+  for (const p of proposals) {
+    if (p.customerId == null) continue;
+    proposalsByCustomer.set(p.customerId, [...(proposalsByCustomer.get(p.customerId) ?? []), p]);
+  }
+
+  const out: LeadOutcome[] = [];
+  for (const map of maps) {
+    const o = byOpportunity.get(map.newId);
+    if (!o) continue;
+    const receivedAt = o.leadReceivedAt ?? o.createdAt;
+    const mine = (proposalsByCustomer.get(o.customerId) ?? []).filter((p) => p.createdAt.getTime() >= receivedAt.getTime() - PROPOSAL_GRACE_MS);
+    const sent = mine.filter((p) => SENT.has(p.status) || p.sentAt);
+    const approved = mine.filter((p) => APPROVED.has(p.status) || p.approvedAt);
+    const firstOf = (dates: (Date | null)[]) => {
+      const ms = dates.filter((d): d is Date => !!d).map((d) => d.getTime());
+      return ms.length ? new Date(Math.min(...ms)).toISOString() : null;
+    };
+    const jobValue = o.job ? (money(o.job.contractAmount) > 0 ? money(o.job.contractAmount) : money(o.job.totalEstimate)) : 0;
+    const quoted = sent.length > 0;
+    const won = o.status === "won" || o.stage === "completed" || !!o.job && ["approved", "active", "on_hold", "completed"].includes(o.job.status);
+    out.push({
+      leadKey: map.legacyId,
+      opportunityId: o.id,
+      receivedAt: receivedAt.toISOString(),
+      stage: o.stage,
+      status: o.status,
+      lastStageChangedAt: o.lastStageChangedAt?.toISOString() ?? null,
+      source: o.source,
+      city: o.city,
+      serviceType: o.serviceType,
+      attribution: attributionByOpportunity.get(o.id) ?? null,
+      classification: {
+        valid: isValidLead(o.stage),
+        qualified: isQualifiedLead(o.stage),
+        quoted,
+        won,
+      },
+      outcome: {
+        at: o.outcomeAt?.toISOString() ?? null,
+        reason: o.outcomeReason,
+        archived: o.archivedAt !== null,
+      },
+      stageHistory: o.stageHistory.map((history) => ({
+        previousStage: history.previousStage,
+        stage: history.newStage,
+        effectiveAt: history.effectiveAt.toISOString(),
+        reason: history.reason,
+      })),
+      proposals: {
+        count: mine.length,
+        sent: sent.length,
+        approved: approved.length,
+        sentAmount: sent.reduce((s, p) => s + money(p.totalAmount), 0),
+        approvedAmount: approved.reduce((s, p) => s + money(p.totalAmount), 0),
+        firstSentAt: firstOf(sent.map((p) => p.sentAt ?? p.createdAt)),
+        firstApprovedAt: firstOf(approved.map((p) => p.approvedAt ?? p.createdAt)),
+      },
+      job: o.job ? { status: o.job.status, value: jobValue } : null,
+    });
+  }
+  return out.sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
+}

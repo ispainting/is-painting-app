@@ -32,6 +32,30 @@ describe("buildJobsListWhere", () => {
     expect(where.assignments).toEqual({ some: { userId: 42 } });
   });
 
+  it("searches customer names together with project fields", () => {
+    const where = buildJobsListWhere(
+      { status: "active", visibility: "active", search: "Kate Nichols" },
+      { isEmployee: false },
+    );
+    expect(where.status).toBe("active");
+    expect(where.deletedAt).toBeNull();
+    expect(where.OR).toEqual([
+      { name: { contains: "Kate Nichols", mode: "insensitive" } },
+      { estimateNumber: { contains: "Kate Nichols", mode: "insensitive" } },
+      { address: { contains: "Kate Nichols", mode: "insensitive" } },
+      { customer: { name: { contains: "Kate Nichols", mode: "insensitive" } } },
+    ]);
+  });
+
+  it("ignores a blank search without weakening visibility filters", () => {
+    const where = buildJobsListWhere(
+      { visibility: "archived", search: "   " },
+      { isEmployee: false },
+    );
+    expect(where.deletedAt).toEqual({ not: null });
+    expect(where.OR).toBeUndefined();
+  });
+
   it("does not restrict admin users by assignment", () => {
     const where = buildJobsListWhere({ visibility: "all" }, { isEmployee: false });
     expect(where.assignments).toBeUndefined();
