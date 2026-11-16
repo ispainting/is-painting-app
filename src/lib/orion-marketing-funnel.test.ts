@@ -18,6 +18,8 @@ const lead = (over: Partial<LeadOutcome> = {}): LeadOutcome => ({
   stageHistory: [],
   proposals: { count: 1, sent: 1, approved: 1, sentAmount: 5000, approvedAmount: 5000, firstSentAt: null, firstApprovedAt: null },
   job: { status: "completed", value: 5200 },
+  owner: null,
+  followUpAt: null,
   ...over,
 });
 

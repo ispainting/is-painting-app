@@ -29,6 +29,9 @@ export interface OpportunityRow {
   city: string | null;
   stageHistory: StageHistoryRow[];
   job: { status: string; contractAmount: unknown; totalEstimate: unknown } | null;
+  /** Sales pilot (2026-11-15): the team member who owns the lead and the follow-up date set in the CRM. */
+  assignedTo: { id: number; name: string } | null;
+  followUpAt: Date | null;
 }
 
 export interface ProposalRow {
@@ -78,6 +81,10 @@ export interface LeadOutcome {
     firstApprovedAt: string | null;
   };
   job: { status: string; value: number } | null;
+  /** Who on the team owns this lead — id and FIRST name only (a staff member, never a customer). */
+  owner: { id: number; firstName: string } | null;
+  /** The follow-up date the team set in the CRM, if any. */
+  followUpAt: string | null;
 }
 
 // A proposal has no link to an opportunity, only to a customer. One made for the same customer
@@ -158,6 +165,8 @@ export function buildLeadOutcomes(
         firstApprovedAt: firstOf(approved.map((p) => p.approvedAt ?? p.createdAt)),
       },
       job: o.job ? { status: o.job.status, value: jobValue } : null,
+      owner: o.assignedTo ? { id: o.assignedTo.id, firstName: o.assignedTo.name.trim().split(/\s+/)[0] ?? "" } : null,
+      followUpAt: o.followUpAt?.toISOString() ?? null,
     });
   }
   return out.sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));

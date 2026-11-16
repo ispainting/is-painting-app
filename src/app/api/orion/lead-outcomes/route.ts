@@ -55,6 +55,8 @@ export async function GET(req: Request) {
         orderBy: [{ effectiveAt: "asc" as const }, { id: "asc" as const }],
       },
       job: { select: { status: true, contractAmount: true, totalEstimate: true } },
+      assignedTo: { select: { id: true, name: true } },
+      followUpAt: true,
     },
   });
   const proposals = await prisma.proposal.findMany({
