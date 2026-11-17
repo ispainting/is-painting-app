@@ -17,6 +17,8 @@ const opp = (over: Partial<OpportunityRow> = {}): OpportunityRow => ({
   city: "Falmouth",
   stageHistory: [{ previousStage: null, newStage: "new_lead", effectiveAt: new Date("2026-10-10T12:00:00Z"), reason: "Initial lead received" }],
   job: null,
+  assignedTo: null,
+  followUpAt: null,
   ...over,
 });
 
@@ -106,5 +108,18 @@ describe("buildLeadOutcomes", () => {
     );
     expect(row.receivedAt).toBe("2026-07-25T12:00:00.000Z");
     expect(row.attribution).toEqual({ campaignId: "cmp-1", adId: "ad-2" });
+  });
+
+  it("tells the sales routine who owns the lead (first name only) and when the follow-up is due", () => {
+    const [row] = buildLeadOutcomes(
+      [{ legacyId: "meta:own", newId: 1 }],
+      [opp({ stage: "follow_up", assignedTo: { id: 7, name: "Maria Souza Lima" }, followUpAt: new Date("2026-11-18T14:00:00Z") })],
+      []
+    );
+    expect(row.owner).toEqual({ id: 7, firstName: "Maria" });
+    expect(row.followUpAt).toBe("2026-11-18T14:00:00.000Z");
+    const [none] = buildLeadOutcomes([{ legacyId: "meta:none", newId: 1 }], [opp()], []);
+    expect(none.owner).toBeNull();
+    expect(none.followUpAt).toBeNull();
   });
 });
