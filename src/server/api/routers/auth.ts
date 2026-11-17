@@ -9,6 +9,33 @@ function clientIp(ctx: { req?: Request }): string | null {
   return forwarded?.split(",")[0]?.trim() || null;
 }
 
+function isDatabaseUnavailable(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; errorCode?: unknown; message?: unknown; cause?: unknown };
+  if (candidate.code === "P1001" || candidate.errorCode === "P1001" ||
+      candidate.code === "P1002" || candidate.errorCode === "P1002" ||
+      candidate.code === "P1017" || candidate.errorCode === "P1017") {
+    return true;
+  }
+  if (typeof candidate.message === "string" && /can't reach database server/i.test(candidate.message)) {
+    return true;
+  }
+  return candidate.cause ? isDatabaseUnavailable(candidate.cause) : false;
+}
+
+async function authenticateWithDatabaseWakeRetry(email: string, password: string) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await authenticate(email, password);
+    } catch (error) {
+      if (!isDatabaseUnavailable(error) || attempt === 2) throw error;
+      // Neon Free may need a moment to wake after its five-minute idle suspend.
+      await new Promise((resolve) => setTimeout(resolve, 750 * (attempt + 1)));
+    }
+  }
+  return null;
+}
+
 export const authRouter = router({
   me: protectedProcedure.query(({ ctx }) => ctx.session),
 
@@ -44,7 +71,16 @@ export const authRouter = router({
       if (isLoginRateLimited(input.email, ip)) {
         throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "Too many failed attempts. Please try again later." });
       }
-      const user = await authenticate(input.email, input.password);
+      let user;
+      try {
+        user = await authenticateWithDatabaseWakeRetry(input.email, input.password);
+      } catch (error) {
+        if (!isDatabaseUnavailable(error)) throw error;
+        throw new TRPCError({
+          code: "SERVICE_UNAVAILABLE",
+          message: "The CRM database is waking up. Please try again in a few seconds.",
+        });
+      }
       if (!user) {
         recordFailedLogin(input.email, ip);
         // Generic message prevents account enumeration; never echo inputs.
