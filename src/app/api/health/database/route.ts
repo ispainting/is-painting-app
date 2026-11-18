@@ -17,8 +17,17 @@ export async function GET() {
     await prisma.$queryRaw`SELECT 1`;
     return NextResponse.json({ database: "connected" });
   } catch (error) {
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    const message = rawMessage
+      .replace(/postgres(?:ql)?:\\/\\/[^\\s"'\x60]+/gi, "postgresql://[redacted]")
+      .slice(0, 300);
     return NextResponse.json(
-      { database: "unavailable", code: databaseErrorCode(error) },
+      {
+        database: "unavailable",
+        code: databaseErrorCode(error),
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        message,
+      },
       { status: 503 },
     );
   }
