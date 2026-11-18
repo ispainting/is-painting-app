@@ -1,39 +1,36 @@
 import { NextResponse } from "next/server";
+import { PrismaClient } from "@prisma/client";
 import { prisma } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-function databaseErrorCode(error: unknown): string | null {
-  if (!error || typeof error !== "object") return null;
-  const candidate = error as { code?: unknown; errorCode?: unknown; cause?: unknown };
-  if (typeof candidate.code === "string") return candidate.code;
-  if (typeof candidate.errorCode === "string") return candidate.errorCode;
-  return candidate.cause ? databaseErrorCode(candidate.cause) : null;
+async function probe(client: PrismaClient): Promise<{ ok: boolean; code: string | null; errorName: string | null }> {
+  try {
+    await client.$queryRaw`SELECT 1`;
+    return { ok: true, code: null, errorName: null };
+  } catch (error) {
+    const candidate = error as { code?: unknown; errorCode?: unknown };
+    return {
+      ok: false,
+      code: typeof candidate?.code === "string" ? candidate.code : typeof candidate?.errorCode === "string" ? candidate.errorCode : null,
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    };
+  }
 }
 
 export async function GET() {
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    return NextResponse.json({ database: "connected" });
-  } catch (error) {
-    const rawMessage = error instanceof Error ? error.message : String(error);
-    const urlStart = rawMessage.indexOf("postgresql://");
-    const urlEnd = urlStart < 0 ? -1 : rawMessage.indexOf(" ", urlStart);
-    const message = (
-      urlStart < 0
-        ? rawMessage
-        : rawMessage.slice(0, urlStart) + "postgresql://[redacted]" +
-          rawMessage.slice(urlEnd < 0 ? rawMessage.length : urlEnd)
-    ).slice(0, 300);
-    return NextResponse.json(
-      {
-        database: "unavailable",
-        code: databaseErrorCode(error),
-        errorName: error instanceof Error ? error.name : "UnknownError",
-        message,
-      },
-      { status: 503 },
-    );
+  const pooled = await probe(prisma);
+  let direct: { ok: boolean; code: string | null; errorName: string | null } | null = null;
+  const directUrl = process.env.DIRECT_URL;
+  if (directUrl) {
+    const client = new PrismaClient({ datasources: { db: { url: directUrl } } });
+    direct = await probe(client);
+    await client.$disconnect().catch(() => undefined);
   }
+  const connected = pooled.ok || direct?.ok === true;
+  return NextResponse.json(
+    { database: connected ? "connected" : "unavailable", pooled, direct: direct ?? { ok: false, code: null, errorName: "MissingDirectUrl" } },
+    { status: connected ? 200 : 503 },
+  );
 }
