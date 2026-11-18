@@ -18,9 +18,14 @@ export async function GET() {
     return NextResponse.json({ database: "connected" });
   } catch (error) {
     const rawMessage = error instanceof Error ? error.message : String(error);
-    const message = rawMessage
-      .replace(/postgres(?:ql)?:\\/\\/[^\\s"'\x60]+/gi, "postgresql://[redacted]")
-      .slice(0, 300);
+    const urlStart = rawMessage.indexOf("postgresql://");
+    const urlEnd = urlStart < 0 ? -1 : rawMessage.indexOf(" ", urlStart);
+    const message = (
+      urlStart < 0
+        ? rawMessage
+        : rawMessage.slice(0, urlStart) + "postgresql://[redacted]" +
+          rawMessage.slice(urlEnd < 0 ? rawMessage.length : urlEnd)
+    ).slice(0, 300);
     return NextResponse.json(
       {
         database: "unavailable",
