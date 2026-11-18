@@ -34,6 +34,7 @@ type ExtractedReceiptData = {
   total: ExtractedValue<number>;
   category: ExtractedValue<string>;
   description: ExtractedValue<string>;
+  items: Array<{ description: string; quantity: number | null; unitPrice: number | null; totalPrice: number | null; confidence: number }>;
   rawText: string | null;
   overallConfidence: number;
 };
@@ -476,6 +477,12 @@ export default function ExpensesPage() {
       extractedRawText: extractionState.data?.rawText || undefined,
       extractedStructured: extractionState.data || undefined,
       extractedConfidence: extractionState.data?.overallConfidence,
+      lineItems: extractionState.data?.items
+        .filter((item) => item.confidence >= 0.65
+          && (item.quantity == null || item.quantity >= 0)
+          && (item.unitPrice == null || item.unitPrice >= 0)
+          && (item.totalPrice == null || item.totalPrice >= 0))
+        .map((item) => ({ description: item.description, quantity: item.quantity, unitPrice: item.unitPrice, totalPrice: item.totalPrice })) ?? [],
     });
   }
 
@@ -635,6 +642,24 @@ export default function ExpensesPage() {
                 >
                   Retry reading
                 </button>
+              )}
+            </div>
+          )}
+
+          {extractionState.data && (
+            <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+              <p className="text-sm font-medium text-slate-800">Receipt products ({extractionState.data.items.length})</p>
+              {extractionState.data.items.length ? (
+                <div className="mt-2 space-y-1 text-sm">
+                  {extractionState.data.items.map((item, index) => (
+                    <div key={`${item.description}-${index}`} className="flex flex-wrap justify-between gap-x-4">
+                      <span>{item.description}{item.quantity != null ? ` · ${item.quantity} qty` : ""}</span>
+                      <span className="text-slate-600">{item.unitPrice != null ? `${formatCurrency(item.unitPrice)} each` : "unit price unavailable"}{item.totalPrice != null ? ` · ${formatCurrency(item.totalPrice)} total` : ""}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-1 text-sm text-slate-500">No individual product lines were legible, so this receipt will not create catalog prices.</p>
               )}
             </div>
           )}
