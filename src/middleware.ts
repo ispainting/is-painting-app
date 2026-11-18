@@ -5,6 +5,8 @@ const COOKIE = "is_session";
 const PUBLIC = [
   "/login",
   "/api/trpc",
+  // Readiness probe returns only whether the database is reachable, never data.
+  "/api/health/database",
   // Server-to-server read for the ORION marketing platform; the route checks its own bearer secret.
   "/api/orion",
   // Scheduled report generator; the route validates CRON_SECRET itself.
