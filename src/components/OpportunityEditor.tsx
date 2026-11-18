@@ -44,6 +44,10 @@ export function OpportunityEditor({ opportunity, onClose, onSaved }: {
   const [marketingLoaded, setMarketingLoaded] = useState(false);
   const customers = api.customers.list.useQuery({ search: customerSearch || undefined });
   const candidates = api.opportunities.linkCandidates.useQuery({ customerId: form.customerId }, { enabled: form.customerId > 0 });
+  const existingOpenOpportunities = api.opportunities.openForCustomer.useQuery(
+    { customerId: form.customerId },
+    { enabled: !opportunity && form.customerId > 0 },
+  );
   const history = api.opportunities.byId.useQuery({ id: opportunity?.id ?? 0 }, { enabled: !!opportunity });
   const attribution = api.opportunities.marketingAttribution.useQuery({ id: opportunity?.id ?? 0 }, { enabled: !!opportunity });
   const saved = async () => { await onSaved(); toast.success(opportunity ? "Opportunity updated" : "Opportunity created"); onClose(); };
@@ -122,6 +126,21 @@ export function OpportunityEditor({ opportunity, onClose, onSaved }: {
                 </button>) : <p className="p-3 text-sm text-slate-500">No customers found. Create the customer first, then select them here.</p>}
           </div>}
           {form.customerId > 0 && <p className="mt-1 text-xs text-emerald-700">Customer selected</p>}
+          {!opportunity && existingOpenOpportunities.data && existingOpenOpportunities.data.length > 0 && (
+            <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" role="alert" aria-live="polite">
+              <p className="font-semibold">
+                This customer already has {existingOpenOpportunities.data.length} active {existingOpenOpportunities.data.length === 1 ? "opportunity" : "opportunities"}.
+              </p>
+              <ul className="mt-1 list-inside list-disc">
+                {existingOpenOpportunities.data.map((item) => (
+                  <li key={item.id}>
+                    {item.name}{item.serviceType ? ` — ${item.serviceType}` : ""} ({opportunityStageLabel(item.stage)})
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2">You can still create another opportunity for a different service.</p>
+            </div>
+          )}
         </div>
         <label className="col-span-full">Opportunity / Project Name<input className="input" value={form.name} onChange={(e) => patch("name", e.target.value)} /></label>
         <label>Service Type<select className="input" value={form.serviceType} onChange={(e) => patch("serviceType", e.target.value)}>
