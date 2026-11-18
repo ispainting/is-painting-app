@@ -237,24 +237,6 @@ export const opportunitiesRouter = router({
         const customer = await tx.customer.findUnique({ where: { id: input.customerId }, select: { id: true } });
         if (!customer) throw new TRPCError({ code: "NOT_FOUND", message: "Customer not found." });
 
-        // Block an accidental duplicate: one open non-terminal opportunity per
-        // customer. Terminal history never blocks a legitimate new lead.
-        const existingOpen = await tx.opportunity.findFirst({
-          where: {
-            customerId: input.customerId,
-            status: "open",
-            archivedAt: null,
-            stage: { notIn: TERMINAL_PIPELINE_STAGES },
-          },
-          select: { id: true, name: true },
-        });
-        if (existingOpen) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: `This customer already has an open opportunity ("${existingOpen.name}"). Close it as terminal before creating a new one.`,
-          });
-        }
-
         const { referralSource, effectiveAt, ...opportunityData } = input;
         const initialEffectiveAt = input.leadReceivedAt ?? new Date();
         const at = input.stage === "new_lead"
@@ -330,6 +312,19 @@ export const opportunitiesRouter = router({
     ]);
     return { proposals, jobs };
   }),
+
+  openForCustomer: adminProcedure.input(z.object({ customerId: z.number().int().positive() })).query(({ ctx, input }) =>
+    ctx.prisma.opportunity.findMany({
+      where: {
+        customerId: input.customerId,
+        status: "open",
+        archivedAt: null,
+        stage: { notIn: TERMINAL_PIPELINE_STAGES },
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      select: { id: true, name: true, serviceType: true, stage: true, createdAt: true },
+    })
+  ),
 
   remove: adminProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
     return ctx.prisma.$transaction(async (tx) => {
