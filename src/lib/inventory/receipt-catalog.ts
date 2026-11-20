@@ -57,9 +57,8 @@ export async function syncReceiptLineItemsToInventory(prisma: PrismaClient, sinc
     where: {
       expenseDate: { gte: since },
       category: { in: MATERIAL_CATEGORIES },
-      status: { not: "rejected" },
+      status: "approved",
       duplicateStatus: "clear",
-      reviewStatus: { in: ["reviewed", "approved"] },
     },
     select: {
       id: true,
