@@ -34,9 +34,8 @@ async function backfillReceiptLines(now: Date) {
       expense: {
         is: {
           category: { in: [...MATERIAL_EXPENSE_CATEGORIES] },
-          status: { not: "rejected" },
+          status: "approved",
           duplicateStatus: "clear",
-          reviewStatus: { in: ["reviewed", "approved"] },
         },
       },
       extractionAttemptCount: { lt: 3 },
@@ -135,7 +134,7 @@ async function backfillReceiptLines(now: Date) {
   const after = await prisma.expenseAttachment.findMany({
     where: {
       uploadedAt: { gte: new Date(now.getTime() - HISTORY_WINDOW_MS) },
-      expense: { is: { category: { in: [...MATERIAL_EXPENSE_CATEGORIES] }, status: { not: "rejected" }, duplicateStatus: "clear", reviewStatus: { in: ["reviewed", "approved"] } } },
+      expense: { is: { category: { in: [...MATERIAL_EXPENSE_CATEGORIES] }, status: "approved", duplicateStatus: "clear" } },
       extractionAttemptCount: { lt: 3 },
     },
     select: { extractionStructured: true, expense: { select: { lineItems: { select: { id: true } } } } },
