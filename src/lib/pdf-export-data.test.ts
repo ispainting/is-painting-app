@@ -122,7 +122,7 @@ describe("Payroll Preview and export use one calculation", () => {
     specialPayEnabled: false, notes: null, workType: "job_site",
     user: { name: "Painter", hourlyRate: 20 }, job: { id: 1, name: "Visible Job" }, ...overrides,
   });
-  it("matches exact regular, island, overtime and once-per-job/day travel pay", () => {
+  it("matches exact straight-time, island and once-per-job/day travel pay", () => {
     const entries = [
       entry(1, { paidHours: 38 }),
       entry(2, { specialPayEnabled: true, hourlyRateAdjustment: 2, travelHours: 1 }),
@@ -130,14 +130,14 @@ describe("Payroll Preview and export use one calculation", () => {
     ];
     const summaries = buildPayrollSummaries(entries, []);
     expect(summaries[0]).toMatchObject({
-      regularHours: 38, specialHours: 2, overtimeHours: 8, travelHours: 1, totalHours: 49,
-      estimatedCheck: 1082,
+      regularHours: 40, specialHours: 8, overtimeHours: 0, travelHours: 1, totalHours: 49,
+      estimatedCheck: 996,
     });
-    // 38*20 + 2*22 + 6*33 + 2*30 + 1*20 = 1082.
+    // Overtime is disabled: 40*20 + 8*22 + 1*20 = 996.
     const pdf = payrollPdf(entries, summaries, context);
-    expect(pdf.summary).toContainEqual(["Estimated payroll", "$1,082.00"]);
-    expect(pdf.tables[0].rows[0][5]).toBe("49");
-    expect(pdf.tables[0].rows[0][7]).toBe("$1,082.00");
+    expect(pdf.summary).toContainEqual(["Estimated payroll", "$996.00"]);
+    expect(pdf.tables[0].rows[0][4]).toBe("49");
+    expect(pdf.tables[0].rows[0][6]).toBe("$996.00");
     expect(pdf.tables[1].rows.map(row => row[7])).toEqual(summaries[0].details.map(row => `$${row.dailyTotal.toFixed(2)}`));
     expect(JSON.stringify(pdf)).toContain("Deducted: 30 min");
   });

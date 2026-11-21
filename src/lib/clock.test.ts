@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CLOCK_IN_NOT_AT_JOBSITE, formatClockDuration, isWithinLiveShiftWindow, liveShiftCutoff, MAX_LIVE_SHIFT_HOURS, normalizeClockInJobId } from "./clock";
+import { CLOCK_IN_NOT_AT_JOBSITE, formatClockDuration, isWithinLiveShiftWindow, liveShiftCutoff, MAX_LIVE_SHIFT_HOURS, normalizeClockInJobId, distanceMeters, formatOffsiteReason, isOutsideJobsite } from "./clock";
 
 describe("formatClockDuration", () => {
   it("formats hours, minutes, and seconds clearly", () => {
@@ -39,5 +39,20 @@ describe("live shift window", () => {
     expect(isWithinLiveShiftWindow(new Date("2026-10-17T04:00:00.000Z"), now)).toBe(true); // exactly 16h
     expect(isWithinLiveShiftWindow(new Date("2026-10-17T03:59:00.000Z"), now)).toBe(false);
     expect(isWithinLiveShiftWindow("2026-02-23T02:12:19.000Z", now)).toBe(false); // Luis-style stale entry
+  });
+});
+
+describe("offsite clock-in", () => {
+  const job = { lat: 41.6500, lng: -70.3500 };
+
+  it("measures distance and flags only locations outside the allowed radius", () => {
+    expect(distanceMeters(job, job)).toBe(0);
+    expect(isOutsideJobsite({ lat: 41.6505, lng: -70.3500 }, job)).toBe(false);
+    expect(isOutsideJobsite({ lat: 41.6600, lng: -70.3500 }, job)).toBe(true);
+  });
+
+  it("stores an auditable authorization reason", () => {
+    expect(formatOffsiteReason("Picking up materials", 1609.344)).toBe("Authorized 1.00 mi from jobsite: Picking up materials");
+    expect(formatOffsiteReason("Office work", null)).toBe("Authorized away from jobsite: Office work");
   });
 });

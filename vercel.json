@@ -1,3 +1,13 @@
 {
-  "buildCommand": "npx prisma generate && next build"
+  "buildCommand": "npx prisma generate && next build",
+  "crons": [
+    {
+      "path": "/api/cron/report-notifications",
+      "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/cron/inventory-catalog",
+      "schedule": "15 13 * * *"
+    }
+  ]
 }

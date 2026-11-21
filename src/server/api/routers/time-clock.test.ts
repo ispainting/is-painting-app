@@ -23,7 +23,13 @@ describe("time clock session identity", () => {
       user: { findUnique: vi.fn().mockResolvedValue({ hourlyRate: 25 }) },
     };
 
-    await callerWith(prisma).clockIn({ lat: 41.7, lng: -70.7, userId: 999 } as never);
+    await callerWith(prisma).clockIn({
+      lat: 41.7,
+      lng: -70.7,
+      offsiteAuthorized: true,
+      offsiteReason: "Authorized office work",
+      userId: 999,
+    } as never);
 
     expect(prisma.timeEntry.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ userId: 7, clockOut: null }) })
@@ -136,7 +142,12 @@ describe("stale historical open entries (16h live-shift window)", () => {
       employeeHourlyRateHistory: { findFirst: vi.fn().mockResolvedValue(null) },
       user: { findUnique: vi.fn().mockResolvedValue({ hourlyRate: 25 }) },
     };
-    await callerWith(prisma).clockIn({ lat: 41.7, lng: -70.7 });
+    await callerWith(prisma).clockIn({
+      lat: 41.7,
+      lng: -70.7,
+      offsiteAuthorized: true,
+      offsiteReason: "Authorized office work",
+    });
     expect(prisma.timeEntry.create).toHaveBeenCalledTimes(1);
     expect(prisma.timeEntry.create.mock.calls[0]?.[0].data.userId).toBe(7);
   });

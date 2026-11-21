@@ -134,7 +134,7 @@ describe("receipt extraction error handling", () => {
     expect((error as ReceiptExtractionError).userMessage).not.toContain("OPENAI_API_KEY");
   });
 
-  it("reads only the simplified receipt fields and maps amount to the expense total", async () => {
+  it("reads receipt totals and product lines", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       output_text: JSON.stringify({
         vendor: { value: "Harbor Supply", confidence: 0.95 },
@@ -155,7 +155,9 @@ describe("receipt extraction error handling", () => {
     expect(result.normalized.total.value).toBe(123.45);
     expect(result.normalized.date.value).toBe("2026-08-20");
     expect(result.normalized.description.value).toBe("Paint supplies");
-    expect(prompt).toContain("Extract only vendor, category, amount, date, and description");
+    expect(prompt).toContain("Extract vendor, category, amount, date, description");
+    expect(prompt).toContain("itemized products");
+    expect(prompt).toContain('"items"');
     expect(prompt).not.toContain("paymentMethod");
     expect(prompt).not.toContain("lineItems");
     expect(prompt).not.toContain("Known jobs");

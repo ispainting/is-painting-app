@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api } from "@/trpc/react";
 import { formatDateTime } from "@/lib/utils";
-import { CLOCK_IN_NOT_AT_JOBSITE, CLOCKABLE_REFETCH_INTERVAL_MS, formatClockDuration, normalizeClockInJobId } from "@/lib/clock";
+import { CLOCK_IN_NOT_AT_JOBSITE, CLOCKABLE_REFETCH_INTERVAL_MS, formatClockDuration, isOutsideJobsite, normalizeClockInJobId } from "@/lib/clock";
 import { toast } from "sonner";
 import { InstallPrompt } from "@/components/employee/InstallPrompt";
-import { BadgeCheck, BriefcaseBusiness, Clock3, Coffee, LogIn, LogOut, PlayCircle, TimerReset } from "lucide-react";
+import { BadgeCheck, BriefcaseBusiness, Camera, Clock3, Coffee, LogIn, LogOut, PlayCircle, TimerReset } from "lucide-react";
 
 function getCoords(): Promise<GeolocationPosition | null> {
   return new Promise((resolve) => {
@@ -36,6 +37,8 @@ export default function ClockPage() {
   const me = api.auth.me.useQuery();
 
   const [jobId, setJobId] = useState(CLOCK_IN_NOT_AT_JOBSITE);
+  const [offsiteAuthorized, setOffsiteAuthorized] = useState(false);
+  const [offsiteReason, setOffsiteReason] = useState("");
   const [breakMinutes, setBreakMinutes] = useState(0);
   const [notes, setNotes] = useState("");
   const [now, setNow] = useState(new Date());
@@ -83,6 +86,7 @@ export default function ClockPage() {
     onSuccess: () => router.push("/login"),
   });
 
+  const selectedJob = jobs.data?.find((job) => String(job.id) === jobId) ?? null;
   const isIn = !!active.data;
   const isOnBreak = Boolean(active.data?.breakStartedAt && !active.data?.breakEndedAt);
 
@@ -205,6 +209,24 @@ export default function ClockPage() {
                 </option>
               ))}
             </select>
+            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              <label className="flex items-start gap-2 font-medium">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={offsiteAuthorized}
+                  onChange={(event) => setOffsiteAuthorized(event.target.checked)}
+                />
+                I have authorization to clock in away from the selected jobsite.
+              </label>
+              <label className="mt-3 block text-xs font-semibold uppercase tracking-wide">Reason (required when away)</label>
+              <textarea
+                className="mt-1 min-h-20 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm"
+                placeholder="Example: picking up materials, working at the shop, manager approved"
+                value={offsiteReason}
+                onChange={(event) => setOffsiteReason(event.target.value)}
+              />
+            </div>
             <button
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-base font-semibold text-white shadow-sm"
               disabled={inMut.isPending}
@@ -220,11 +242,24 @@ export default function ClockPage() {
                   return;
                 }
 
+                const normalizedJobId = normalizeClockInJobId(jobId);
+                const hasJobCoordinates = selectedJob?.latitude != null && selectedJob?.longitude != null;
+                const isOffsite = !normalizedJobId || (hasJobCoordinates && isOutsideJobsite(
+                  { lat: pos.coords.latitude, lng: pos.coords.longitude },
+                  { lat: Number(selectedJob.latitude), lng: Number(selectedJob.longitude) }
+                ));
+                if (isOffsite && (!offsiteAuthorized || !offsiteReason.trim())) {
+                  toast.error("Confirm authorization and enter a reason to clock in away from the jobsite.");
+                  return;
+                }
+
                 inMut.mutate({
-                  jobId: normalizeClockInJobId(jobId),
+                  jobId: normalizedJobId,
                   lat: pos.coords.latitude,
                   lng: pos.coords.longitude,
                   accuracy: pos.coords.accuracy,
+                  offsiteAuthorized,
+                  offsiteReason: offsiteReason.trim() || undefined,
                 });
               }}
             >
@@ -295,6 +330,14 @@ export default function ClockPage() {
             </div>
           </div>
         )}
+
+        <Link
+          href="/receipts"
+          className="flex min-h-16 items-center justify-center gap-2 rounded-2xl bg-blue-700 px-4 py-4 text-base font-semibold text-white shadow-sm"
+        >
+          <Camera className="h-5 w-5" />
+          Upload a receipt
+        </Link>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">

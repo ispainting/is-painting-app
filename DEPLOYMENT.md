@@ -9,10 +9,10 @@ Total time: ~10 minutes if everything goes well.
 
 - A live URL (e.g. `https://is-painting.vercel.app`) you can open from any browser
 - A real Postgres database on Neon (free tier)
-- An admin login: `admin@ispainting.com / admin123`
+- An admin login using your configured administrator account
 - Employee portal: `<deployment-base-url>/login`
   - Login: the employee's company email
-  - PIN: the employee's phone number, digits only (formatting like `(508) 555-1234` is accepted and normalized)
+  - PIN: the employee's assigned company PIN
   - Successful employee login redirects to `/clock`
 - All MVP features working: customers, jobs (with auto-priced estimates), opportunities pipeline, time clock with GPS, inventory, expenses, invoices, automation templates, public review pages, settings
 
@@ -207,6 +207,9 @@ Add these in Vercel under **Project → Settings → Environment Variables** (or
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Email automation steps |
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_URL` | Receipt + check photo uploads |
 | `NEXT_PUBLIC_GOOGLE_MAPS_KEY` | Map display + geofence visualization |
+| `CRON_SECRET` | Secures Vercel's scheduled report route. Set a strong random value in Vercel Production and Preview environments; Vercel sends it as a bearer token when invoking the cron route. |
+
+The scheduled report route runs daily at 13:00 UTC. It stores a job profitability notification only when at least 48 hours have passed since the previous one, and stores the previous month's lead-source/conversion report on the first day of each month. Apply the Prisma migration before enabling this cron in Production.
 
 After your first successful deploy, update `NEXT_PUBLIC_APP_URL` to your real URL and redeploy (Vercel → Deployments → "..." → Redeploy).
 
@@ -216,7 +219,7 @@ After your first successful deploy, update `NEXT_PUBLIC_APP_URL` to your real UR
 
 When the deploy turns green, open the URL. You'll see the login page.
 
-- **Log in as admin** with `admin@ispainting.com / admin123`. You'll land on the dashboard with KPI cards.
+- **Log in as admin** with your configured administrator account. You'll land on the dashboard with KPI cards.
 - **Sidebar navigation** has 12 sections. Every one is wired to the database.
 - **Customers** — add, search, soft-delete.
 - **Jobs** — auto-numbered (`EST-0001`...). Estimate totals are computed on save using the formula `(materials + labor) * (1 + (wc + gl + overhead)/100) * (1 + markup/100) * (1 + tax/100)`. Status transitions are tracked (`sentAt`, `approvedAt` auto-stamped). Approving a job locks the budget and copies `totalEstimate` into `contractAmount`.
@@ -230,7 +233,7 @@ When the deploy turns green, open the URL. You'll see the login page.
 - **Reports** — KPI summary.
 - **Settings** — company info + default WC/GL/overhead/markup/tax percentages, persisted to the singleton `Config` row.
 - **Public review** — `https://your-app.vercel.app/review/<token>` works without auth. Ratings ≥ 4 redirect to your Google review URL (set in Settings).
-- **Employee mobile clock** — log in as `painter@ispainting.com / painter123` to see the mobile clock-in/out screen with browser geolocation. Employees only see jobs they're assigned to.
+- **Employee mobile clock** — log in as `painter@ispainting.com / [assigned PIN]` to see the mobile clock-in/out screen with browser geolocation. Employees only see jobs they're assigned to.
 
 Auth is JWT in an httpOnly cookie. Middleware guards every route except `/login`, `/review/*`, and `/api/trpc`.
 Role enforcement: `protectedProcedure` requires login; `adminProcedure` requires `role: 'admin'`.

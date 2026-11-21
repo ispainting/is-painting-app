@@ -2,6 +2,7 @@
 
 import { api } from "@/trpc/react";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { DashboardBudgetTracking } from "@/components/dashboard/DashboardBudgetTracking";
 import { formatCurrency } from "@/lib/utils";
 import {
   AlertTriangle,
@@ -43,6 +44,7 @@ export default function DashboardPage() {
   return (
     <>
       <PageHeader title="Dashboard" description="Immediate executive overview of business health." />
+      <DashboardBudgetTracking />
 
       {isLoading || !dashboard ? (
         <div className="grid gap-4 lg:grid-cols-2">

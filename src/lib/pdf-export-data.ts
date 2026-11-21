@@ -32,8 +32,8 @@ export function payrollPdf(
   ];
   result.tables = [{
     title: "Payroll by employee",
-    columns: ["Employee", "Regular hours", "Island / special hours", "Overtime hours", "Travel hours", "Total paid hours", "Base hourly rate", "Estimated pay"],
-    rows: summaries.map(row => [row.name, number(row.regularHours), number(row.specialHours), number(row.overtimeHours), number(row.travelHours), number(row.totalHours), money(row.hourlyRate), money(row.estimatedCheck)]),
+    columns: ["Employee", "Regular hours", "Island / special hours", "Travel hours", "Total paid hours", "Base hourly rate", "Estimated pay"],
+    rows: summaries.map(row => [row.name, number(row.regularHours), number(row.specialHours), number(row.travelHours), number(row.totalHours), money(row.hourlyRate), money(row.estimatedCheck)]),
   }];
   for (const summary of summaries) result.tables.push({
     title: `Time entries: ${summary.name}`,
@@ -51,7 +51,7 @@ export function payrollPdf(
     }),
   });
   result.definitions = [
-    "Estimated payroll uses the same Payroll Preview calculation and stored paid hours: weekly overtime, special/island adjustments, and travel allocated once per employee/job/day. This is not a final payroll statement.",
+    "Estimated payroll uses the same Payroll Preview calculation and stored paid hours: straight-time hours, special/island adjustments, and travel allocated once per employee/job/day. This is not a final payroll statement.",
     "Scope: the same loaded time entries as the page (up to 1,000). No additional or hidden time entries are included.",
   ];
   return result;

@@ -35,12 +35,6 @@ function dayKey(value: Date | string) {
   const date = new Date(value);
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
-function weekKey(value: Date | string) {
-  const date = new Date(value);
-  date.setHours(0, 0, 0, 0);
-  date.setDate(date.getDate() - date.getDay());
-  return dayKey(date);
-}
 function special(entry: PayrollEntry) {
   return Boolean(entry.specialPayEnabled || entry.isIslandJob || entry.job?.specialPayEnabled || entry.job?.isIslandJob);
 }
@@ -48,11 +42,10 @@ function rates(entry: PayrollEntry, fallback: number) {
   const regularRate = number(entry.user?.hourlyRate ?? fallback);
   const raw = special(entry) ? number(entry.hourlyRateAdjustment ?? entry.job?.hourlyRateAdjustment ?? 0) : 0;
   const adjustment = raw > 0 ? raw : entry.isIslandJob || entry.job?.isIslandJob ? 2 : 0;
-  return { regularRate, adjustment, effectiveRate: regularRate + adjustment, overtimeRate: (regularRate + adjustment) * 1.5 };
+  return { regularRate, adjustment, effectiveRate: regularRate + adjustment };
 }
 function rateType(entry: PayrollEntry) {
   if (entry.rateType === "travel" || entry.workType === "travel") return "travel";
-  if (entry.rateType === "overtime") return "overtime";
   if (entry.rateType === "island" || entry.rateType === "special" || special(entry)) return "special";
   if (entry.job?.travelPayEnabled) return "travel";
   return "regular";
@@ -88,27 +81,23 @@ export function buildPayrollSummaries(
         rate: travelRate(source, hourlyRate),
       });
     }
-    let regularHours = 0, overtimeHours = 0, specialHours = 0, travelHours = 0, totalHours = 0, estimatedCheck = 0;
-    const weeks = new Map<string, number>();
+    let regularHours = 0, specialHours = 0, travelHours = 0, totalHours = 0, estimatedCheck = 0;
     const details = sorted.map(entry => {
       const hours = number(entry.paidHours ?? entry.hoursWorked ?? entry.grossHours ?? 0);
       const allocation = allocations.get(key(entry));
       const travel = allocation?.anchor === entry.id ? allocation.hours : 0;
-      const wk = weekKey(entry.clockIn), prior = weeks.get(wk) ?? 0;
       const type = rateType(entry), r = rates(entry, hourlyRate);
-      const overtime = type === "overtime" ? hours : Math.min(hours, Math.max(0, prior + hours - 40));
-      const base = Math.max(0, hours - overtime);
-      const specialPart = type === "special" || special(entry) ? base : 0;
-      const regular = base - specialPart;
-      weeks.set(wk, prior + hours);
+      // All hours are straight-time. Legacy entries marked overtime remain intact
+      // and are paid at their normal or applicable special rate.
+      const specialPart = type === "special" || special(entry) ? hours : 0;
+      const regular = hours - specialPart;
       const travelPayRate = allocation?.rate ?? travelRate(entry, hourlyRate);
-      const amount = regular * r.regularRate + specialPart * r.effectiveRate + travel * travelPayRate + overtime * r.overtimeRate;
-      regularHours += regular; overtimeHours += overtime; specialHours += specialPart;
+      const amount = regular * r.regularRate + specialPart * r.effectiveRate + travel * travelPayRate;
+      regularHours += regular; specialHours += specialPart;
       travelHours += travel; totalHours += hours + travel; estimatedCheck += amount;
       const displayType = type === "regular" && specialPart > 0 ? "special" : type;
       const rateLabel = displayType === "special" ? `Special $${r.effectiveRate.toFixed(2)}` :
-        displayType === "overtime" ? `Overtime ${r.overtimeRate.toFixed(2)}` :
-          displayType === "travel" ? "Travel" : `Regular $${r.regularRate.toFixed(2)}`;
+        displayType === "travel" ? "Travel" : `Regular ${r.regularRate.toFixed(2)}`;
       return {
         id: entry.id, date: dayKey(entry.clockIn), clockIn: entry.clockIn, project: entry.job?.name || "No project",
         hours, travelHours: travel, rateLabel, adjustment: r.adjustment, effectiveRate: r.effectiveRate,
@@ -116,6 +105,6 @@ export function buildPayrollSummaries(
         dailyTotal: amount, notes: entry.notes || "",
       };
     });
-    return { id, name, regularHours, overtimeHours, specialHours, travelHours, totalHours, hourlyRate, estimatedCheck, details };
+    return { id, name, regularHours, overtimeHours: 0, specialHours, travelHours, totalHours, hourlyRate, estimatedCheck, details };
   }).sort((a, b) => a.name.localeCompare(b.name));
 }

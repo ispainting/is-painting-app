@@ -537,6 +537,7 @@ export const customersRouter = router({
             leadValue: true,
             source: true,
             leadReceivedAt: true,
+            notes: true,
             createdAt: true,
             updatedAt: true,
             assignedTo: { select: { id: true, name: true } },

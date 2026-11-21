@@ -74,7 +74,7 @@ function buildPrompt(jobOptions: Array<{ id: number; name: string }>) {
     "Confidences must be between 0 and 1.",
     "Use YYYY-MM-DD for date.",
     "Suggested category should be one of: paint, materials, labor, tools, equipment, rentals, fuel, subcontractor, travel, ferry, payroll_related, office, advertising, insurance, vehicle, meals, other.",
-    "Extract only vendor, category, amount, date, and description. Do not extract subtotal, tax, payment method, receipt number, invoice number, line items, jobs, or raw receipt text.",
+    "Extract vendor, category, amount, date, description, subtotal, tax, and itemized products when they are legible. For each product line, return its printed description, quantity, unit price, line total, and confidence. Do not treat tax, fees, discounts, or receipt totals as products. If a value is not legible, use null and lower confidence.",
     "If category is uncertain, return null; the expense form will default it to materials.",
     "JSON shape (amount is the final receipt total):",
     JSON.stringify({
@@ -83,6 +83,9 @@ function buildPrompt(jobOptions: Array<{ id: number; name: string }>) {
       amount: { value: "number|null", confidence: 0.5 },
       date: { value: "YYYY-MM-DD|null", confidence: 0.5 },
       description: { value: "string|null", confidence: 0.5 },
+      subtotal: { value: "number|null", confidence: 0.5 },
+      tax: { value: "number|null", confidence: 0.5 },
+      items: [{ description: "string", quantity: "number|null", unitPrice: "number|null", totalPrice: "number|null", confidence: 0.5 }],
     }),
   ].join("\n");
 }
