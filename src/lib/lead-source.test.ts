@@ -51,7 +51,7 @@ describe("lead source options", () => {
   });
 
   it("offers all supported service types and retains a historical value", () => {
-    expect([...SERVICE_TYPE_OPTIONS]).toEqual(["Interior", "Exterior", "Both", "Commercial", "Other"]);
+    expect([...SERVICE_TYPE_OPTIONS]).toEqual(["Interior", "Exterior", "Cabinets", "Both", "Commercial", "Other"]);
     expect(serviceTypeOptionsWithLegacy("Cabinet Refinishing")).toEqual([
       "Cabinet Refinishing", ...SERVICE_TYPE_OPTIONS,
     ]);
