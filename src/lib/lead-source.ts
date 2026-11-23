@@ -29,6 +29,7 @@ export const UNKNOWN_LEAD_SOURCE = "Unknown";
 export const SERVICE_TYPE_OPTIONS = [
   "Interior",
   "Exterior",
+  "Cabinets",
   "Both",
   "Commercial",
   "Other",
