@@ -1,7 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 
-const MATERIAL_CATEGORIES: Array<"paint" | "materials" | "tools" | "equipment" | "rentals"> = ["paint", "materials", "tools", "equipment", "rentals"];
-const IGNORE_LINE = /\b(tax|sales tax|discount|coupon|deposit|delivery|shipping|freight|subtotal|total|fee|refund)\b/i;
+const MATERIAL_CATEGORIES: Array<"paint" | "materials" | "tools" | "equipment"> = ["paint", "materials", "tools", "equipment"];
+const IGNORE_LINE = /\b(tax|sales tax|discount|coupon|deposit|delivery|shipping|freight|subtotal|total|fee|refund|rental|damage protection|beverage|pepsi|food|drink|bottle)\b/i;
 
 type ReceiptLine = {
   description: string;
